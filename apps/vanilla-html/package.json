@@ -1,0 +1,9 @@
+{
+  "name": "vanilla-html",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GeneralStore — plain HTML/CSS/JS test target (no framework, no build step)",
+  "scripts": {
+    "start": "npx serve -l 3001"
+  }
+}

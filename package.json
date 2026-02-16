@@ -1,0 +1,15 @@
+{
+  "name": "test_app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A curated library of minimal web applications serving as test targets for a Playwright-based testing framework.",
+  "scripts": {
+    "start:all": "concurrently --kill-others-on-fail \"npm start --prefix apps/vanilla-html\" \"npm start --prefix apps/react-app\" \"npm start --prefix apps/vue-app\" \"npm start --prefix apps/angular-app\" \"npm start --prefix apps/svelte-app\" \"npm start --prefix apps/nextjs-app\" \"npm start --prefix apps/lit-app\" \"npm start --prefix apps/htmx-app\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
