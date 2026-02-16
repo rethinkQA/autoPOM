@@ -283,12 +283,14 @@ fieldset[data-testid="radio-group"] label {
 }
 
 /* ===== DATE PICKER ===== */
-input[type="date"] {
+input[type="date"],
+.datepicker-input {
   padding: 0.5rem 0.75rem;
   border: 1px solid #ccc;
   border-radius: 4px;
   font-size: 0.9rem;
   margin-top: 0.25rem;
+  width: 100%;
 }
 
 .date-output {

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '../data';
 
 type SortKey = 'name' | 'price' | 'category' | 'stock' | null;
@@ -16,7 +18,7 @@ export default function Home() {
   // ===== Interactive state =====
   const [quantity, setQuantity] = useState(1);
   const [shipping, setShipping] = useState('standard');
-  const [deliveryDate, setDeliveryDate] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState<Date | null>(null);
   const [actionOutput, setActionOutput] = useState('');
   const [validationMsg, setValidationMsg] = useState('');
   const [showValidation, setShowValidation] = useState(false);
@@ -124,9 +126,8 @@ export default function Home() {
     }
   }
 
-  function formatDate(dateStr: string): string {
-    if (!dateStr) return '';
-    const date = new Date(dateStr + 'T00:00:00');
+  function formatDate(date: Date | null): string {
+    if (!date) return '';
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   }
 
@@ -272,8 +273,16 @@ export default function Home() {
         <fieldset className="control-group">
           <legend>Delivery Date</legend>
           <label htmlFor="delivery-date">Choose a date</label>
-          <input type="date" id="delivery-date" data-testid="date-picker"
-                 value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
+          <div data-testid="date-picker">
+            <DatePicker
+              id="delivery-date"
+              selected={deliveryDate}
+              onChange={(date: Date | null) => setDeliveryDate(date)}
+              placeholderText="Select a date"
+              dateFormat="MM/dd/yyyy"
+              className="datepicker-input"
+            />
+          </div>
           <div data-testid="date-output" className="date-output" aria-live="polite">
             {formatDate(deliveryDate)}
           </div>
