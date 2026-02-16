@@ -149,15 +149,15 @@ All 8 apps **must** use this exact dataset to ensure cross-app test assertions a
 | Radio button group | Mutually exclusive options, selection affects visible state | Shipping method (Standard / Express / Overnight) with displayed cost | `data-testid="radio-group"` |
 | Radio output | Displays the cost/label for the selected radio option | Shipping cost (e.g., "$4.99", "$9.99", "$19.99") | `data-testid="radio-output"` |
 | Data table | Tabular data with at least 4 columns and 3+ rows | Product catalog (Name, Price, Category, Stock) | `data-testid="data-table"` |
-| Date picker | Native `<input type="date">`, selection reflected in UI | Delivery date selection | `data-testid="date-picker"` |
+| Date picker | Native `<input type="date">` in baseline; technology-native date picker in framework apps (see §6.7) | Delivery date selection | `data-testid="date-picker"` |
 | Date output | Displays the formatted selected date | Chosen delivery date (e.g., "February 20, 2026") | `data-testid="date-output"` |
 | Quantity stepper | Numeric input with increment/decrement controls (+/−) | Product quantity selector | `data-testid="quantity-input"` |
 | Quantity increment | The "+" button of the quantity stepper | Increases quantity by 1 (disabled at 99) | `data-testid="quantity-increment"` |
 | Quantity decrement | The "−" button of the quantity stepper | Decreases quantity by 1 (disabled at 1) | `data-testid="quantity-decrement"` |
 | Modal trigger | Button or link that opens the modal dialog | "View Details" link/button on a product row | `data-testid="modal-trigger"` |
-| Modal / Dialog | Overlay that opens and closes, contains content | Product detail or order confirmation dialog | `data-testid="modal-dialog"` |
+| Modal / Dialog | Overlay that opens and closes, contains content; native `<dialog>` in baseline, technology-native dialog in framework apps (see §6.7) | Product detail or order confirmation dialog | `data-testid="modal-dialog"` |
 | Modal close | Button that closes the modal dialog | Close button inside the modal | `data-testid="modal-close"` |
-| Toast / Notification | Temporary message that auto-dismisses after a timeout | "Added to cart" feedback — **must** be triggered by `action-button` click (auto-dismiss after 3s) | `data-testid="toast-notification"` |
+| Toast / Notification | Temporary message that auto-dismisses after a timeout; custom in baseline, technology-native toast library in framework apps (see §6.7) | "Added to cart" feedback — **must** be triggered by `action-button` click (auto-dismiss after 3s) | `data-testid="toast-notification"` |
 
 ### 6.3 Dynamic Behaviors
 
@@ -212,6 +212,42 @@ To ensure all 8 apps behave identically (enabling "one test suite, any app"), th
 | **Quantity stepper bounds** | Minimum value: `1`. Maximum value: `99`. The `−` button is disabled at 1; the `+` button is disabled at 99. Default value on load: `1`. |
 
 > These rules are intentionally minimal. The goal is behavioral consistency across apps, not feature richness.
+
+### 6.7 Technology-Native Components
+
+The `vanilla-html` app uses only native HTML elements (`<input type="date">`, `<dialog>`, `<select>`, etc.) and serves as the **pure baseline**. Framework apps should use **idiomatic, technology-native component libraries** for select UI elements. This ensures the test framework is validated against the kind of DOM structures teams actually ship in production, not just native HTML wrappers.
+
+#### Principles
+
+1. **`data-testid` contract is unchanged.** Every element still carries its required `data-testid` regardless of implementation. The test framework uses these as anchors.
+2. **Behavioral contract is unchanged.** Same inputs produce same outputs — filter logic, sort order, stepper bounds, toast timing, etc. The *what* doesn't change; the *how* changes.
+3. **Interaction model becomes technology-aware.** The test framework must abstract over different DOM structures to verify identical outcomes. For example, selecting a date in a native `<input type="date">` uses `page.fill()`, while a React datepicker requires clicking to open, navigating months, and clicking a day cell.
+4. **Data table stays native `<table>`.** Framework table components (AG Grid, TanStack Table, etc.) add too much scope and complexity. Native `<table>` is sufficient to validate table interactions and keeps the apps trivially simple (G2).
+
+#### Component Matrix
+
+| Element | `vanilla-html` | `react-app` | `vue-app` | `angular-app` | `svelte-app` | `nextjs-app` | `lit-app` | `htmx-app` |
+|---------|---------------|-------------|-----------|---------------|-------------|-------------|---------|------------|
+| Date picker | Native `<input type="date">` | `react-datepicker` | `vue-datepicker` | Angular Material `mat-datepicker` | `svelte-flatpickr` or similar | `react-datepicker` | Native `<input type="date">` | Native `<input type="date">` |
+| Modal / Dialog | Native `<dialog>` | MUI `Dialog` or Headless UI | Headless UI Vue or Vuetify dialog | Angular CDK `Dialog` | Svelte Headless UI or custom | MUI `Dialog` or Headless UI | Native `<dialog>` (Shadow DOM) | Native `<dialog>` |
+| Toast | Custom `<div>` | `react-hot-toast` or `sonner` | `vue-toastification` | Angular Material `MatSnackBar` | `svelte-french-toast` or similar | `react-hot-toast` or `sonner` | Custom (Shadow DOM) | Custom `<div>` |
+| Select / Dropdown | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` |
+
+> **Select stays native everywhere.** Custom dropdowns (Headless UI Listbox, MUI Select, etc.) can be added in a future version (v0.2+) if the framework team wants to validate custom-dropdown interaction strategies. For v0.1, native `<select>` provides consistent behavior with minimal complexity.
+>
+> **Lit and HTMX stay fully native.** Lit's purpose is Shadow DOM testing, not component library testing. HTMX is intentionally zero-JS-framework. Neither benefits from third-party UI components.
+>
+> **Library choices are suggestions, not mandates.** The specific library for each cell can be adjusted based on ecosystem health at build time. The requirement is that the app uses a **technology-idiomatic component**, not a specific package.
+
+#### Impact on Testing Strategy
+
+With this change, the framework's testing strategy shifts from:
+- ❌ "One test suite with identical interactions for all apps"
+
+To:
+- ✅ "One **assertion set** (verify same outcomes via `data-testid` anchors) with **technology-aware interactions** (different click/input sequences per component type)"
+
+This is a more realistic model of how production test frameworks operate. The framework should expose a component-aware abstraction layer (e.g., `datePicker.select(date)` that dispatches to the right interaction strategy based on the detected component type).
 
 ---
 

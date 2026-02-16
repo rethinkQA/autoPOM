@@ -126,6 +126,34 @@ All 8 apps **must** use this exact dataset:
 
 ---
 
+## Technology-Native Components
+
+The `vanilla-html` app uses only native HTML elements and serves as the **pure baseline**. Framework apps use **idiomatic, technology-native component libraries** for select UI elements, ensuring the test framework is validated against real-world DOM structures.
+
+### Rules
+
+1. **`data-testid` contract is unchanged.** Every element still carries its test ID regardless of implementation.
+2. **Behavioral contract is unchanged.** Same inputs → same outputs.
+3. **Interaction model becomes technology-aware.** The test framework abstracts over different DOM structures to verify identical outcomes.
+4. **Data table stays native `<table>` everywhere.** Select stays native `<select>` everywhere.
+
+### Component Matrix
+
+| Element | `vanilla-html` | `react-app` | `vue-app` | `angular-app` | `svelte-app` | `nextjs-app` | `lit-app` | `htmx-app` |
+|---------|---------------|-------------|-----------|---------------|-------------|-------------|---------|------------|
+| Date picker | Native `<input type="date">` | `react-datepicker` | `vue-datepicker` | Angular Material `mat-datepicker` | `svelte-flatpickr` or similar | `react-datepicker` | Native `<input type="date">` | Native `<input type="date">` |
+| Modal / Dialog | Native `<dialog>` | MUI `Dialog` or Headless UI | Headless UI Vue or Vuetify | Angular CDK `Dialog` | Svelte Headless UI or custom | MUI `Dialog` or Headless UI | Native `<dialog>` (Shadow DOM) | Native `<dialog>` |
+| Toast | Custom `<div>` | `react-hot-toast` or `sonner` | `vue-toastification` | Angular Material `MatSnackBar` | `svelte-french-toast` or similar | `react-hot-toast` or `sonner` | Custom (Shadow DOM) | Custom `<div>` |
+| Select | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` |
+
+> Lit and HTMX stay fully native. Library choices are suggestions — the requirement is **technology-idiomatic**, not a specific package.
+
+### Testing Strategy
+
+One **assertion set** (verify outcomes via `data-testid`) with **technology-aware interactions** (different click/input sequences per component type).
+
+---
+
 ## Complete `data-testid` Reference
 
 Quick-reference list of every required test ID:
