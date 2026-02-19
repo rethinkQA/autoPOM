@@ -179,7 +179,7 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
   ```
 - [x] Update root `README.md` with final status and instructions
 - [x] Update `shared/ui-contract.md` with any amendments discovered during implementation
-- [ ] Tag the repo as `v0.1.0`
+- [x] Tag the repo as `v0.1.0`
 
 ---
 
