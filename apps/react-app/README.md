@@ -29,13 +29,13 @@ This app implements the full GeneralStore UI contract as defined in [`shared/ui-
 | `#/` (default) | Product catalog with all interactive elements |
 | `#/about` | Store description |
 
-### All `data-testid` Attributes
+### Element Identification
 
-Page structure: `app-header`, `nav-home`, `nav-about`, `main-content`, `about-text`, `app-footer`
+Elements are identified using native HTML semantics rather than `data-testid` attributes:
 
-Interactive elements: `text-input`, `action-button`, `action-output`, `toggle-checkbox`, `select-dropdown`, `radio-group`, `radio-output`, `data-table`, `table-sort`, `table-filter`, `empty-state`, `date-picker`, `date-output`, `quantity-input`, `quantity-increment`, `quantity-decrement`, `modal-trigger`, `modal-dialog`, `modal-close`, `toast-notification`
-
-Dynamic content: `item-list`, `delayed-content`, `validation-message`
+- **Page structure:** Semantic elements (`<header>`, `<nav>`, `<main>`, `<footer>`), ARIA roles, and CSS classes
+- **Interactive elements:** `id` attributes, ARIA labels, `role` attributes, and semantic elements (e.g., `<dialog>`, `<table>`, `<select>`)
+- **Dynamic content:** CSS classes, ARIA live regions, and semantic markup
 
 ## File Structure
 

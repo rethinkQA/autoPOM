@@ -8,35 +8,34 @@
 </head>
 <body>
   <!-- ===== HEADER ===== -->
-  <header data-testid="app-header">
+  <header>
     <h1>GeneralStore <span class="tech-badge">Vanilla HTML</span></h1>
     <nav>
-      <a href="#home" data-testid="nav-home" class="nav-link active">Home</a>
-      <a href="#about" data-testid="nav-about" class="nav-link">About</a>
+      <a href="#home" class="nav-link active">Home</a>
+      <a href="#about" class="nav-link">About</a>
     </nav>
   </header>
 
   <!-- ===== MAIN CONTENT ===== -->
-  <main data-testid="main-content">
+  <main>
 
     <!-- ===== HOME VIEW ===== -->
     <section id="view-home">
 
       <!-- Filter Controls -->
-      <div data-testid="table-filter" class="filter-bar">
+      <div class="filter-bar">
         <div class="filter-group">
           <label for="search-input">Search Products</label>
           <input
             type="text"
             id="search-input"
-            data-testid="text-input"
             placeholder="Search by name…"
           >
         </div>
 
         <div class="filter-group">
           <label for="category-select">Category</label>
-          <select id="category-select" data-testid="select-dropdown">
+          <select id="category-select">
             <option value="All">All</option>
             <option value="Electronics">Electronics</option>
             <option value="Books">Books</option>
@@ -45,22 +44,22 @@
         </div>
 
         <div class="filter-group filter-checkbox">
-          <input type="checkbox" id="stock-checkbox" data-testid="toggle-checkbox">
+          <input type="checkbox" id="stock-checkbox">
           <label for="stock-checkbox">Show only in-stock items</label>
         </div>
       </div>
 
       <!-- Validation Message -->
-      <div data-testid="validation-message" class="validation-message" aria-live="polite" hidden></div>
+      <div id="validation-message" class="validation-message" aria-live="polite" hidden></div>
 
       <!-- Product Data Table -->
-      <table data-testid="data-table" class="data-table">
+      <table class="data-table">
         <thead>
           <tr>
-            <th data-testid="table-sort" data-sort-key="name" role="button" tabindex="0" aria-label="Sort by Name">Name ⇅</th>
-            <th data-testid="table-sort" data-sort-key="price" role="button" tabindex="0" aria-label="Sort by Price">Price ⇅</th>
-            <th data-testid="table-sort" data-sort-key="category" role="button" tabindex="0" aria-label="Sort by Category">Category ⇅</th>
-            <th data-testid="table-sort" data-sort-key="stock" role="button" tabindex="0" aria-label="Sort by Stock">Stock ⇅</th>
+            <th data-sort-key="name" role="button" tabindex="0" aria-label="Sort by Name">Name ⇅</th>
+            <th data-sort-key="price" role="button" tabindex="0" aria-label="Sort by Price">Price ⇅</th>
+            <th data-sort-key="category" role="button" tabindex="0" aria-label="Sort by Category">Category ⇅</th>
+            <th data-sort-key="stock" role="button" tabindex="0" aria-label="Sort by Stock">Stock ⇅</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -75,10 +74,10 @@
         <fieldset class="control-group">
           <legend>Quantity</legend>
           <div class="stepper">
-            <button data-testid="quantity-decrement" aria-label="Decrease quantity" disabled>−</button>
+            <button id="quantity-decrement" aria-label="Decrease quantity" disabled>−</button>
             <input
               type="number"
-              data-testid="quantity-input"
+             
               id="quantity-input"
               value="1"
               min="1"
@@ -86,12 +85,12 @@
               readonly
               aria-label="Quantity"
             >
-            <button data-testid="quantity-increment" aria-label="Increase quantity">+</button>
+            <button id="quantity-increment" aria-label="Increase quantity">+</button>
           </div>
         </fieldset>
 
         <!-- Shipping Radio Group -->
-        <fieldset class="control-group" data-testid="radio-group">
+        <fieldset id="shipping-group" class="control-group radio-group">
           <legend>Shipping Method</legend>
           <label>
             <input type="radio" name="shipping" value="standard" checked> Standard — <span>$4.99</span>
@@ -102,28 +101,28 @@
           <label>
             <input type="radio" name="shipping" value="overnight"> Overnight — <span>$19.99</span>
           </label>
-          <div data-testid="radio-output" class="radio-output" aria-live="polite">Shipping: $4.99</div>
+          <div id="radio-output" class="radio-output" aria-live="polite">Shipping: $4.99</div>
         </fieldset>
 
         <!-- Date Picker -->
         <fieldset class="control-group">
           <legend>Delivery Date</legend>
           <label for="delivery-date">Choose a date</label>
-          <input type="date" id="delivery-date" data-testid="date-picker">
-          <div data-testid="date-output" class="date-output" aria-live="polite"></div>
+          <input type="date" id="delivery-date">
+          <div id="date-output" class="date-output" aria-live="polite"></div>
         </fieldset>
       </div>
 
       <!-- Action Button + Output -->
       <div class="action-area">
-        <button data-testid="action-button" class="btn-primary">Add to Cart</button>
-        <div data-testid="action-output" class="action-output" aria-live="polite"></div>
+        <button id="action-button" class="btn-primary">Add to Cart</button>
+        <div id="action-output" class="action-output" aria-live="polite"></div>
       </div>
 
       <!-- Item List -->
       <div class="section">
         <h2>Popular Items</h2>
-        <ul data-testid="item-list">
+        <ul class="item-list">
           <li>Wireless Mouse</li>
           <li>Bluetooth Keyboard</li>
           <li>Running Shoes</li>
@@ -133,13 +132,13 @@
       <!-- Delayed Content -->
       <div class="section">
         <h2>Recommendations</h2>
-        <div data-testid="delayed-content" aria-live="polite">Loading recommendations…</div>
+        <div id="delayed-content" aria-live="polite">Loading recommendations…</div>
       </div>
     </section>
 
     <!-- ===== ABOUT VIEW ===== -->
     <section id="view-about" hidden>
-      <p data-testid="about-text">
+      <p class="about-text">
         Welcome to <strong>GeneralStore</strong> — your one-stop shop for everyday essentials.
         We carry electronics, clothing, and books at unbeatable prices. This store is a demo
         application built with plain HTML, CSS, and JavaScript, with no framework or build tools.
@@ -148,19 +147,19 @@
   </main>
 
   <!-- ===== MODAL / DIALOG ===== -->
-  <dialog data-testid="modal-dialog" id="product-modal" class="modal">
+  <dialog id="product-modal" class="modal">
     <div class="modal-content">
       <h2 id="modal-title">Product Details</h2>
       <p id="modal-body"></p>
-      <button data-testid="modal-close" class="btn-secondary" aria-label="Close dialog">Close</button>
+      <button id="modal-close" class="btn-secondary" aria-label="Close dialog">Close</button>
     </div>
   </dialog>
 
   <!-- ===== TOAST ===== -->
-  <div data-testid="toast-notification" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="toast-notification" class="toast" role="status" aria-live="polite" hidden></div>
 
   <!-- ===== FOOTER ===== -->
-  <footer data-testid="app-footer">
+  <footer>
     <p>&copy; 2026 GeneralStore — Vanilla HTML Test Target</p>
   </footer>
 

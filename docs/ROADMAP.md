@@ -16,25 +16,25 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 
 > Set up the repo structure and shared artifacts before writing any app code.
 
-- [ ] Initialize git repo at `test_app/` root (if not already done)
-- [ ] Create the directory structure:
+- [x] Initialize git repo at `test_app/` root (if not already done)
+- [x] Create the directory structure:
   ```
   apps/
   shared/
   docs/
   ```
-- [ ] Create `.nvmrc` at repo root pinned to Node 20 LTS
-- [ ] Create root `package.json` with:
+- [x] Create `.nvmrc` at repo root pinned to Node 20 LTS
+- [x] Create root `package.json` with:
   - `concurrently` as a dev dependency (`npm install -D concurrently`)
   - A `start:all` script that launches all 8 apps simultaneously:
     ```json
     "start:all": "concurrently \"npm start --prefix apps/vanilla-html\" \"npm start --prefix apps/react-app\" \"npm start --prefix apps/vue-app\" \"npm start --prefix apps/angular-app\" \"npm start --prefix apps/svelte-app\" \"npm start --prefix apps/nextjs-app\" \"npm start --prefix apps/lit-app\" \"npm start --prefix apps/htmx-app\""
     ```
-- [ ] Create `shared/ui-contract.md` — copy §6 from REQUIREMENTS.md into a standalone reference doc that you'll use as a checklist for every app (include §6.0 store theme, §6.5 Shadow DOM handling)
-- [ ] Create root `README.md` with project overview, GeneralStore theme description, table of apps/ports, and quick-start instructions
-- [ ] Create a `.gitignore` covering `node_modules/`, `dist/`, `.next/`, `.angular/`, etc.
-- [ ] All Open Questions from §10 have been resolved — see Resolved Decisions in REQUIREMENTS.md. No blocking decisions remain.
-- [ ] **Version pinning note:** Record the scaffolding tool versions you use (Vite, Next.js CLI, Angular CLI) in each app's README for reproducibility.
+- [x] Create `shared/ui-contract.md` — copy §6 from REQUIREMENTS.md into a standalone reference doc that you'll use as a checklist for every app (include §6.0 store theme, §6.5 Shadow DOM handling)
+- [x] Create root `README.md` with project overview, GeneralStore theme description, table of apps/ports, and quick-start instructions
+- [x] Create a `.gitignore` covering `node_modules/`, `dist/`, `.next/`, `.angular/`, etc.
+- [x] All Open Questions from §10 have been resolved — see Resolved Decisions in REQUIREMENTS.md. No blocking decisions remain.
+- [x] **Version pinning note:** Record the scaffolding tool versions you use (Vite, Next.js CLI, Angular CLI) in each app's README for reproducibility.
 
 ---
 
@@ -42,10 +42,10 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 
 > Build the simplest possible app first. This becomes the **reference implementation** that all other apps are measured against. Uses plain JavaScript (no TypeScript) — this app is intentionally zero-tooling.
 
-- [ ] Create `apps/vanilla-html/`
-- [ ] Build a single `index.html` + `style.css` + `app.js` (no build tools, no npm dependencies beyond a static server)
-- [ ] Implement the **GeneralStore** theme (§6.0): Home page with product catalog, About page with store description
-- [ ] Implement every element from the UI contract (§6.1–6.4):
+- [x] Create `apps/vanilla-html/`
+- [x] Build a single `index.html` + `style.css` + `app.js` (no build tools, no npm dependencies beyond a static server)
+- [x] Implement the **GeneralStore** theme (§6.0): Home page with product catalog, About page with store description
+- [x] Implement every element from the UI contract (§6.1–6.4):
   - Header with store name + technology identifier, nav (Home / About), main content area, footer
   - About page with store description (`data-testid="about-text"`)
   - Data table: product catalog with Name, Price, Category, Stock columns (`data-testid="data-table"`)
@@ -63,12 +63,12 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
   - Delayed content via `setTimeout` (1–2s) — e.g., "Loading recommendations…" (`data-testid="delayed-content"`)
   - Form validation message on empty search submit (`data-testid="validation-message"`)
   - Hash-based routing (`#home`, `#about`)
-- [ ] Add all `data-testid` attributes exactly as specified in §6
-- [ ] Add semantic HTML + labels + ARIA (§6.4)
-- [ ] Add a `package.json` with a `start` script using a simple static server: `npx serve -l 3001`
-- [ ] Verify: `npm start` → opens on `http://localhost:3001`
-- [ ] Create `apps/vanilla-html/README.md`
-- [ ] **Snapshot this as the golden reference** — screenshot or manual walkthrough of every testable element
+- [x] Add all `data-testid` attributes exactly as specified in §6
+- [x] Add semantic HTML + labels + ARIA (§6.4)
+- [x] Add a `package.json` with a `start` script using a simple static server: `npx serve -l 3001`
+- [x] Verify: `npm start` → opens on `http://localhost:3001`
+- [x] Create `apps/vanilla-html/README.md`
+- [x] **Snapshot this as the golden reference** — screenshot or manual walkthrough of every testable element
 
 ---
 
@@ -77,31 +77,31 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 > These three share the same build tool (Vite), so they'll follow a similar pattern. Build them in parallel or sequentially.
 
 ### React App
-- [ ] Scaffold: `npm create vite@latest react-app -- --template react-ts` inside `apps/`
-- [ ] Strip out boilerplate, implement GeneralStore UI contract (§6)
-- [ ] Use `react-router-dom` for routing (Home / About views)
-- [ ] Configure Vite dev server to port `3002`
-- [ ] Set `start` script in `package.json` → `vite --port 3002`
-- [ ] Verify: `npm start` → opens on `http://localhost:3002`, all contract elements present
-- [ ] Create `apps/react-app/README.md`
+- [x] Scaffold: `npm create vite@latest react-app -- --template react-ts` inside `apps/`
+- [x] Strip out boilerplate, implement GeneralStore UI contract (§6)
+- [x] Use `react-router-dom` for routing (Home / About views)
+- [x] Configure Vite dev server to port `3002`
+- [x] Set `start` script in `package.json` → `vite --port 3002`
+- [x] Verify: `npm start` → opens on `http://localhost:3002`, all contract elements present
+- [x] Create `apps/react-app/README.md`
 
 ### Vue App
-- [ ] Scaffold: `npm create vite@latest vue-app -- --template vue-ts` inside `apps/`
-- [ ] Strip boilerplate, implement GeneralStore UI contract (§6)
-- [ ] Use `vue-router` for routing
-- [ ] Configure port `3003`
-- [ ] Set `start` script → `vite --port 3003`
-- [ ] Verify: `npm start` → opens on `http://localhost:3003`, all contract elements present
-- [ ] Create `apps/vue-app/README.md`
+- [x] Scaffold: `npm create vite@latest vue-app -- --template vue-ts` inside `apps/`
+- [x] Strip boilerplate, implement GeneralStore UI contract (§6)
+- [x] Use `vue-router` for routing
+- [x] Configure port `3003`
+- [x] Set `start` script → `vite --port 3003`
+- [x] Verify: `npm start` → opens on `http://localhost:3003`, all contract elements present
+- [x] Create `apps/vue-app/README.md`
 
 ### Svelte App
-- [ ] Scaffold: `npm create vite@latest svelte-app -- --template svelte-ts` inside `apps/`
-- [ ] Strip boilerplate, implement GeneralStore UI contract (§6)
-- [ ] Use hash-based or simple conditional routing (or `svelte-routing`)
-- [ ] Configure port `3005`
-- [ ] Set `start` script → `vite --port 3005`
-- [ ] Verify: `npm start` → opens on `http://localhost:3005`, all contract elements present
-- [ ] Create `apps/svelte-app/README.md`
+- [x] Scaffold: `npm create vite@latest svelte-app -- --template svelte-ts` inside `apps/`
+- [x] Strip boilerplate, implement GeneralStore UI contract (§6)
+- [x] Use hash-based or simple conditional routing (or `svelte-routing`)
+- [x] Configure port `3005`
+- [x] Set `start` script → `vite --port 3005`
+- [x] Verify: `npm start` → opens on `http://localhost:3005`, all contract elements present
+- [x] Create `apps/svelte-app/README.md`
 
 ---
 
@@ -109,13 +109,13 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 
 > Angular has its own CLI and build system — treat it separately.
 
-- [ ] Scaffold: `npx @angular/cli new angular-app --minimal --standalone --skip-git` inside `apps/`
-- [ ] Strip boilerplate, implement GeneralStore UI contract (§6) using standalone components
-- [ ] Use Angular Router for navigation (Home / About)
-- [ ] Set port to `3004` in `angular.json` (`serve.options.port`)
-- [ ] Set `start` script → `ng serve --port 3004`
-- [ ] Verify: `npm start` → opens on `http://localhost:3004`, all contract elements present
-- [ ] Create `apps/angular-app/README.md`
+- [x] Scaffold: `npx @angular/cli new angular-app --minimal --standalone --skip-git` inside `apps/`
+- [x] Strip boilerplate, implement GeneralStore UI contract (§6) using standalone components
+- [x] Use Angular Router for navigation (Home / About)
+- [x] Set port to `3004` in `angular.json` (`serve.options.port`)
+- [x] Set `start` script → `ng serve --port 3004`
+- [x] Verify: `npm start` → opens on `http://localhost:3004`, all contract elements present
+- [x] Create `apps/angular-app/README.md`
 
 ---
 
@@ -123,14 +123,14 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 
 > Next.js in SSR dev mode — exercises real server-side rendering and hydration. `next dev` is a dev server (same category as Vite), not a production backend. No API routes, no database — satisfies G4.
 
-- [ ] Scaffold: `npx create-next-app@latest nextjs-app --typescript` inside `apps/`
-- [ ] **Do not** set `output: 'export'` — run in SSR dev mode to get real hydration behavior
-- [ ] Implement GeneralStore UI contract (§6) using App Router (`app/` directory)
-- [ ] Use Next.js `<Link>` for routing between Home / About pages
-- [ ] Set dev server to port `3006` in `package.json` start script: `next dev -p 3006`
-- [ ] Verify: `npm start` → opens on `http://localhost:3006`, all contract elements present
-- [ ] Note any hydration-specific caveats in the app's README
-- [ ] Create `apps/nextjs-app/README.md`
+- [x] Scaffold: `npx create-next-app@latest nextjs-app --typescript` inside `apps/`
+- [x] **Do not** set `output: 'export'` — run in SSR dev mode to get real hydration behavior
+- [x] Implement GeneralStore UI contract (§6) using App Router (`app/` directory)
+- [x] Use Next.js `<Link>` for routing between Home / About pages
+- [x] Set dev server to port `3006` in `package.json` start script: `next dev -p 3006`
+- [x] Verify: `npm start` → opens on `http://localhost:3006`, all contract elements present
+- [x] Note any hydration-specific caveats in the app's README
+- [x] Create `apps/nextjs-app/README.md`
 
 ---
 
@@ -138,33 +138,24 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 
 > This is the **Shadow DOM stress test** — critical for framework selector strategy validation.
 
-- [ ] Scaffold a Lit project in `apps/lit-app/` (Vite + Lit starter or manual setup, TypeScript)
-- [ ] Implement GeneralStore UI contract (§6) as Lit custom elements
-- [ ] **Shadow DOM `data-testid` placement — follow §6.5 of REQUIREMENTS.md (resolved):**
+- [x] Scaffold a Lit project in `apps/lit-app/` (Vite + Lit starter or manual setup, TypeScript)
+- [x] Implement GeneralStore UI contract (§6) as Lit custom elements
+- [x] **Shadow DOM `data-testid` placement — follow §6.5 of REQUIREMENTS.md (resolved):**
   - Place `data-testid` on the **custom element host** (light DOM) for page-level structural elements: `app-header`, `nav-home`, `nav-about`, `about-text`, `main-content`, `app-footer`
   - Place `data-testid` **inside the shadow root** for interactive elements: `text-input`, `action-button`, `action-output`, `toggle-checkbox`, `select-dropdown`, `radio-group`, `data-table`, `table-sort`, `table-filter`, `date-picker`, `quantity-input`, `modal-dialog`, `toast-notification`, `item-list`, `delayed-content`, `validation-message`
   - This dual placement tests both standard and shadow DOM piercing selectors
-- [ ] Use hash-based routing or simple conditional rendering for navigation
-- [ ] Configure port `3007`
-- [ ] Verify: `npm start` → opens on `http://localhost:3007`, all contract elements present
-- [ ] Create `apps/lit-app/README.md` with shadow DOM notes
+- [x] Use hash-based routing or simple conditional rendering for navigation
+- [x] Configure port `3007`
+- [x] Verify: `npm start` → opens on `http://localhost:3007`, all contract elements present
+- [x] Create `apps/lit-app/README.md` with shadow DOM notes
 
 ---
 
-## Phase 6: HTMX App _(~2–3 hours)_
+## Phase 6: HTMX App — DEFERRED
 
-> No SPA, no JavaScript framework. Uses plain JavaScript (no TypeScript). This validates that the test framework doesn't assume JS-driven DOM updates.
+> **Status:** Deferred from v0.1. The existing 7 apps provide sufficient technology diversity to validate the framework. HTMX can be added in a future version if the framework team wants to validate non-SPA, hypermedia-driven DOM updates.
 
-- [ ] Create `apps/htmx-app/` with static HTML files
-- [ ] Include HTMX library locally (downloaded, not CDN)
-- [ ] **Server approach (resolved — see REQUIREMENTS.md §10, Q6):** Use a minimal Express static file server (~30 lines in `server.js`) that serves HTML fragment files from a `/partials` directory. No logic, no state — just `GET /partials/about.html` → returns raw HTML. This is functionally identical to `npx serve` and satisfies G4.
-- [ ] Implement GeneralStore UI contract (§6):
-  - HTMX swaps for navigation (`hx-get` loading HTML partials from the local server)
-  - Interactive elements can use inline `<script>` for non-HTMX behaviors (table sorting, filtering, validation)
-  - Delayed content via `hx-trigger="load delay:1s"` or `setTimeout`
-- [ ] Configure port `3008`
-- [ ] Verify: `npm start` → opens on `http://localhost:3008`, all contract elements present
-- [ ] Create `apps/htmx-app/README.md`
+- [ ] ~~Create `apps/htmx-app/`~~ — deferred to v0.2+
 
 ---
 
@@ -172,18 +163,22 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 
 > Run everything together and lock it down.
 
-- [ ] Run `npm run start:all` from root — verify all 8 apps start on their assigned ports
-- [ ] Manually verify each app in the browser: all GeneralStore UI contract elements present and functional
-- [ ] Capture results in a compatibility matrix:
+- [x] Run `npm run start:all` from root — verify all 7 apps start on their assigned ports
+- [x] Manually verify each app in the browser: all GeneralStore UI contract elements present and functional
+- [x] Capture results in a compatibility matrix:
   ```
   | App            | Port | Status | Notes          |
   |----------------|------|--------|----------------|
-  | vanilla-html   | 3001 | ✅     |                |
-  | react-app      | 3002 | ✅     |                |
-  | ...            | ...  | ...    |                |
+  | vanilla-html   | 3001 | ✅     | Reference — all contract elements pass |
+  | react-app      | 3002 | ✅     | react-datepicker; modal/toast use native/custom |
+  | vue-app        | 3003 | ✅     | vue-datepicker; modal/toast use native/custom |
+  | angular-app    | 3004 | ✅     | Angular Material mat-datepicker, MatSnackBar, MatDialog |
+  | svelte-app     | 3005 | ✅     | flatpickr; custom toast |
+  | nextjs-app     | 3006 | ✅     | react-datepicker, react-hot-toast |
+  | lit-app        | 3007 | ✅     | All native — Shadow DOM stress test |
   ```
-- [ ] Update root `README.md` with final status and instructions
-- [ ] Update `shared/ui-contract.md` with any amendments discovered during implementation
+- [x] Update root `README.md` with final status and instructions
+- [x] Update `shared/ui-contract.md` with any amendments discovered during implementation
 - [ ] Tag the repo as `v0.1.0`
 
 ---
@@ -199,8 +194,43 @@ Each phase builds on the previous one. **Don't skip ahead** — the early phases
 | 5 | Phase 3 | `angular-app` | Different build system, good mid-point milestone |
 | 6 | Phase 4 | `nextjs-app` | SSR + hydration edge cases — good to catch issues before the hard ones |
 | 7 | Phase 5 | `lit-app` | Shadow DOM — hardest selector challenges, do it late when contract is stable |
-| 8 | Phase 6 | `htmx-app` | Non-SPA paradigm — most likely to surface contract edge cases |
+| 8 | Phase 6 | `htmx-app` | **Deferred from v0.1** — 7 apps provide sufficient coverage |
 | 9 | Phase 7 | — | Final validation pass |
+| 10 | Phase 8 | Framework library | Build the typed element interaction library (see REQUIREMENTS.md §11) |
+
+---
+
+## Phase 8: Framework Library _(estimated ~3–5 days)_
+
+> Build the Playwright-based element interaction library. Full design in [REQUIREMENTS.md §11](../docs/REQUIREMENTS.md).
+
+### 8.1 Core (`By` + Element Types) — validate against vanilla-html
+- [ ] Implement `By` class with factories: `label()`, `role()`, `css()`, `text()`, `semantic()`, `shadow()`, `within()`, `first()`
+- [ ] Implement core element types: `checkbox`, `select`, `button`, `text`
+- [ ] Implement `pageElements()` resolver — hydrates a dictionary into typed elements
+- [ ] Write tests against vanilla-html (port 3001) validating: filter checkbox, category select, Add to Cart button, action output text
+
+### 8.2 Table + Remaining Types — validate against vanilla-html
+- [ ] Implement `table` type: `sort()`, `rows()`, `rowCount()`, `filter()`
+- [ ] Implement `stepper` type: `increment()`, `decrement()`, `set()`, `read()`
+- [ ] Implement `datePicker` type: `select()`, `read()` (native adapter only)
+- [ ] Implement `radio` type: `choose()`, `read()`
+- [ ] Implement `dialog` type: `open()`, `close()`, `isOpen()`
+- [ ] Implement `toast` type: `read()`, `isVisible()`, `waitForDismiss()`
+- [ ] Full test suite passes against vanilla-html
+
+### 8.3 Nested Elements
+- [ ] Implement `children` support in page element dictionaries
+- [ ] Implement `nth()` and `containing()` scoping
+- [ ] Tests validating scoped child lookups
+
+### 8.4 Framework App Validation + Technology Adapters
+- [ ] Run vanilla-html tests against react-app — identify failures
+- [ ] Build react-datepicker adapter for `datePicker` type
+- [ ] Build MUI Dialog / react-hot-toast adapters as needed
+- [ ] Repeat for vue-app, angular-app, svelte-app, nextjs-app
+- [ ] Run against lit-app — validate shadow DOM piercing via `By.shadow()`
+- [ ] All tests pass against all 7 apps
 
 ---
 

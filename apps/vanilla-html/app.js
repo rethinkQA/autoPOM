@@ -20,28 +20,28 @@ let sortKey = null;
 let sortAsc = true;
 
 // ===== DOM REFERENCES =====
-const searchInput     = document.querySelector('[data-testid="text-input"]');
-const categorySelect  = document.querySelector('[data-testid="select-dropdown"]');
-const stockCheckbox   = document.querySelector('[data-testid="toggle-checkbox"]');
+const searchInput     = document.getElementById('search-input');
+const categorySelect  = document.getElementById('category-select');
+const stockCheckbox   = document.getElementById('stock-checkbox');
 const tbody           = document.getElementById('product-tbody');
-const actionButton    = document.querySelector('[data-testid="action-button"]');
-const actionOutput    = document.querySelector('[data-testid="action-output"]');
-const validationMsg   = document.querySelector('[data-testid="validation-message"]');
-const quantityInput   = document.querySelector('[data-testid="quantity-input"]');
-const decrementBtn    = document.querySelector('[data-testid="quantity-decrement"]');
-const incrementBtn    = document.querySelector('[data-testid="quantity-increment"]');
-const radioGroup      = document.querySelector('[data-testid="radio-group"]');
-const radioOutput     = document.querySelector('[data-testid="radio-output"]');
-const datePicker      = document.querySelector('[data-testid="date-picker"]');
-const dateOutput      = document.querySelector('[data-testid="date-output"]');
-const modal           = document.querySelector('[data-testid="modal-dialog"]');
+const actionButton    = document.getElementById('action-button');
+const actionOutput    = document.getElementById('action-output');
+const validationMsg   = document.getElementById('validation-message');
+const quantityInput   = document.getElementById('quantity-input');
+const decrementBtn    = document.getElementById('quantity-decrement');
+const incrementBtn    = document.getElementById('quantity-increment');
+const radioGroup      = document.getElementById('shipping-group');
+const radioOutput     = document.getElementById('radio-output');
+const datePicker      = document.getElementById('delivery-date');
+const dateOutput      = document.getElementById('date-output');
+const modal           = document.getElementById('product-modal');
 const modalTitle      = document.getElementById('modal-title');
 const modalBody       = document.getElementById('modal-body');
-const modalClose      = document.querySelector('[data-testid="modal-close"]');
-const toast           = document.querySelector('[data-testid="toast-notification"]');
-const delayedContent  = document.querySelector('[data-testid="delayed-content"]');
-const navHome         = document.querySelector('[data-testid="nav-home"]');
-const navAbout        = document.querySelector('[data-testid="nav-about"]');
+const modalClose      = document.getElementById('modal-close');
+const toast           = document.getElementById('toast-notification');
+const delayedContent  = document.getElementById('delayed-content');
+const navHome         = document.querySelector('a[href="#home"]');
+const navAbout        = document.querySelector('a[href="#about"]');
 
 // ===== ROUTING =====
 function navigate() {
@@ -112,11 +112,11 @@ function renderTable() {
 
   if (products.length === 0) {
     const tr = document.createElement('tr');
-    tr.classList.add('empty-row');
+    tr.classList.add('empty-state');
     const td = document.createElement('td');
     td.colSpan = 5;
     td.textContent = 'No products found.';
-    td.setAttribute('data-testid', 'empty-state');
+    td.classList.add('empty-state');
     tr.appendChild(td);
     tbody.appendChild(tr);
     return;
@@ -129,7 +129,6 @@ function renderTable() {
     const nameTd = document.createElement('td');
     const triggerBtn = document.createElement('button');
     triggerBtn.classList.add('view-details-btn');
-    triggerBtn.setAttribute('data-testid', 'modal-trigger');
     triggerBtn.textContent = product.name;
     triggerBtn.addEventListener('click', () => openModal(product));
     nameTd.appendChild(triggerBtn);
@@ -153,7 +152,6 @@ function renderTable() {
     // Actions — Add to Cart
     const actionTd = document.createElement('td');
     const addBtn = document.createElement('button');
-    addBtn.setAttribute('data-testid', 'action-button');
     addBtn.classList.add('btn-primary');
     addBtn.style.fontSize = '0.8rem';
     addBtn.style.padding = '0.3rem 0.8rem';
@@ -168,7 +166,7 @@ function renderTable() {
 
 // ===== SORTING =====
 function setupSorting() {
-  const headers = document.querySelectorAll('[data-testid="table-sort"]');
+  const headers = document.querySelectorAll('th[data-sort-key]');
   headers.forEach(th => {
     th.addEventListener('click', () => handleSort(th));
     th.addEventListener('keydown', (e) => {
@@ -182,7 +180,7 @@ function setupSorting() {
 
 function handleSort(th) {
   const key = th.dataset.sortKey;
-  const headers = document.querySelectorAll('[data-testid="table-sort"]');
+  const headers = document.querySelectorAll('th[data-sort-key]');
 
   if (sortKey === key) {
     // Toggle: asc → desc → asc (no neutral)

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeneralStore — Lit</title>
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #1a1a1a;
+      background: #f5f5f5;
+      min-height: 100vh;
+    }
+
+    /* ===== App shell (light DOM) structural styles ===== */
+    general-store-app {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    general-store-app > header {
+      background: #2c3e50;
+      color: #fff;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    general-store-app > header h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+    }
+
+    .tech-badge {
+      background: #3498db;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 400;
+      vertical-align: middle;
+      margin-left: 0.5rem;
+    }
+
+    general-store-app nav {
+      display: flex;
+      gap: 1rem;
+    }
+
+    general-store-app .nav-link {
+      color: #ecf0f1;
+      text-decoration: none;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+
+    general-store-app .nav-link:hover,
+    general-store-app .nav-link.active {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    general-store-app > main {
+      flex: 1;
+      padding: 2rem;
+      max-width: 1000px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    general-store-app > footer {
+      background: #2c3e50;
+      color: #aaa;
+      text-align: center;
+      padding: 1rem 2rem;
+      font-size: 0.8rem;
+    }
+
+    general-store-app > footer p {
+      margin: 0;
+    }
+
+    /* About page (light DOM — about-text is a structural element per §6.5) */
+    general-store-about p {
+      font-size: 1rem;
+      line-height: 1.8;
+      max-width: 600px;
+    }
+  </style>
+</head>
+<body>
+  <general-store-app></general-store-app>
+  <script type="module" src="/src/general-store-app.ts"></script>
+</body>
+</html>

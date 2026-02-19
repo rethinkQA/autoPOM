@@ -142,13 +142,13 @@ export default function Home() {
   return (
     <>
       {/* Filter Controls */}
-      <div data-testid="table-filter" className="filter-bar">
+      <div className="filter-bar">
         <div className="filter-group">
           <label htmlFor="search-input">Search Products</label>
           <input
             type="text"
             id="search-input"
-            data-testid="text-input"
+           
             placeholder="Search by name…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -159,7 +159,7 @@ export default function Home() {
           <label htmlFor="category-select">Category</label>
           <select
             id="category-select"
-            data-testid="select-dropdown"
+           
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           >
@@ -172,7 +172,7 @@ export default function Home() {
           <input
             type="checkbox"
             id="stock-checkbox"
-            data-testid="toggle-checkbox"
+           
             checked={inStockOnly}
             onChange={(e) => setInStockOnly(e.target.checked)}
           />
@@ -182,28 +182,28 @@ export default function Home() {
 
       {/* Validation Message */}
       {showValidation && (
-        <div data-testid="validation-message" className="validation-message" aria-live="polite">
+        <div className="validation-message" aria-live="polite">
           {validationMsg}
         </div>
       )}
 
       {/* Product Data Table */}
-      <table data-testid="data-table" className="data-table">
+      <table className="data-table">
         <thead>
           <tr>
-            <th data-testid="table-sort" role="button" tabIndex={0} aria-label="Sort by Name"
+            <th role="button" tabIndex={0} data-sort-key="name" aria-label="Sort by Name"
                 onClick={() => handleSort('name')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('name'); }}}>
               Name{getSortIndicator('name')}
             </th>
-            <th data-testid="table-sort" role="button" tabIndex={0} aria-label="Sort by Price"
+            <th role="button" tabIndex={0} data-sort-key="price" aria-label="Sort by Price"
                 onClick={() => handleSort('price')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('price'); }}}>
               Price{getSortIndicator('price')}
             </th>
-            <th data-testid="table-sort" role="button" tabIndex={0} aria-label="Sort by Category"
+            <th role="button" tabIndex={0} data-sort-key="category" aria-label="Sort by Category"
                 onClick={() => handleSort('category')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('category'); }}}>
               Category{getSortIndicator('category')}
             </th>
-            <th data-testid="table-sort" role="button" tabIndex={0} aria-label="Sort by Stock"
+            <th role="button" tabIndex={0} data-sort-key="stock" aria-label="Sort by Stock"
                 onClick={() => handleSort('stock')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('stock'); }}}>
               Stock{getSortIndicator('stock')}
             </th>
@@ -212,14 +212,14 @@ export default function Home() {
         </thead>
         <tbody>
           {filteredProducts.length === 0 ? (
-            <tr className="empty-row">
-              <td colSpan={5} data-testid="empty-state">No products found.</td>
+            <tr className="empty-state">
+              <td colSpan={5}>No products found.</td>
             </tr>
           ) : (
             filteredProducts.map((product) => (
               <tr key={product.name}>
                 <td>
-                  <button className="view-details-btn" data-testid="modal-trigger"
+                  <button className="view-details-btn"
                           onClick={() => openModal(product)}>
                     {product.name}
                   </button>
@@ -228,7 +228,7 @@ export default function Home() {
                 <td>{product.category}</td>
                 <td>{product.inStock ? 'Yes' : 'No'}</td>
                 <td>
-                  <button className="btn-primary btn-sm" data-testid="action-button"
+                  <button className="btn-primary btn-sm"
                           onClick={() => addToCart(product)}>
                     Add to Cart
                   </button>
@@ -245,17 +245,17 @@ export default function Home() {
         <fieldset className="control-group">
           <legend>Quantity</legend>
           <div className="stepper">
-            <button data-testid="quantity-decrement" aria-label="Decrease quantity"
+            <button aria-label="Decrease quantity"
                     disabled={quantity <= 1} onClick={() => setQuantity((q) => Math.max(1, q - 1))}>−</button>
-            <input type="number" data-testid="quantity-input" id="quantity-input"
+            <input type="number" id="quantity-input"
                    value={quantity} min={1} max={99} readOnly aria-label="Quantity" />
-            <button data-testid="quantity-increment" aria-label="Increase quantity"
+            <button aria-label="Increase quantity"
                     disabled={quantity >= 99} onClick={() => setQuantity((q) => Math.min(99, q + 1))}>+</button>
           </div>
         </fieldset>
 
         {/* Shipping Radio Group */}
-        <fieldset className="control-group" data-testid="radio-group">
+        <fieldset className="control-group radio-group">
           <legend>Shipping Method</legend>
           {Object.entries(SHIPPING).map(([key, { label, cost }]) => (
             <label key={key}>
@@ -264,7 +264,7 @@ export default function Home() {
               {' '}{label} — <span>${cost.toFixed(2)}</span>
             </label>
           ))}
-          <div data-testid="radio-output" className="radio-output" aria-live="polite">
+          <div className="radio-output" aria-live="polite">
             Shipping: ${SHIPPING[shipping].cost.toFixed(2)}
           </div>
         </fieldset>
@@ -273,7 +273,7 @@ export default function Home() {
         <fieldset className="control-group">
           <legend>Delivery Date</legend>
           <label htmlFor="delivery-date">Choose a date</label>
-          <div data-testid="date-picker">
+          <div>
             <DatePicker
               id="delivery-date"
               selected={deliveryDate}
@@ -283,7 +283,7 @@ export default function Home() {
               className="datepicker-input"
             />
           </div>
-          <div data-testid="date-output" className="date-output" aria-live="polite">
+          <div className="date-output" aria-live="polite">
             {formatDate(deliveryDate)}
           </div>
         </fieldset>
@@ -291,10 +291,10 @@ export default function Home() {
 
       {/* Action Button + Output */}
       <div className="action-area">
-        <button data-testid="action-button" className="btn-primary" onClick={handleActionButton}>
+        <button className="btn-primary" onClick={handleActionButton}>
           Add to Cart
         </button>
-        <div data-testid="action-output" className="action-output" aria-live="polite">
+        <div className="action-output" aria-live="polite">
           {actionOutput}
         </div>
       </div>
@@ -302,7 +302,7 @@ export default function Home() {
       {/* Item List */}
       <div className="section">
         <h2>Popular Items</h2>
-        <ul data-testid="item-list">
+        <ul className="item-list">
           <li>Wireless Mouse</li>
           <li>Bluetooth Keyboard</li>
           <li>Running Shoes</li>
@@ -312,19 +312,19 @@ export default function Home() {
       {/* Delayed Content */}
       <div className="section">
         <h2>Recommendations</h2>
-        <div data-testid="delayed-content" aria-live="polite">{delayedText}</div>
+        <div aria-live="polite">{delayedText}</div>
       </div>
 
       {/* Modal */}
       {modalProduct && (
-        <dialog data-testid="modal-dialog" className="modal" open
+        <dialog className="modal" open
                 onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
           <div className="modal-content">
             <h2>{modalProduct.name}</h2>
             <p>
               {modalProduct.name} — ${modalProduct.price.toFixed(2)} | Category: {modalProduct.category} | {modalProduct.inStock ? 'In Stock' : 'Out of Stock'}
             </p>
-            <button data-testid="modal-close" className="btn-secondary" aria-label="Close dialog"
+            <button className="btn-secondary" aria-label="Close dialog"
                     onClick={closeModal}>
               Close
             </button>
@@ -334,7 +334,7 @@ export default function Home() {
 
       {/* Toast */}
       {showToast && (
-        <div data-testid="toast-notification" className="toast" role="status" aria-live="polite">
+        <div className="toast" role="status" aria-live="polite">
           {toastMsg}
         </div>
       )}
