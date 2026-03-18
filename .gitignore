@@ -31,3 +31,10 @@ npm-debug.log*
 
 # Coverage
 coverage/
+
+# Playwright
+**/playwright-report/
+**/test-results/
+
+# Generated docs
+framework/docs/api/

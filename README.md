@@ -11,14 +11,17 @@
 node -v   # Must be Node 20 LTS (see .nvmrc)
 nvm use   # If using nvm
 
-# Start a single app
-cd apps/vanilla-html
-npm install
-npm start
+# Install everything (root + all 7 apps + framework + crawler)
+npm install && npm run install:all
 
 # Start all apps simultaneously
 npm run start:all
+
+# Or start a single app
+cd apps/vanilla-html && npm start
 ```
+
+> **Troubleshooting:** All commands above must be run from the repository root (`test_app/`). If you see `concurrently: command not found`, run `npm install` at the repo root first.
 
 ---
 
@@ -39,12 +42,12 @@ npm run start:all
 ### Implementation Notes
 
 - **Vanilla HTML:** Reference implementation — plain HTML/CSS/JS, native `<dialog>`, native `<input type="date">`, hash-based routing. All elements identified by semantic HTML, ARIA attributes, and CSS classes.
-- **React app:** React 19, react-router-dom (HashRouter), react-datepicker for date picker, custom toast and native `<dialog>`.
-- **Vue app:** Vue 3.5 Composition API, vue-router 4 (hash history), @vuepic/vue-datepicker, custom toast composable, native `<dialog>`.
-- **Angular app:** Angular 17+ standalone components, Angular Router (hash location), Angular Material mat-datepicker + MatSnackBar + MatDialog.
-- **Svelte app:** Svelte 5+, hash-based routing, flatpickr for date picker, custom toast, native `<dialog>`.
-- **Next.js app:** Next.js 16 (App Router, SSR dev mode), react-datepicker, react-hot-toast, server/client component split. Layout + About are server components; Nav + Home are client components (`'use client'`).
-- **Lit app:** Lit 3, Vite 6, TypeScript. Shadow DOM stress test per §6.5 — structural elements (header, nav, footer) in light DOM, interactive elements (inputs, buttons, table, dialog, toast) inside shadow roots (requires Playwright `>>` piercing). Native `<dialog>`, native `<input type="date">`, custom toast. Hash-based routing.
+- **React app:** React 19, react-router-dom (HashRouter), MUI (TextField, Select, Checkbox, RadioGroup, Table, Dialog, Snackbar), react-datepicker for date picker.
+- **Vue app:** Vue 3.5 Composition API, vue-router 4 (hash history), Vuetify (v-text-field, v-select, v-checkbox, v-radio-group, v-data-table, v-dialog, v-snackbar), @vuepic/vue-datepicker.
+- **Angular app:** Angular 17+ standalone components, Angular Router (hash location), Angular Material (mat-form-field, mat-select, mat-checkbox, mat-radio-group, mat-table + matSort, MatDialog, MatSnackBar, mat-datepicker).
+- **Svelte app:** Svelte 5+, hash-based routing, Bits UI (Select, Checkbox, RadioGroup, Dialog), flatpickr for date picker, svelte-french-toast.
+- **Next.js app:** Next.js 16 (App Router, SSR dev mode), MUI (same component set as React app), react-datepicker, react-hot-toast, server/client component split.
+- **Lit app:** Lit 3, Vite 6, TypeScript. Shoelace form controls (sl-input, sl-select, sl-checkbox, sl-radio-group) in shadow DOM, custom Lit web components for dialog and toast, native `<input type="date">`. Hash-based routing.
 
 ---
 
@@ -53,12 +56,12 @@ npm run start:all
 | App | Port | Status | Notes |
 |-----|------|--------|-------|
 | vanilla-html | 3001 | ✅ | Reference implementation — all contract elements pass |
-| react-app | 3002 | ✅ | react-datepicker; modal/toast use native/custom (library suggestions deferred) |
-| vue-app | 3003 | ✅ | vue-datepicker; modal/toast use native/custom (library suggestions deferred) |
-| angular-app | 3004 | ✅ | Angular Material mat-datepicker, MatSnackBar, MatDialog |
-| svelte-app | 3005 | ✅ | flatpickr; custom toast (library suggestions deferred) |
-| nextjs-app | 3006 | ✅ | react-datepicker, react-hot-toast; modal uses native `<dialog>` |
-| lit-app | 3007 | ✅ | All native — Shadow DOM stress test |
+| react-app | 3002 | ✅ | MUI (TextField, Select, Checkbox, RadioGroup, Table, Dialog, Snackbar) + react-datepicker |
+| vue-app | 3003 | ✅ | Vuetify (v-text-field, v-select, v-checkbox, v-radio-group, v-data-table, v-dialog, v-snackbar) + vue-datepicker |
+| angular-app | 3004 | ✅ | Angular Material (mat-form-field, mat-select, mat-checkbox, mat-radio-group, mat-table, MatDialog, MatSnackBar, mat-datepicker) |
+| svelte-app | 3005 | ✅ | Bits UI (Select, Checkbox, RadioGroup, Dialog) + flatpickr + svelte-french-toast |
+| nextjs-app | 3006 | ✅ | MUI (same as react-app) + react-datepicker + react-hot-toast |
+| lit-app | 3007 | ✅ | Shoelace (sl-input, sl-select, sl-checkbox, sl-radio-group) + custom Lit dialog/toast + native date input |
 
 ---
 
@@ -69,7 +72,7 @@ Every app implements the same fictional **GeneralStore** mini storefront:
 - **Home page** — Product catalog with a data table, search/filter, category dropdown, quantity stepper, "Add to Cart" button, shipping options, and delivery date picker.
 - **About page** — A short description of the store.
 
-The apps are intentionally trivial. They exist to provide a consistent, testable surface across different rendering paradigms (virtual DOM, reactive, compiled, web components). Elements are identified by **semantic HTML, ARIA attributes, and CSS classes** (not `data-testid`) — see [`shared/ui-contract.md`](shared/ui-contract.md) for the full element identification reference.
+The apps are intentionally trivial. They exist to provide a consistent, testable surface across different rendering paradigms (virtual DOM, reactive, compiled, web components). Elements are identified by **semantic HTML, ARIA attributes, and CSS classes** (not `data-testid`) — see [REQUIREMENTS.md §6](docs/REQUIREMENTS.md) for the full element identification reference.
 
 ---
 
@@ -85,11 +88,16 @@ test_app/
 │   ├── svelte-app/          ← Svelte (Vite)
 │   ├── nextjs-app/          ← Next.js (SSR dev mode)
 │   └── lit-app/             ← Lit web components
-├── shared/
-│   └── ui-contract.md       ← the common testable surface
+├── framework/               ← Playwright element interaction library
+│   ├── src/                 ← By class, handler registry, group element, typed wrappers
+│   ├── tests/               ← 924 integration + 219 unit tests
+│   └── playwright.config.ts
+├── tools/crawler/           ← Runtime page crawler + page object emitter
 ├── docs/
-│   ├── REQUIREMENTS.md      ← full project requirements + framework design (§11)
-│   └── ROADMAP.md           ← implementation roadmap
+│   ├── CONTRIBUTING.md      ← start here — onboarding guide
+│   ├── REQUIREMENTS.md      ← goals, UI contract, conventions
+│   ├── ROADMAP.md           ← phase summary + open phases
+│   └── archive/             ← historical docs (completed checklists, closed issues)
 ├── .nvmrc                   ← Node 20 LTS
 ├── .gitignore
 ├── package.json             ← root package with start:all script
@@ -98,17 +106,36 @@ test_app/
 
 ---
 
+## Framework Library
+
+The `framework/` directory contains a **Playwright-based element interaction library** built on top of the test apps. Key features:
+
+- **Label-first identification** — `write("Category", "Electronics")` instead of raw locators
+- **Auto-detection** — handler registry classifies elements (checkbox, select, radio group, etc.) automatically
+- **Group element** — `write()`, `read()`, `writeAll()`, `readAll()`, `click()`, `find()` for any container
+- **Typed wrappers** — `table.sort()`, `stepper.increment()`, `dialog.close()` for rich behaviour
+- **2,088 tests passing** — framework: 924 integration (7 apps) + 219 unit; crawler: 868 integration (7 apps) + 77 unit
+
+See [`framework/README.md`](framework/README.md) for full API documentation.
+
+---
+
 ## Documentation
 
-- [Requirements & Plan](docs/REQUIREMENTS.md) — Goals, architecture, UI contract, conventions, resolved decisions, and **framework library design (§11)**.
-- [Implementation Roadmap](docs/ROADMAP.md) — Phase-by-phase build plan with checklists (includes Phase 8: Framework Library).
-- [UI Contract](shared/ui-contract.md) — Standalone reference for the common testable surface all apps must implement.
+| Document | Purpose |
+|----------|---------|
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | **Start here** — onboarding, setup, how to run tests, how to add apps |
+| [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | Goals, architecture, UI contract, conventions, resolved decisions |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase summary table (all phases complete) |
+| [framework/README.md](framework/README.md) | Framework API documentation |
+| [tools/crawler/README.md](tools/crawler/README.md) | Crawler & page object emitter documentation |
+| [docs/archive/](docs/archive/) | Historical docs — completed checklists, closed issues, superseded reviews |
 
 ---
 
 ## Key Conventions
 
-- **Semantic identification is the contract.** Every testable element is identified by semantic HTML, ARIA attributes, CSS classes, and labels — no `data-testid`. See [`shared/ui-contract.md`](shared/ui-contract.md).
+- **Semantic identification is the contract.** Every testable element is identified by semantic HTML, ARIA attributes, CSS classes, and labels — no `data-testid`. See [REQUIREMENTS.md §6](docs/REQUIREMENTS.md).
 - **No runtime network requests.** All libraries are bundled locally. Async behavior uses `setTimeout` / `Promise`.
 - **One command to start:** `cd apps/<app-name> && npm install && npm start`.
 - **Lockfiles committed.** Every app's `package-lock.json` is checked in for reproducible installs.

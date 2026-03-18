@@ -54,8 +54,8 @@ They are not products. They are not demos. They are **test fixtures at the appli
 ```
 test_app/
 ├── docs/
-│   ├── REQUIREMENTS.md          ← this document
-│   └── FRAMEWORK_DESIGN.md      ← framework library API design
+│   ├── REQUIREMENTS.md          ← this document (includes framework design in §11)
+│   └── ROADMAP.md               ← implementation roadmap
 ├── apps/
 │   ├── vanilla-html/            ← plain HTML/CSS/JS, no build step
 │   ├── react-app/               ← React (Vite)
@@ -64,8 +64,9 @@ test_app/
 │   ├── svelte-app/              ← Svelte (Vite)
 │   ├── nextjs-app/              ← Next.js (SSR dev mode, no API routes)
 │   └── lit-app/                 ← Lit web components
-├── shared/
-│   └── ui-contract.md           ← defines the common testable surface
+├── docs/
+│   ├── REQUIREMENTS.md          ← this document
+│   └── ROADMAP.md
 └── README.md
 ```
 
@@ -150,13 +151,13 @@ All apps **must** use this exact dataset to ensure cross-app test assertions are
 | Radio button group | Mutually exclusive options, selection affects visible state | Shipping method (Standard / Express / Overnight) with displayed cost |
 | Radio output | Displays the cost/label for the selected radio option | Shipping cost (e.g., "$4.99", "$9.99", "$19.99") |
 | Data table | Tabular data with at least 4 columns and 3+ rows | Product catalog (Name, Price, Category, Stock) |
-| Date picker | Native `<input type="date">` in baseline; technology-native date picker in framework apps (see §6.7) | Delivery date selection |
+| Date picker | Technology-appropriate date picker widget; native `<input type="date">` in vanilla baseline, component-library date pickers in framework apps (see §6.7) | Delivery date selection |
 | Date output | Displays the formatted selected date | Chosen delivery date (e.g., "February 20, 2026") |
 | Quantity stepper | Numeric input with increment/decrement controls (+/−) | Product quantity selector |
 | Quantity increment | The "+" button of the quantity stepper | Increases quantity by 1 (disabled at 99) |
 | Quantity decrement | The "−" button of the quantity stepper | Decreases quantity by 1 (disabled at 1) |
 | Modal trigger | Button or link that opens the modal dialog | "View Details" link/button on a product row |
-| Modal / Dialog | Overlay that opens and closes, contains content; native `<dialog>` in baseline, technology-native dialog in framework apps (see §6.7) | Product detail or order confirmation dialog |
+| Modal / Dialog | Overlay that opens and closes, contains content; native `<dialog>` in vanilla baseline, component-library dialogs in framework apps (see §6.7) | Product detail or order confirmation dialog |
 | Modal close | Button that closes the modal dialog | Close button inside the modal |
 | Toast / Notification | Temporary message that auto-dismisses after a timeout; custom in baseline, technology-native toast library in framework apps (see §6.7) | "Added to cart" feedback — **must** be triggered by `action-button` click (auto-dismiss after 3s) |
 
@@ -166,11 +167,11 @@ All apps **must** use this exact dataset to ensure cross-app test assertions are
 |----------|-------------|---------|
 | Conditional rendering | An element that appears/disappears based on interaction | Toggled by checkbox (e.g., filtering in-stock products) |
 | List rendering | A static or dynamically generated list of 3+ items | Identified by list semantic elements (`<ul>`/`<ol>`) or `class="item-list"` |
-| Delayed content | Content that appears after a simulated delay (setTimeout, not a real API) | 1–2 second delay, identified by `class="delayed-content"` or `aria-live` region (e.g., "Loading recommendations…") |
-| Form validation | Inline validation message on empty submit | Identified by `role="alert"` or `class="validation-message"` (e.g., "Please enter a search term") |
+| Delayed content | Content that appears after a simulated delay (setTimeout, not a real API) | 1–2 second delay, identified by `aria-live` attribute (e.g., "Loading recommendations…") |
+| Form validation | Inline validation message on empty submit | Identified by `class="validation-message"` with `aria-live` (e.g., "Please enter a search term") |
 | Routing / View switching | Navigation changes visible content without full page reload (where applicable) | URL or hash changes for SPA apps |
-| Table sorting | Clicking a column header sorts the data table by that column | Sortable column headers identified by `<th>` elements with `aria-sort`; toggles ascending/descending |
-| Table filtering | Typing in the text input filters table rows in real time | The filter controls container (e.g., `<div class="table-filter">`) wraps the text input, dropdown, and checkbox. The `<input>` element inside it is identified by its `<label>` or `role`. |
+| Table sorting | Clicking a column header sorts the data table by that column | Sortable column headers use `th[data-sort-key]` with `role="button"`; toggles ascending/descending |
+| Table filtering | Typing in the text input filters table rows in real time | `class="filter-bar"` is the container element (e.g., `<div>`) wrapping the filter controls. The text `<input>` inside the filter bar is the search field. |
 | Empty results | When all filters combined produce zero matching rows, the table body shows a single row spanning all columns with text "No products found." | Identified by text content "No products found." or `class="empty-state"` |
 | Date selection | Selecting a date in the date picker displays the chosen date in a visible output | Formatted date (e.g., "February 20, 2026") shown in the date output element (identifiable by `class="date-output"` or associated label) |
 | Radio selection | Choosing a radio option updates a visible cost/label | e.g., selecting "Express" shows "$9.99" in the radio output element (identifiable by `class="radio-output"` or associated label) |
@@ -216,39 +217,47 @@ To ensure all 8 apps behave identically (enabling "one test suite, any app"), th
 
 ### 6.7 Technology-Native Components
 
-The `vanilla-html` app uses only native HTML elements (`<input type="date">`, `<dialog>`, `<select>`, etc.) and serves as the **pure baseline**. Framework apps should use **idiomatic, technology-native component libraries** for select UI elements. This ensures the test framework is validated against the kind of DOM structures teams actually ship in production, not just native HTML wrappers.
+The `vanilla-html` app uses only native HTML elements (`<input type="date">`, `<dialog>`, `<select>`, etc.) and serves as the **pure baseline**. Framework apps **must** use **idiomatic, technology-native component libraries** for all UI elements where such libraries exist. This is the primary mechanism that generates real DOM diversity across the 7 apps. Without it, the project is validating the framework against the same native HTML repeated 7 times — which Playwright already handles natively.
 
 #### Principles
 
-1. **Element identification contract is unchanged.** Every element is still identifiable by its semantic HTML, ARIA attributes, CSS classes, or native DOM structure regardless of implementation. The test framework uses these native anchors.
-2. **Behavioral contract is unchanged.** Same inputs produce same outputs — filter logic, sort order, stepper bounds, toast timing, etc. The *what* doesn't change; the *how* changes.
-3. **Interaction model becomes technology-aware.** The test framework must abstract over different DOM structures to verify identical outcomes. For example, selecting a date in a native `<input type="date">` uses `page.fill()`, while a React datepicker requires clicking to open, navigating months, and clicking a day cell.
-4. **Data table stays native `<table>`.** Framework table components (AG Grid, TanStack Table, etc.) add too much scope and complexity. Native `<table>` is sufficient to validate table interactions and keeps the apps trivially simple (G2).
+1. **The behavioral contract is the only shared contract.** Same inputs produce same outputs — filter logic, sort order, stepper bounds, toast timing, etc. The *what* doesn't change; the *how* is deliberately different per app.
+2. **DOM structure is unconstrained.** Each app produces the DOM its component library produces. There is no requirement for apps to use the same tags, attributes, or DOM nesting. The framework must handle the DOM as-is.
+3. **Element identification is outcome-based.** The framework identifies elements by accessible name, role, label association, visible text, or other semantic anchors that survive component library changes — not by tag name or CSS class.
+4. **Interaction model is technology-aware.** The test framework abstracts over different DOM structures to verify identical outcomes. For example, selecting a date in a native `<input type="date">` uses `page.fill()`, while a React datepicker requires clicking to open, navigating months, and clicking a day cell. A native `<select>` uses `selectOption()`, while MUI Select requires clicking to open a listbox popup and clicking an option.
 
-#### Component Matrix
+> **Why this matters:** The v0.1 apps used native `<select>`, native `<table>`, and native `<input>` everywhere. Phase 10 replaced native elements with component libraries, breaking that false confidence and forcing the framework to prove its cross-technology thesis. **Result: 700/700 integration tests pass across all 7 apps with genuinely different DOM structures.**
+
+#### Component Matrix _(verified — Phase 10 complete)_
 
 | Element | `vanilla-html` | `react-app` | `vue-app` | `angular-app` | `svelte-app` | `nextjs-app` | `lit-app` |
 |---------|---------------|-------------|-----------|---------------|-------------|-------------|----------|
-| Date picker | Native `<input type="date">` | `react-datepicker` | `vue-datepicker` | Angular Material `mat-datepicker` | `svelte-flatpickr` or similar | `react-datepicker` | Native `<input type="date">` |
-| Modal / Dialog | Native `<dialog>` | MUI `Dialog` or Headless UI | Headless UI Vue or Vuetify dialog | Angular CDK `Dialog` | Svelte Headless UI or custom | MUI `Dialog` or Headless UI | Native `<dialog>` (Shadow DOM) |
-| Toast | Custom `<div>` | `react-hot-toast` or `sonner` | `vue-toastification` | Angular Material `MatSnackBar` | `svelte-french-toast` or similar | `react-hot-toast` or `sonner` | Custom (Shadow DOM) |
-| Select / Dropdown | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` | Native `<select>` |
+| Text input | Native `<input>` | MUI `<TextField>` | Vuetify `<v-text-field>` | `<mat-form-field>` + `<input matInput>` | Native `<input>` + `<label>` | MUI `<TextField>` | `<sl-input>` |
+| Checkbox | Native `<input type="checkbox">` | MUI `<Checkbox>` | Vuetify `<v-checkbox>` | `<mat-checkbox>` | Bits UI `<Checkbox.Root>` | MUI `<Checkbox>` | `<sl-checkbox>` |
+| Select / Dropdown | Native `<select>` | MUI `<Select>` | Vuetify `<v-select>` | `<mat-select>` | Bits UI `<Select.Root>` | MUI `<Select>` | `<sl-select>` |
+| Radio group | Native `<fieldset>` + `<input type="radio">` | MUI `<RadioGroup>` | Vuetify `<v-radio-group>` | `<mat-radio-group>` | Bits UI `<RadioGroup.Root>` | MUI `<RadioGroup>` | `<sl-radio-group>` |
+| Data table | Native `<table>` | MUI `<Table>` + `<TableSortLabel>` | Vuetify `<v-data-table>` | `<mat-table>` + `matSort` | Raw `<table>` (Bits UI has no table) | MUI `<Table>` + `<TableSortLabel>` | Raw `<table>` (Shoelace has no table) |
+| Date picker | Native `<input type="date">` | `react-datepicker` | `@vuepic/vue-datepicker` | Angular Material `mat-datepicker` | `flatpickr` | `react-datepicker` | Native `<input type="date">` |
+| Modal / Dialog | Native `<dialog>` | MUI `<Dialog>` | Vuetify `<v-dialog>` | Angular CDK `Dialog` | Bits UI `<Dialog.Root>` | MUI `<Dialog>` | Custom `<general-store-dialog>` (Lit web component) |
+| Toast | Custom `<div>` | MUI `<Snackbar>` + `<Alert>` | Vuetify `<v-snackbar>` | Angular Material `MatSnackBar` | `svelte-french-toast` | `react-hot-toast` | Custom `<general-store-toast>` (Lit web component) |
 
-> **Select stays native everywhere.** Custom dropdowns (Headless UI Listbox, MUI Select, etc.) can be added in a future version (v0.2+) if the framework team wants to validate custom-dropdown interaction strategies. For v0.1, native `<select>` provides consistent behavior with minimal complexity.
+> **Vanilla stays fully native.** It is the baseline — raw HTML with zero libraries.
 >
-> **Lit stays fully native.** Lit's purpose is Shadow DOM testing, not component library testing. It doesn't benefit from third-party UI components.
+> **Lit uses Shoelace for form controls, custom web components for dialog/toast.** Shoelace is built on Lit/Web Components, making it the natural component library for the Lit app. Where Shoelace has no equivalent (e.g., data table) or where the existing custom Lit web component is already idiomatic (dialog, toast), the native implementation is kept.
 >
-> **Library choices are suggestions, not mandates.** The specific library for each cell can be adjusted based on ecosystem health at build time. The requirement is that the app uses a **technology-idiomatic component**, not a specific package.
+> **Svelte uses Bits UI (headless primitives).** Bits UI provides Radix-style headless primitives (`<Select.Root>`, `<Checkbox.Root>`, `<RadioGroup.Root>`, `<Dialog.Root>`) that render ARIA-compliant `role` attributes. This stresses the framework differently than styled libraries — portaled dropdowns, pure ARIA roles without native form tags.
+>
+> **Library choices reflect ecosystem norms.** The requirement is that the app uses **whatever a senior developer in that ecosystem would reach for** — not a specific package.
 
 #### Impact on Testing Strategy
 
-With this change, the framework's testing strategy shifts from:
-- ❌ "One test suite with identical interactions for all apps"
+The framework's testing strategy is:
 
-To:
-- ✅ "One **assertion set** (verify same outcomes via semantic selectors) with **technology-aware interactions** (different click/input sequences per component type)"
+- ✅ "One **assertion set** (verify same behavioral outcomes) with **technology-aware interactions** (different DOM operations per component type)"
 
-This is a more realistic model of how production test frameworks operate. The framework should expose a component-aware abstraction layer (e.g., `datePicker.select(date)` that dispatches to the right interaction strategy based on the detected component type).
+This is how production test frameworks operate. The framework exposes a component-aware abstraction layer (e.g., `datePicker.select(date)` that dispatches to the right interaction strategy, `group.write("Category", "Electronics")` that handles both native `<select>` and MUI Select via the handler registry).
+
+> **The 700 integration tests served as the regression safety net.** As each app migrated to its component library, tests that broke revealed real gaps in the framework's handler registry and adapter layer. This breakage was the point — it was the signal that the framework was being tested against genuinely different DOM. All 700 tests now pass across all 7 apps.
 
 ---
 
@@ -256,7 +265,9 @@ This is a more realistic model of how production test frameworks operate. The fr
 
 ### 7.1 Element Identification Strategy
 
-Apps do **not** use `data-testid` attributes. Instead, elements are identified using their **native rendered DOM**: semantic HTML elements (`<button>`, `<input>`, `<table>`, `<dialog>`, etc.), ARIA attributes (`aria-label`, `aria-sort`, `aria-live`, `role`), CSS classes, labels, and framework-specific DOM structures. This mirrors real-world production applications where `data-testid` attributes are rarely applied universally, and forces the test framework to use robust, production-realistic selector strategies.
+Apps do **not** use `data-testid` attributes. Elements are identified using **semantic anchors** that survive component library changes: accessible names (labels, `aria-label`), ARIA roles, visible text, and label associations. CSS classes and tag names may be used as fallbacks but are not the primary identification strategy — component libraries produce their own class names and DOM structures that differ across technologies.
+
+This mirrors real-world production applications where `data-testid` attributes are rarely applied universally, and forces the test framework to use robust, production-realistic selector strategies that work regardless of the underlying component library.
 
 ### 7.2 Port Allocation
 
@@ -309,7 +320,9 @@ This library is considered **complete for v0.1** when:
 - [x] Each app follows the accessibility baseline in §6.4 (semantic HTML, labels, ARIA)
 - [x] Each app has a local `README.md` documenting the technology, start command, and any caveats
 - [x] All 7 apps can be started simultaneously via a root-level `start:all` script
-- [ ] Framework library (§11) is implemented and validated against vanilla-html
+- [x] Framework library (§11) is implemented and validated against vanilla-html
+- [x] All 7 apps migrated to idiomatic component libraries (Phase 10) — 700/700 integration tests + 219 unit tests passing
+- [x] Framework handles genuinely different DOM structures across 6 component libraries — library-specific logic is isolated in adapters (DatePickerAdapter, SelectAdapter) while detection uses generic ARIA/role-based strategies
 
 ---
 
@@ -348,200 +361,9 @@ The following were originally open questions. Decisions recorded here for tracea
 
 ---
 
----
-
 ## 11. Framework Library Design
 
-The test apps exist to validate a **Playwright-based element interaction library**. This section documents the API design that the framework should implement.
-
-### 11.1 Core Architecture
-
-The framework has four layers, with a clean separation between data and code:
-
-```
-┌─────────────────────────────────────────────┐
-│  Page Elements (data)                       │
-│  "what exists and where, with nesting"      │
-│  { name: { type, by, children? } }          │
-├─────────────────────────────────────────────┤
-│  By Object (data)                           │
-│  "how to locate an element"                 │
-│  By.label(), By.role(), By.css(), etc.      │
-├─────────────────────────────────────────────┤
-│  Element Types (code)                       │
-│  "typed operations per element kind"        │
-│  checkbox.check(), table.rows(), etc.       │
-├─────────────────────────────────────────────┤
-│  Technology Adapters (code)                 │
-│  "how operations differ per framework"      │
-│  datePicker.select() → different DOM ops    │
-└─────────────────────────────────────────────┘
-```
-
-| Layer | Is Data? | Changes when... |
-|---|---|---|
-| Page Elements | Yes (dict/JSON) | Page layout changes |
-| By Object | Yes (data) | Selector strategy changes |
-| Element Types | No (code) | New element kind added |
-| Technology Adapters | No (code) | New framework app added |
-
-### 11.2 `By` Object — Element Identification
-
-A `By` object formalizes the identification strategy as a first-class concept. Each factory method declares *how* to locate the element, mapping directly to the identification strategies in §7.1.
-
-```ts
-By.label("In stock only")              // associated <label> text
-By.role("checkbox", { name: "..." })   // ARIA role + accessible name
-By.css(".filter-bar input")            // CSS selector
-By.text("Add to Cart")                 // visible text content
-By.semantic("select")                  // semantic HTML element type
-By.shadow("host-element", "button")    // shadow DOM piercing
-By.within(parentBy, childBy)           // scoped lookup
-By.first(by1, by2, by3)               // fallback chain
-```
-
-| UI Contract strategy (§7.1) | `By` factory |
-|---|---|
-| Semantic HTML | `By.semantic("table")`, `By.semantic("dialog")` |
-| ARIA attributes | `By.role("button", { name: "..." })` |
-| CSS classes | `By.css(".action-output")`, `By.css(".date-output")` |
-| Labels | `By.label("In stock only")` |
-| Text content | `By.text("Add to Cart")` |
-| Shadow DOM (§6.5) | `By.shadow(host, innerSelector)` |
-
-The `By` object resolves to a Playwright `Locator` internally.
-
-### 11.3 Typed Element Wrappers
-
-Each element type is a factory function that takes a `By` and returns a typed object with operations specific to that element kind.
-
-```ts
-// Checkbox
-checkbox(By.label("In stock only")).check()       // set checked
-checkbox(By.label("In stock only")).uncheck()     // clear checked
-checkbox(By.label("In stock only")).read()         // → boolean
-
-// Select (native <select>)
-select(By.semantic("select")).choose("Clothing")
-select(By.semantic("select")).read()               // → "Clothing"
-
-// Button
-button(By.text("Add to Cart")).click()
-
-// Text / Output
-text(By.css(".action-output")).read()              // → "Added Wireless Mouse"
-
-// Data Table
-table(By.semantic("table")).sort("Price")
-table(By.semantic("table")).rows()                 // → array of row data
-table(By.semantic("table")).rowCount()              // → number
-
-// Quantity Stepper
-stepper(By.role("spinbutton")).increment()
-stepper(By.role("spinbutton")).decrement()
-stepper(By.role("spinbutton")).set(5)
-stepper(By.role("spinbutton")).read()               // → 5
-
-// Date Picker (technology-aware via adapter)
-datePicker(By.label("Delivery date")).select("2026-02-20")
-datePicker(By.label("Delivery date")).read()        // → "February 20, 2026"
-
-// Radio Group
-radio(By.css(".radio-group")).choose("Express")
-radio(By.css(".radio-group")).read()                // → "Express"
-
-// Dialog / Modal
-dialog(By.semantic("dialog")).open()
-dialog(By.semantic("dialog")).close()
-dialog(By.semantic("dialog")).isOpen()              // → boolean
-
-// Toast
-toast(By.css("[aria-live='polite']")).read()        // → "Added Wireless Mouse"
-toast(By.css("[aria-live='polite']")).isVisible()   // → boolean
-```
-
-Each typed wrapper encapsulates:
-1. **Identification** — how to find the element (via `By`)
-2. **Interaction** — how to operate it (technology-aware via adapter)
-3. **Assertion** — how to read its state (what `.read()` returns)
-
-### 11.4 Page Element Dictionaries
-
-Page elements are declared as data dictionaries — essentially **page objects as data**. The dictionary defines what exists; `resolve()` hydrates it into typed elements.
-
-```ts
-const homePage = {
-  inStockFilter:  { type: "checkbox",   by: { label: "In stock only" } },
-  categoryFilter: { type: "select",     by: { semantic: "select" } },
-  productTable:   { type: "table",      by: { semantic: "table" } },
-  addToCart:       { type: "button",     by: { text: "Add to Cart" } },
-  quantity:        { type: "stepper",    by: { role: "spinbutton" } },
-  shipping:        { type: "radio",      by: { css: ".radio-group" } },
-  deliveryDate:    { type: "datePicker", by: { label: "Delivery date" } },
-  actionOutput:    { type: "text",       by: { css: ".action-output" } },
-  shippingCost:    { type: "text",       by: { css: ".radio-output" } },
-  dateDisplay:     { type: "text",       by: { css: ".date-output" } },
-}
-
-const home = pageElements(homePage)
-home.inStockFilter.check()
-home.categoryFilter.choose("Clothing")
-const rows = home.productTable.rows()
-```
-
-### 11.5 Nested Elements / Scoping
-
-For elements that contain children (cards, list items, table rows), the dictionary supports `children` and scoped lookups:
-
-```ts
-const page = {
-  productCards: {
-    type: "list",
-    by: { css: ".product-cards" },
-    children: {
-      name:      { type: "text",    by: { css: ".card-title" } },
-      price:     { type: "text",    by: { css: ".card-price" } },
-      quantity:  { type: "stepper", by: { role: "spinbutton" } },
-      addToCart: { type: "button",  by: { text: "Add to Cart" } },
-    }
-  }
-}
-
-// By index — scopes child lookups within the nth parent
-home.productCards.nth(0).name.read()          // → "Wireless Mouse"
-home.productCards.nth(0).addToCart.click()
-
-// By content match
-home.productCards.containing({ name: "Running Shoes" }).addToCart.click()
-```
-
-### 11.6 Technology Adapters
-
-The same logical operation (e.g., "select a date") requires different physical interactions depending on the component library used. Technology adapters handle this dispatch transparently.
-
-```ts
-// datePicker.select("2026-02-20") internally:
-//   vanilla-html  → page.fill(locator, "2026-02-20")     (native <input type="date">)
-//   react-app     → click open → navigate month → click day cell (react-datepicker)
-//   angular-app   → click toggle → navigate → click day (mat-datepicker)
-```
-
-Adapters map to the Component Matrix in §6.7. Build native-only adapters first (covers vanilla-html, lit-app), then add framework-specific adapters incrementally.
-
-### 11.7 Build Order
-
-| Phase | What | Validates against |
-|---|---|---|
-| 1 | `By` class + core element types (checkbox, select, button, text) | vanilla-html |
-| 2 | Page element dictionary + `resolve()` | vanilla-html |
-| 3 | Table element type (sort, filter, rows) | vanilla-html |
-| 4 | Remaining types (stepper, datePicker, dialog, toast, radio) | vanilla-html |
-| 5 | Nested elements / scoping | vanilla-html |
-| 6 | Run same tests against react-app — see what breaks | react-app |
-| 7 | First technology adapter (react-datepicker) based on real failures | react-app |
-| 8 | Repeat for remaining apps | vue, angular, svelte, nextjs, lit |
-
-> **Principle:** Build against vanilla-html first. It uses all native elements, so the adapters are trivial. Framework-specific adapters are discovered by running the same tests against framework apps and fixing what breaks.
+> **Moved to [`framework/README.md`](../framework/README.md).** The full API design (By object, handler registry, group element, typed wrappers, technology adapters, error handling) is documented in the framework's own README. This section previously duplicated that content (~340 lines).
 
 ---
 

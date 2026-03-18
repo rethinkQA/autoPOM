@@ -1,0 +1,11 @@
+node_modules
+dist
+.next
+.angular
+build
+out
+playwright-report
+test-results
+framework/docs
+*.min.js
+package-lock.json

@@ -2,14 +2,36 @@
   "name": "test_app",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "framework",
+    "tools/crawler"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "description": "A curated library of minimal web applications serving as test targets for a Playwright-based testing framework.",
   "scripts": {
-    "start:all": "concurrently --kill-others-on-fail \"npm start --prefix apps/vanilla-html\" \"npm start --prefix apps/react-app\" \"npm start --prefix apps/vue-app\" \"npm start --prefix apps/angular-app\" \"npm start --prefix apps/svelte-app\" \"npm start --prefix apps/nextjs-app\" \"npm start --prefix apps/lit-app\""
+    "install:all": "for dir in apps/vanilla-html apps/react-app apps/vue-app apps/angular-app apps/svelte-app apps/nextjs-app apps/lit-app; do echo \"Installing $dir...\" && (cd $dir && npm install); done",
+    "generate-shared": "node scripts/generate-vanilla-shared.mjs",
+    "start:all": "npm run generate-shared && concurrently --kill-others-on-fail \"npm start --prefix apps/vanilla-html\" \"npm start --prefix apps/react-app\" \"npm start --prefix apps/vue-app\" \"npm start --prefix apps/angular-app\" \"npm start --prefix apps/svelte-app\" \"npm start --prefix apps/nextjs-app\" \"npm start --prefix apps/lit-app\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:counts": "node scripts/verify-test-counts.mjs",
+    "test:counts:check": "node scripts/verify-test-counts.mjs --check",
+    "test:counts:update": "node scripts/verify-test-counts.mjs --update"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "@eslint/js": "^10.0.1",
+    "concurrently": "~9.2.1",
+    "esbuild": "^0.27.4",
+    "eslint": "^10.0.3",
+    "globals": "^17.4.0",
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.57.1"
   }
 }
