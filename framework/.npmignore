@@ -1,0 +1,19 @@
+# Source
+src/
+
+# Tests
+tests/
+test-results/
+playwright.config.ts
+playwright.unit.config.ts
+
+# Docs source & generated
+docs/
+typedoc.json
+
+# Project files
+PLAN.md
+ARCHITECTURE_ISSUES.md
+playwright-report/
+tsconfig.json
+*.tsbuildinfo

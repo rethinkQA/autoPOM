@@ -1,0 +1,71 @@
+{
+  "name": "@playwright-elements/core",
+  "version": "0.1.0",
+  "private": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "description": "Label-first, auto-detecting element interaction library for Playwright",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist/src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/src/index.js",
+      "types": "./dist/src/index.d.ts"
+    },
+    "./test-fixture": {
+      "import": "./dist/src/test-fixture.js",
+      "types": "./dist/src/test-fixture.d.ts"
+    },
+    "./extend": {
+      "import": "./dist/src/extend.js",
+      "types": "./dist/src/extend.d.ts"
+    },
+    "./internals": {
+      "import": "./dist/src/internals.js",
+      "types": "./dist/src/internals.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "playwright test --project=vanilla",
+    "test:unit": "playwright test --config playwright.unit.config.ts",
+    "test:all": "playwright test",
+    "test:headed": "playwright test --project=vanilla --headed",
+    "test:ui": "playwright test --ui",
+    "docs": "typedoc",
+    "docs:open": "typedoc && open docs/api/index.html"
+  },
+  "devDependencies": {
+    "@playwright/test": "~1.50.0",
+    "@types/node": "^25.3.3",
+    "typedoc": "^0.28.17",
+    "typescript": "~5.7.0"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "e2e",
+    "element",
+    "interaction",
+    "label",
+    "auto-detect",
+    "handler",
+    "accessibility"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronJessen/playwright-elements.git",
+    "directory": "framework"
+  }
+}

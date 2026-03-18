@@ -1,0 +1,55 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "src/index.ts",
+    "src/extend.ts",
+    "src/test-fixture.ts",
+    "src/internals.ts"
+  ],
+  "out": "docs/api",
+  "name": "@playwright-elements/core",
+  "readme": "none",
+  "tsconfig": "tsconfig.json",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "excludeExternals": true,
+  "includeVersion": true,
+  "externalSymbolLinkMappings": {
+    "@playwright-elements/core": {
+      "checkMutationScope": "#",
+      "createBaseElement": "#",
+      "ElementInfra": "#",
+      "FrameworkContext": "#",
+      "HandlerRegistry": "#",
+      "MiddlewarePipeline": "#",
+      "LoggerConfig": "#",
+      "ResolveRetryConfig": "#"
+    }
+  },
+  "categoryOrder": [
+    "Core Identification",
+    "Element Factories",
+    "Adapters",
+    "Errors",
+    "Context",
+    "Retry",
+    "Configuration",
+    "Extension",
+    "Middleware",
+    "Types",
+    "*"
+  ],
+  "navigationLinks": {
+    "GitHub": "https://github.com/your-org/playwright-elements",
+    "README": "../README.md"
+  },
+  "plugin": [],
+  "sort": ["alphabetical"],
+  "kindSortOrder": [
+    "Function",
+    "Class",
+    "Interface",
+    "TypeAlias",
+    "Variable"
+  ]
+}
