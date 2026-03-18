@@ -1,0 +1,40 @@
+#!/usr/bin/env sh
+
+# ── 1. Regenerate shared.js if shared/ sources changed ──────────────
+#    Keeps apps/vanilla-html/shared.js in sync with shared/data.ts
+#    and shared/logic.ts automatically.
+
+SHARED_CHANGED=$(git diff --cached --name-only -- 'shared/data.ts' 'shared/logic.ts')
+
+if [ -n "$SHARED_CHANGED" ]; then
+  echo "🔄 shared/ sources changed — regenerating apps/vanilla-html/shared.js…"
+  node scripts/generate-vanilla-shared.mjs
+
+  # Stage the (possibly updated) generated file so the commit includes it
+  git add apps/vanilla-html/shared.js
+  echo "  ✔ shared.js regenerated and staged."
+fi
+
+# ── 2. Verify test counts in documentation ───────────────────────────
+#    Ensures hardcoded test counts in docs stay accurate when specs
+#    are added or removed.  Uses `playwright test --list` (fast, no
+#    servers needed).  Skip with:  SKIP_TEST_COUNTS=1 git commit …
+
+if [ "$SKIP_TEST_COUNTS" = "1" ]; then
+  echo "⏭  Skipping test-count verification (SKIP_TEST_COUNTS=1)."
+else
+  SPECS_CHANGED=$(git diff --cached --name-only -- '*.spec.ts')
+
+  if [ -n "$SPECS_CHANGED" ]; then
+    echo "🔢 Spec files changed — verifying doc test counts…"
+    node scripts/verify-test-counts.mjs --check
+    if [ $? -ne 0 ]; then
+      echo ""
+      echo "❌ Test counts in docs are stale. Run:"
+      echo "     npm run test:counts:update"
+      echo "   then stage the updated docs and commit again."
+      exit 1
+    fi
+    echo "  ✔ Test counts are up to date."
+  fi
+fi

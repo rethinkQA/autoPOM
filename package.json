@@ -21,7 +21,8 @@
     "format:check": "prettier --check .",
     "test:counts": "node scripts/verify-test-counts.mjs",
     "test:counts:check": "node scripts/verify-test-counts.mjs --check",
-    "test:counts:update": "node scripts/verify-test-counts.mjs --update"
+    "test:counts:update": "node scripts/verify-test-counts.mjs --update",
+    "prepare": "husky"
   },
   "keywords": [],
   "author": "",
@@ -32,6 +33,7 @@
     "esbuild": "^0.27.4",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
+    "husky": "^9.1.7",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.57.1"
   }
