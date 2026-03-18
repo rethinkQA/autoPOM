@@ -1,0 +1,81 @@
+{
+  "url": "http://localhost:3005/",
+  "timestamp": "2026-03-16T20:24:56.695Z",
+  "scope": null,
+  "passCount": 1,
+  "groups": [
+    {
+      "label": "GeneralStore Svelte",
+      "selector": "header",
+      "groupType": "header",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    },
+    {
+      "label": "Home",
+      "selector": "nav",
+      "groupType": "nav",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    },
+    {
+      "label": "Popular Items",
+      "selector": "main",
+      "groupType": "main",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    },
+    {
+      "label": "Name ⇅",
+      "selector": "table.data-table",
+      "groupType": "generic",
+      "wrapperType": "table",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    },
+    {
+      "label": "Quantity",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Quantity\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    },
+    {
+      "label": "Shipping Method",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Shipping Method\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    },
+    {
+      "label": "Delivery Date",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Delivery Date\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z",
+      "notes": "needs-adapter"
+    },
+    {
+      "label": "© 2026 GeneralStore — Svelte Test Target",
+      "selector": "footer",
+      "groupType": "footer",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.680Z"
+    }
+  ]
+}

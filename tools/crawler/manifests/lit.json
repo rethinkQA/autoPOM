@@ -1,0 +1,90 @@
+{
+  "url": "http://localhost:3007/",
+  "timestamp": "2026-03-16T20:24:56.803Z",
+  "scope": null,
+  "passCount": 1,
+  "groups": [
+    {
+      "label": "GeneralStore Lit",
+      "selector": "header",
+      "groupType": "header",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "Home",
+      "selector": "nav",
+      "groupType": "nav",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "main",
+      "selector": "main",
+      "groupType": "main",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "© 2026 GeneralStore — Lit Web Components Test Target",
+      "selector": "footer",
+      "groupType": "footer",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "Name ⇅",
+      "selector": "table.data-table",
+      "groupType": "generic",
+      "wrapperType": "table",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "Quantity",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Quantity\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "Shipping Method",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Shipping Method\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    },
+    {
+      "label": "Delivery Date",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Delivery Date\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z",
+      "notes": "needs-adapter"
+    },
+    {
+      "label": "label",
+      "selector": "fieldset.form-control",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.784Z"
+    }
+  ]
+}

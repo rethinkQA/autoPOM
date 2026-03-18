@@ -1,0 +1,99 @@
+{
+  "url": "http://localhost:3001/",
+  "timestamp": "2026-03-16T20:24:56.277Z",
+  "scope": null,
+  "passCount": 1,
+  "groups": [
+    {
+      "label": "GeneralStore Vanilla HTML",
+      "selector": "header",
+      "groupType": "header",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "Home",
+      "selector": "nav",
+      "groupType": "nav",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "Popular Items",
+      "selector": "main",
+      "groupType": "main",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "Name ⇅",
+      "selector": "table.data-table",
+      "groupType": "generic",
+      "wrapperType": "table",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "Quantity",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Quantity\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "Shipping Method",
+      "selector": "#shipping-group",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "Delivery Date",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Delivery Date\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z",
+      "notes": "needs-adapter"
+    },
+    {
+      "label": "Product Details",
+      "selector": "#product-modal",
+      "groupType": "generic",
+      "wrapperType": "dialog",
+      "discoveredIn": "pass-1",
+      "visibility": "dynamic",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "© 2026 GeneralStore — Vanilla HTML Test Target",
+      "selector": "footer",
+      "groupType": "footer",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.242Z"
+    },
+    {
+      "label": "toast-notification",
+      "selector": "#toast-notification",
+      "groupType": "generic",
+      "wrapperType": "toast",
+      "discoveredIn": "pass-1",
+      "visibility": "dynamic",
+      "lastSeen": "2026-03-16T20:24:56.243Z"
+    }
+  ]
+}

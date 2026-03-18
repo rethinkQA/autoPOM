@@ -1,0 +1,99 @@
+{
+  "url": "http://localhost:3002/",
+  "timestamp": "2026-03-16T20:24:56.525Z",
+  "scope": null,
+  "passCount": 1,
+  "groups": [
+    {
+      "label": "GeneralStore React",
+      "selector": "header",
+      "groupType": "header",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Home",
+      "selector": "nav",
+      "groupType": "nav",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Popular Items",
+      "selector": "main",
+      "groupType": "main",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Search Products",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Search Products\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Category",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Category\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Name",
+      "selector": "table.MuiTable-root",
+      "groupType": "generic",
+      "wrapperType": "table",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Quantity",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Quantity\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Shipping Method",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Shipping Method\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    },
+    {
+      "label": "Delivery Date",
+      "selector": "fieldset:has(> legend):has(> legend:text-is(\"Delivery Date\"))",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z",
+      "notes": "needs-adapter"
+    },
+    {
+      "label": "© 2026 GeneralStore — React Test Target",
+      "selector": "footer",
+      "groupType": "footer",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-16T20:24:56.453Z"
+    }
+  ]
+}

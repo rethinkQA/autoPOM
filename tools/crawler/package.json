@@ -1,0 +1,50 @@
+{
+  "name": "@playwright-elements/crawler",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Runtime crawler that discovers groups and containers on a live page and emits a JSON manifest",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pw-crawl": "./dist/bin/pw-crawl.js"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/src/index.js",
+      "types": "./dist/src/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:unit": "playwright test --config=playwright.unit.config.ts",
+    "test:validation": "playwright test tests/validation.spec.ts",
+    "test:drift": "playwright test tests/drift-check.spec.ts",
+    "save-baselines": "npm run build && node dist/scripts/save-baselines.js",
+    "check-drift": "./scripts/check-drift.sh"
+  },
+  "dependencies": {
+    "playwright": "~1.50.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "~1.50.0",
+    "@types/node": "^25.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "~5.7.0"
+  },
+  "keywords": [
+    "playwright",
+    "crawler",
+    "page-object",
+    "manifest",
+    "e2e",
+    "testing"
+  ]
+}
