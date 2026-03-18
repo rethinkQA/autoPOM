@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '../data';
+  import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+  import {
+    filterAndSortProducts, toggleSort, cartMessage,
+    formatDate as sharedFormatDate, type SortKey,
+  } from '@shared/logic';
   import { toastStore } from '../lib/toast.svelte';
+  import { Select, Checkbox, RadioGroup, Dialog } from 'bits-ui';
   import flatpickr from 'flatpickr';
   import 'flatpickr/dist/flatpickr.css';
 
@@ -10,7 +15,7 @@
   let inStockOnly = $state(false);
 
   // ===== Sort state =====
-  let sortKey = $state<string | null>(null);
+  let sortKey = $state<SortKey | null>(null);
   let sortAsc = $state(true);
 
   // ===== Interactive state =====
@@ -23,6 +28,7 @@
 
   // ===== Modal =====
   let modalProduct = $state<Product | null>(null);
+  let modalOpen = $state(false);
 
   // ===== Delayed content =====
   let delayedText = $state('Loading recommendations…');
@@ -36,33 +42,11 @@
 
   // ===== Filtering + Sorting =====
   let filteredProducts = $derived.by(() => {
-    let filtered = PRODUCTS.filter((p) => {
-      if (searchTerm && !p.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-      if (category !== 'All' && p.category !== category) return false;
-      if (inStockOnly && !p.inStock) return false;
-      return true;
-    });
-
-    if (sortKey) {
-      filtered = [...filtered].sort((a, b) => {
-        let valA: string | number;
-        let valB: string | number;
-
-        switch (sortKey) {
-          case 'name':     valA = a.name.toLowerCase(); valB = b.name.toLowerCase(); break;
-          case 'price':    valA = a.price; valB = b.price; break;
-          case 'category': valA = a.category.toLowerCase(); valB = b.category.toLowerCase(); break;
-          case 'stock':    valA = a.inStock ? 1 : 0; valB = b.inStock ? 1 : 0; break;
-          default:         valA = ''; valB = '';
-        }
-
-        if (valA < valB) return sortAsc ? -1 : 1;
-        if (valA > valB) return sortAsc ? 1 : -1;
-        return 0;
-      });
-    }
-
-    return filtered;
+    return filterAndSortProducts(
+      PRODUCTS,
+      { searchTerm, category, inStockOnly },
+      { key: sortKey, ascending: sortAsc },
+    );
   });
 
   // ===== Helpers =====
@@ -71,8 +55,7 @@
   }
 
   function formatDate(date: Date | null): string {
-    if (!date) return '';
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    return sharedFormatDate(date);
   }
 
   function getSortIndicator(key: string): string {
@@ -82,12 +65,9 @@
 
   // ===== Handlers =====
   function handleSort(key: string) {
-    if (sortKey === key) {
-      sortAsc = !sortAsc;
-    } else {
-      sortKey = key;
-      sortAsc = true;
-    }
+    const next = toggleSort({ key: sortKey, ascending: sortAsc }, key as SortKey);
+    sortKey = next.key;
+    sortAsc = next.ascending;
   }
 
   function handleSortKeyDown(e: KeyboardEvent, key: string) {
@@ -98,7 +78,7 @@
   }
 
   function addToCart(product: Product) {
-    const msg = `Added ${quantity}x ${product.name} to cart`;
+    const msg = cartMessage(quantity, product.name);
     actionOutput = msg;
     toastStore.show(msg);
   }
@@ -126,14 +106,12 @@
 
   function openModal(product: Product) {
     modalProduct = product;
+    modalOpen = true;
   }
 
   function closeModal() {
+    modalOpen = false;
     modalProduct = null;
-  }
-
-  function handleModalBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) closeModal();
   }
 
   // ===== Flatpickr action =====
@@ -153,39 +131,47 @@
   }
 </script>
 
-<!-- Filter Controls -->
+<!-- Filter Controls (Bits UI for select & checkbox) -->
 <div class="filter-bar">
   <div class="filter-group">
     <label for="search-input">Search Products</label>
     <input
       type="text"
       id="search-input"
-     
       placeholder="Search by name…"
       bind:value={searchTerm}
       onkeydown={handleSearchKeyDown}
     />
   </div>
+
   <div class="filter-group">
-    <label for="category-select">Category</label>
-    <select
-      id="category-select"
-     
-      bind:value={category}
-    >
-      {#each CATEGORIES as cat}
-        <option value={cat}>{cat}</option>
-      {/each}
-    </select>
+    <span id="category-label">Category</span>
+    <Select.Root type="single" value={category} onValueChange={(v) => { if (v) category = v; }}>
+      <Select.Trigger class="bits-select-trigger" aria-labelledby="category-label" role="combobox">
+        {category}
+      </Select.Trigger>
+      <Select.Content class="bits-select-content">
+        {#each CATEGORIES as cat}
+          <Select.Item value={cat} class="bits-select-item" label={cat}>
+            {cat}
+          </Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
   </div>
+
   <div class="filter-group filter-checkbox">
-    <input
-      type="checkbox"
-      id="stock-checkbox"
-     
-      bind:checked={inStockOnly}
-    />
-    <label for="stock-checkbox">Show only in-stock items</label>
+    <Checkbox.Root
+      checked={inStockOnly}
+      onCheckedChange={(v) => { inStockOnly = v === true; }}
+      class="bits-checkbox"
+      aria-label="Show only in-stock items"
+    >
+      {#snippet children({ checked })}
+        <span class="bits-checkbox-indicator">{checked ? '✓' : ''}</span>
+      {/snippet}
+    </Checkbox.Root>
+    <label onclick={() => { inStockOnly = !inStockOnly; }}>Show only in-stock items</label>
   </div>
 </div>
 
@@ -212,9 +198,9 @@
           onclick={() => handleSort('category')} onkeydown={(e) => handleSortKeyDown(e, 'category')}>
         Category{getSortIndicator('category')}
       </th>
-      <th role="button" tabindex="0" data-sort-key="stock" aria-label="Sort by Stock"
-          onclick={() => handleSort('stock')} onkeydown={(e) => handleSortKeyDown(e, 'stock')}>
-        Stock{getSortIndicator('stock')}
+        <th role="button" tabindex="0" data-sort-key="inStock" aria-label="Sort by Stock"
+            onclick={() => handleSort('inStock')} onkeydown={(e) => handleSortKeyDown(e, 'inStock')}>
+          Stock{getSortIndicator('inStock')}
       </th>
       <th>Actions</th>
     </tr>
@@ -263,16 +249,21 @@
     </div>
   </fieldset>
 
-  <!-- Shipping Radio Group -->
+  <!-- Shipping Radio Group (Bits UI) -->
   <fieldset class="control-group radio-group">
     <legend>Shipping Method</legend>
-    {#each Object.entries(SHIPPING) as [key, { label, cost }]}
-      <label>
-        <input type="radio" name="shipping" value={key}
-               bind:group={shipping} />
-        {label} — {formatPrice(cost)}
-      </label>
-    {/each}
+    <RadioGroup.Root value={shipping} onValueChange={(v) => { if (v) shipping = v; }} aria-label="Shipping Method" class="bits-radio-group">
+      {#each Object.entries(SHIPPING) as [key, { label, cost }]}
+        <div class="bits-radio-item-row">
+          <RadioGroup.Item value={key} class="bits-radio-item" aria-label="{label} — {formatPrice(cost)}">
+            {#snippet children({ checked })}
+              <span class="bits-radio-indicator">{checked ? '●' : '○'}</span>
+            {/snippet}
+          </RadioGroup.Item>
+          <span>{label} — {formatPrice(cost)}</span>
+        </div>
+      {/each}
+    </RadioGroup.Root>
     <div class="radio-output" aria-live="polite">
       Shipping: {formatPrice(SHIPPING[shipping].cost)}
     </div>
@@ -323,13 +314,11 @@
   <div aria-live="polite">{delayedText}</div>
 </div>
 
-<!-- Modal -->
-{#if modalProduct}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <dialog class="modal" open
-          onclick={handleModalBackdropClick}>
-    <div class="modal-content">
-      <h2>{modalProduct.name}</h2>
+<!-- Modal (Bits UI Dialog) -->
+<Dialog.Root open={modalOpen} onOpenChange={(open) => { if (!open) closeModal(); }}>
+  <Dialog.Content class="bits-dialog-content modal">
+    {#if modalProduct}
+      <Dialog.Title>{modalProduct.name}</Dialog.Title>
       <p>
         {modalProduct.name} — {formatPrice(modalProduct.price)} | Category: {modalProduct.category} | {modalProduct.inStock ? 'In Stock' : 'Out of Stock'}
       </p>
@@ -337,6 +326,6 @@
               onclick={closeModal}>
         Close
       </button>
-    </div>
-  </dialog>
-{/if}
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>

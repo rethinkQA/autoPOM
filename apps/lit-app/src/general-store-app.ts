@@ -1,7 +1,7 @@
 import { LitElement, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import './general-store-home.js';
-import './general-store-about.js';
+import './pages/general-store-home.js';
+import './pages/general-store-about.js';
 
 /**
  * App shell component — renders into LIGHT DOM so that structural

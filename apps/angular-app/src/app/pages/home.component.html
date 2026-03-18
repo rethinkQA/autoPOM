@@ -1,35 +1,23 @@
-<!-- Filter Controls -->
+<!-- Filter Controls (Angular Material) -->
 <div class="filter-bar">
-  <div class="filter-group">
-    <label for="search-input">Search Products</label>
-    <input
-      type="text"
-      id="search-input"
-     
-      placeholder="Search by name…"
-      [(ngModel)]="searchTerm"
-      (keydown)="handleSearchKeyDown($event)"
-    />
-  </div>
+  <mat-form-field appearance="outline" class="filter-group">
+    <mat-label>Search Products</mat-label>
+    <input matInput [formControl]="searchControl" placeholder="Search by name…"
+           (keydown)="handleSearchKeyDown($event)" />
+  </mat-form-field>
 
-  <div class="filter-group">
-    <label for="category-select">Category</label>
-    <select id="category-select" [(ngModel)]="selectedCategory">
+  <mat-form-field appearance="outline" class="filter-group">
+    <mat-label>Category</mat-label>
+    <mat-select [formControl]="categoryControl">
       @for (cat of categories; track cat) {
-        <option [value]="cat">{{ cat }}</option>
+        <mat-option [value]="cat">{{ cat }}</mat-option>
       }
-    </select>
-  </div>
+    </mat-select>
+  </mat-form-field>
 
-  <div class="filter-group filter-checkbox">
-    <input
-      type="checkbox"
-      id="stock-checkbox"
-     
-      [(ngModel)]="inStockOnly"
-    />
-    <label for="stock-checkbox">Show only in-stock items</label>
-  </div>
+  <mat-checkbox [formControl]="inStockControl" class="filter-checkbox">
+    Show only in-stock items
+  </mat-checkbox>
 </div>
 
 <!-- Validation Message -->
@@ -39,72 +27,48 @@
   </div>
 }
 
-<!-- Product Data Table -->
-<table class="data-table">
-  <thead>
-    <tr>
-      <th role="button" tabindex="0"
-          data-sort-key="name"
-          aria-label="Sort by Name"
-          (click)="handleSort('name')"
-          (keydown.enter)="handleSort('name')"
-          (keydown.space)="$event.preventDefault(); handleSort('name')">
-        Name{{ getSortIndicator('name') }}
-      </th>
-      <th role="button" tabindex="0"
-          data-sort-key="price"
-          aria-label="Sort by Price"
-          (click)="handleSort('price')"
-          (keydown.enter)="handleSort('price')"
-          (keydown.space)="$event.preventDefault(); handleSort('price')">
-        Price{{ getSortIndicator('price') }}
-      </th>
-      <th role="button" tabindex="0"
-          data-sort-key="category"
-          aria-label="Sort by Category"
-          (click)="handleSort('category')"
-          (keydown.enter)="handleSort('category')"
-          (keydown.space)="$event.preventDefault(); handleSort('category')">
-        Category{{ getSortIndicator('category') }}
-      </th>
-      <th role="button" tabindex="0"
-          data-sort-key="stock"
-          aria-label="Sort by Stock"
-          (click)="handleSort('stock')"
-          (keydown.enter)="handleSort('stock')"
-          (keydown.space)="$event.preventDefault(); handleSort('stock')">
-        Stock{{ getSortIndicator('stock') }}
-      </th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    @if (filteredProducts.length === 0) {
-      <tr class="empty-state">
-        <td colspan="5">No products found.</td>
-      </tr>
-    } @else {
-      @for (product of filteredProducts; track product.name) {
-        <tr>
-          <td>
-            <button class="view-details-btn"
-                    (click)="openModal(product)">
-              {{ product.name }}
-            </button>
-          </td>
-          <td>${{ product.price.toFixed(2) }}</td>
-          <td>{{ product.category }}</td>
-          <td>{{ product.inStock ? 'Yes' : 'No' }}</td>
-          <td>
-            <button class="btn-primary btn-sm"
-                    (click)="addToCart(product)">
-              Add to Cart
-            </button>
-          </td>
-        </tr>
-      }
-    }
-  </tbody>
+<!-- Product Data Table (Angular Material mat-table + matSort) -->
+<table mat-table [dataSource]="filteredProducts" matSort matSortDisableClear
+       (matSortChange)="handleMatSort($event)" class="data-table">
+  <!-- Name Column -->
+  <ng-container matColumnDef="name">
+    <th mat-header-cell *matHeaderCellDef mat-sort-header>Name</th>
+    <td mat-cell *matCellDef="let product">
+      <button class="view-details-btn" (click)="openModal(product)">{{ product.name }}</button>
+    </td>
+  </ng-container>
+
+  <!-- Price Column -->
+  <ng-container matColumnDef="price">
+    <th mat-header-cell *matHeaderCellDef mat-sort-header>Price</th>
+    <td mat-cell *matCellDef="let product">${{ product.price.toFixed(2) }}</td>
+  </ng-container>
+
+  <!-- Category Column -->
+  <ng-container matColumnDef="category">
+    <th mat-header-cell *matHeaderCellDef mat-sort-header>Category</th>
+    <td mat-cell *matCellDef="let product">{{ product.category }}</td>
+  </ng-container>
+
+  <!-- Stock Column -->
+  <ng-container matColumnDef="inStock">
+    <th mat-header-cell *matHeaderCellDef mat-sort-header>Stock</th>
+    <td mat-cell *matCellDef="let product">{{ product.inStock ? 'Yes' : 'No' }}</td>
+  </ng-container>
+
+  <!-- Actions Column -->
+  <ng-container matColumnDef="actions">
+    <th mat-header-cell *matHeaderCellDef>Actions</th>
+    <td mat-cell *matCellDef="let product">
+      <button class="btn-primary btn-sm" (click)="addToCart(product)">Add to Cart</button>
+    </td>
+  </ng-container>
+
+  <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+  <tr mat-row *matRowDef="let row; columns: displayedColumns"></tr>
+  <tr *matNoDataRow>
+    <td class="empty-state" colspan="5">No products found.</td>
+  </tr>
 </table>
 
 <!-- Order Controls -->
@@ -122,27 +86,27 @@
     </div>
   </fieldset>
 
-  <!-- Shipping Radio Group -->
-  <fieldset class="control-group radio-group">
+  <!-- Shipping Radio Group (Angular Material) -->
+  <fieldset class="control-group">
     <legend>Shipping Method</legend>
-    @for (option of shippingOptions; track option[0]) {
-      <label>
-        <input type="radio" name="shipping" [value]="option[0]"
-               [(ngModel)]="selectedShipping" />
-        {{ option[1].label }} — <span>${{ option[1].cost.toFixed(2) }}</span>
-      </label>
-    }
+    <mat-radio-group [formControl]="shippingControl" aria-label="Shipping Method">
+      @for (option of shippingOptions; track option[0]) {
+        <mat-radio-button [value]="option[0]">
+          {{ option[1].label }} — <span>${{ option[1].cost.toFixed(2) }}</span>
+        </mat-radio-button>
+      }
+    </mat-radio-group>
     <div class="radio-output" aria-live="polite">
       Shipping: {{ shippingCost }}
     </div>
   </fieldset>
 
-  <!-- Date Picker (Angular Material) -->
+  <!-- Date Picker (Angular Material — already mat) -->
   <fieldset class="control-group">
     <legend>Delivery Date</legend>
     <mat-form-field appearance="outline">
       <mat-label>Choose a date</mat-label>
-      <input matInput [matDatepicker]="picker" [(ngModel)]="deliveryDate" />
+      <input matInput [matDatepicker]="picker" [formControl]="dateControl" />
       <mat-datepicker-toggle matIconSuffix [for]="picker"></mat-datepicker-toggle>
       <mat-datepicker #picker></mat-datepicker>
     </mat-form-field>

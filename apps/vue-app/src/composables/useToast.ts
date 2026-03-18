@@ -1,4 +1,5 @@
 import { ref } from 'vue';
+import { TOAST_DURATION_MS } from '@shared/logic';
 
 const toastMessage = ref('');
 const toastVisible = ref(false);
@@ -12,7 +13,7 @@ export function useToast() {
     if (toastTimeout) clearTimeout(toastTimeout);
     toastTimeout = setTimeout(() => {
       toastVisible.value = false;
-    }, 3000);
+    }, TOAST_DURATION_MS);
   }
 
   return {

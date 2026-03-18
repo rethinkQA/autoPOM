@@ -15,7 +15,11 @@
     "declarationMap": true,
     "sourceMap": true,
     "experimentalDecorators": true,
-    "useDefineForClassFields": false
+    "useDefineForClassFields": false,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../../shared/*"]
+    }
   },
   "include": ["src"]
 }

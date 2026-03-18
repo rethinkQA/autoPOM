@@ -22,7 +22,7 @@ npm start     # serves on http://localhost:3005
 
 ## UI Contract
 
-This app implements the full GeneralStore UI contract as defined in [`shared/ui-contract.md`](../../shared/ui-contract.md).
+This app implements the full GeneralStore UI contract as defined in [REQUIREMENTS.md §6](../../docs/REQUIREMENTS.md).
 
 ### Pages
 

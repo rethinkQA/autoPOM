@@ -2,8 +2,16 @@
   "name": "vanilla-html",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "description": "GeneralStore — plain HTML/CSS/JS test target (no framework, no build step)",
   "scripts": {
-    "start": "npx serve -l 3001"
+    "generate-shared": "node ../../scripts/generate-vanilla-shared.mjs",
+    "prestart": "npm run generate-shared",
+    "start": "serve -l 3001"
+  },
+  "devDependencies": {
+    "serve": "~14.2.0"
   }
 }

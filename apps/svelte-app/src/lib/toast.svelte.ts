@@ -1,3 +1,5 @@
+import { TOAST_DURATION_MS } from '@shared/logic';
+
 class ToastStore {
   message = $state('');
   visible = $state(false);
@@ -10,7 +12,7 @@ class ToastStore {
     this.#timer = setTimeout(() => {
       this.visible = false;
       this.#timer = null;
-    }, 3000);
+    }, TOAST_DURATION_MS);
   }
 }
 

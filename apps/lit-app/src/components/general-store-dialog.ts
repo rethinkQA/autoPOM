@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import type { Product } from './data.js';
+import type { Product } from '@shared/data';
 
 @customElement('general-store-dialog')
 export class GeneralStoreDialog extends LitElement {

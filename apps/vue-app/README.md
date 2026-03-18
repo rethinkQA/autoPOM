@@ -26,7 +26,7 @@ npm start      # serves on http://localhost:3003
 
 ## UI Contract
 
-All elements from the [UI Contract](../../shared/ui-contract.md) are implemented and identified using semantic HTML, ARIA attributes, and CSS classes (no `data-testid` attributes).
+All elements from the [UI Contract](../../docs/REQUIREMENTS.md) (§6) are implemented and identified using semantic HTML, ARIA attributes, and CSS classes (no `data-testid` attributes).
 
 ### Page Structure
 - `<header>` — Header with "GeneralStore" + Vue badge

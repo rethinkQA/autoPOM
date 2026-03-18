@@ -32,7 +32,7 @@ Uses Angular Router with hash-based routing (`withHashLocation()`):
 
 ## UI Contract Coverage
 
-All elements from `shared/ui-contract.md` are implemented. Elements are identified using semantic HTML, ARIA attributes, and CSS classes (no `data-testid` attributes):
+All elements from [REQUIREMENTS.md §6](../../docs/REQUIREMENTS.md) are implemented. Elements are identified using semantic HTML, ARIA attributes, and CSS classes (no `data-testid` attributes):
 
 - **Page structure:** Semantic elements (`<header>`, `<nav>`, `<main>`, `<footer>`), ARIA roles, and CSS classes
 - **Interactive elements:** `id` attributes, ARIA labels, `role` attributes, and semantic elements (e.g., `<dialog>`, `<table>`, `<select>`)

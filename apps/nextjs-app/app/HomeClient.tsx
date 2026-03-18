@@ -3,10 +3,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
-import toast, { Toaster } from 'react-hot-toast';
-import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from './data';
+import {
+  TextField,
+  Select, MenuItem, FormControl, InputLabel,
+  Checkbox, FormControlLabel,
+  Radio, RadioGroup,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, TableSortLabel,
+  Dialog, DialogContent,
+} from '@mui/material';
+import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+import {
+  filterAndSortProducts, toggleSort, cartMessage, formatDate,
+  TOAST_DURATION_MS, type SortKey,
+} from '@shared/logic';
 
-type SortKey = 'name' | 'price' | 'category' | 'stock' | null;
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'price', label: 'Price' },
+  { key: 'category', label: 'Category' },
+  { key: 'inStock', label: 'Stock' },
+];
 
 export default function HomePage() {
   // ===== Filter state =====
@@ -15,7 +31,7 @@ export default function HomePage() {
   const [inStockOnly, setInStockOnly] = useState(false);
 
   // ===== Sort state =====
-  const [sortKey, setSortKey] = useState<SortKey>(null);
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
 
   // ===== Interactive state =====
@@ -27,8 +43,8 @@ export default function HomePage() {
   const [showValidation, setShowValidation] = useState(false);
 
   // ===== Toast =====
-  const [toastVisible, setToastVisible] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
+  const [showToast, setShowToast] = useState(false);
 
   // ===== Modal =====
   const [modalProduct, setModalProduct] = useState<Product | null>(null);
@@ -45,66 +61,31 @@ export default function HomePage() {
 
   // ===== Toast auto-dismiss =====
   useEffect(() => {
-    if (!toastVisible) return;
-    const timer = setTimeout(() => setToastVisible(false), 3000);
+    if (!showToast) return;
+    const timer = setTimeout(() => setShowToast(false), TOAST_DURATION_MS);
     return () => clearTimeout(timer);
-  }, [toastVisible]);
+  }, [showToast]);
 
   // ===== Filtering + Sorting =====
-  const getFilteredProducts = useCallback(() => {
-    let filtered = PRODUCTS.filter((p) => {
-      if (searchTerm && !p.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-      if (category !== 'All' && p.category !== category) return false;
-      if (inStockOnly && !p.inStock) return false;
-      return true;
-    });
-
-    if (sortKey) {
-      filtered = [...filtered].sort((a, b) => {
-        let valA: string | number | boolean;
-        let valB: string | number | boolean;
-
-        switch (sortKey) {
-          case 'name':     valA = a.name.toLowerCase(); valB = b.name.toLowerCase(); break;
-          case 'price':    valA = a.price; valB = b.price; break;
-          case 'category': valA = a.category.toLowerCase(); valB = b.category.toLowerCase(); break;
-          case 'stock':    valA = a.inStock ? 1 : 0; valB = b.inStock ? 1 : 0; break;
-        }
-
-        if (valA < valB) return sortAsc ? -1 : 1;
-        if (valA > valB) return sortAsc ? 1 : -1;
-        return 0;
-      });
-    }
-
-    return filtered;
-  }, [searchTerm, category, inStockOnly, sortKey, sortAsc]);
-
-  const filteredProducts = getFilteredProducts();
+  const filteredProducts = useCallback(
+    () => filterAndSortProducts(PRODUCTS, { searchTerm, category, inStockOnly }, { key: sortKey, ascending: sortAsc }),
+    [searchTerm, category, inStockOnly, sortKey, sortAsc],
+  )();
 
   // ===== Handlers =====
   function handleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortAsc(!sortAsc);
-    } else {
-      setSortKey(key);
-      setSortAsc(true);
-    }
-  }
-
-  function getSortIndicator(key: string) {
-    if (sortKey !== key) return ' ⇅';
-    return sortAsc ? ' ▲' : ' ▼';
+    const next = toggleSort({ key: sortKey, ascending: sortAsc }, key);
+    setSortKey(next.key);
+    setSortAsc(next.ascending);
   }
 
   function showToastMessage(msg: string) {
     setToastMsg(msg);
-    setToastVisible(true);
-    toast(msg);
+    setShowToast(true);
   }
 
   function addToCart(product: Product) {
-    const msg = `Added ${quantity}x ${product.name} to cart`;
+    const msg = cartMessage(quantity, product.name);
     setActionOutput(msg);
     showToastMessage(msg);
   }
@@ -130,11 +111,6 @@ export default function HomePage() {
     }
   }
 
-  function formatDate(date: Date | null): string {
-    if (!date) return '';
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  }
-
   function openModal(product: Product) {
     setModalProduct(product);
   }
@@ -145,45 +121,43 @@ export default function HomePage() {
 
   return (
     <>
-      <Toaster position="bottom-right" />
-
-      {/* Filter Controls */}
+      {/* Filter Controls (MUI) */}
       <div className="filter-bar">
-        <div className="filter-group">
-          <label htmlFor="search-input">Search Products</label>
-          <input
-            type="text"
-            id="search-input"
-           
-            placeholder="Search by name…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-          />
-        </div>
-        <div className="filter-group">
-          <label htmlFor="category-select">Category</label>
-          <select
-            id="category-select"
-           
+        <TextField
+          label="Search Products"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search by name…"
+          variant="outlined"
+          size="small"
+          className="filter-group"
+        />
+
+        <FormControl variant="outlined" size="small" className="filter-group" sx={{ minWidth: 180 }}>
+          <InputLabel id="category-label">Category</InputLabel>
+          <Select
+            labelId="category-label"
             value={category}
+            label="Category"
             onChange={(e) => setCategory(e.target.value)}
           >
             {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <MenuItem key={c} value={c}>{c}</MenuItem>
             ))}
-          </select>
-        </div>
-        <div className="filter-group filter-checkbox">
-          <input
-            type="checkbox"
-            id="stock-checkbox"
-           
-            checked={inStockOnly}
-            onChange={(e) => setInStockOnly(e.target.checked)}
-          />
-          <label htmlFor="stock-checkbox">Show only in-stock items</label>
-        </div>
+          </Select>
+        </FormControl>
+
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={inStockOnly}
+              onChange={(e) => setInStockOnly(e.target.checked)}
+            />
+          }
+          label="Show only in-stock items"
+          className="filter-checkbox"
+        />
       </div>
 
       {/* Validation Message */}
@@ -193,57 +167,56 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Product Data Table */}
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th role="button" tabIndex={0} data-sort-key="name" aria-label="Sort by Name"
-                onClick={() => handleSort('name')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('name'); }}}>
-              Name{getSortIndicator('name')}
-            </th>
-            <th role="button" tabIndex={0} data-sort-key="price" aria-label="Sort by Price"
-                onClick={() => handleSort('price')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('price'); }}}>
-              Price{getSortIndicator('price')}
-            </th>
-            <th role="button" tabIndex={0} data-sort-key="category" aria-label="Sort by Category"
-                onClick={() => handleSort('category')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('category'); }}}>
-              Category{getSortIndicator('category')}
-            </th>
-            <th role="button" tabIndex={0} data-sort-key="stock" aria-label="Sort by Stock"
-                onClick={() => handleSort('stock')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort('stock'); }}}>
-              Stock{getSortIndicator('stock')}
-            </th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredProducts.length === 0 ? (
-            <tr className="empty-state">
-              <td colSpan={5}>No products found.</td>
-            </tr>
-          ) : (
-            filteredProducts.map((product) => (
-              <tr key={product.name}>
-                <td>
-                  <button className="view-details-btn"
-                          onClick={() => openModal(product)}>
-                    {product.name}
-                  </button>
-                </td>
-                <td>${product.price.toFixed(2)}</td>
-                <td>{product.category}</td>
-                <td>{product.inStock ? 'Yes' : 'No'}</td>
-                <td>
-                  <button className="btn-primary btn-sm"
-                          onClick={() => addToCart(product)}>
-                    Add to Cart
-                  </button>
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+      {/* Product Data Table (MUI Table + TableSortLabel) */}
+      <TableContainer component={Paper} className="data-table">
+        <Table>
+          <TableHead>
+            <TableRow>
+              {COLUMNS.map(({ key, label }) => (
+                <TableCell
+                  key={key}
+                  sortDirection={sortKey === key ? (sortAsc ? 'asc' : 'desc') : false}
+                  onClick={() => handleSort(key)}
+                  sx={{ cursor: 'pointer' }}
+                >
+                  <TableSortLabel
+                    active={sortKey === key}
+                    direction={sortKey === key ? (sortAsc ? 'asc' : 'desc') : 'asc'}
+                  >
+                    {label}
+                  </TableSortLabel>
+                </TableCell>
+              ))}
+              <TableCell>Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {filteredProducts.length === 0 ? (
+              <TableRow className="empty-state">
+                <TableCell colSpan={5} align="center">No products found.</TableCell>
+              </TableRow>
+            ) : (
+              filteredProducts.map((product) => (
+                <TableRow key={product.name} hover>
+                  <TableCell>
+                    <button className="view-details-btn" onClick={() => openModal(product)}>
+                      {product.name}
+                    </button>
+                  </TableCell>
+                  <TableCell>${product.price.toFixed(2)}</TableCell>
+                  <TableCell>{product.category}</TableCell>
+                  <TableCell>{product.inStock ? 'Yes' : 'No'}</TableCell>
+                  <TableCell>
+                    <button className="btn-primary btn-sm" onClick={() => addToCart(product)}>
+                      Add to Cart
+                    </button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
       {/* Order Controls */}
       <div className="order-controls">
@@ -260,16 +233,19 @@ export default function HomePage() {
           </div>
         </fieldset>
 
-        {/* Shipping Radio Group */}
-        <fieldset className="control-group radio-group">
+        {/* Shipping Radio Group (MUI) */}
+        <fieldset className="control-group">
           <legend>Shipping Method</legend>
-          {Object.entries(SHIPPING).map(([key, { label, cost }]) => (
-            <label key={key}>
-              <input type="radio" name="shipping" value={key}
-                     checked={shipping === key} onChange={() => setShipping(key)} />
-              {' '}{label} — <span>${cost.toFixed(2)}</span>
-            </label>
-          ))}
+          <RadioGroup value={shipping} onChange={(e) => setShipping(e.target.value)} aria-label="Shipping Method">
+            {Object.entries(SHIPPING).map(([key, { label, cost }]) => (
+              <FormControlLabel
+                key={key}
+                value={key}
+                control={<Radio />}
+                label={`${label} — $${cost.toFixed(2)}`}
+              />
+            ))}
+          </RadioGroup>
           <div className="radio-output" aria-live="polite">
             Shipping: ${SHIPPING[shipping].cost.toFixed(2)}
           </div>
@@ -321,25 +297,21 @@ export default function HomePage() {
         <div aria-live="polite">{delayedText}</div>
       </div>
 
-      {/* Modal */}
-      {modalProduct && (
-        <dialog className="modal" open
-                onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
-          <div className="modal-content">
-            <h2>{modalProduct.name}</h2>
-            <p>
-              {modalProduct.name} — ${modalProduct.price.toFixed(2)} | Category: {modalProduct.category} | {modalProduct.inStock ? 'In Stock' : 'Out of Stock'}
-            </p>
-            <button className="btn-secondary" aria-label="Close dialog"
-                    onClick={closeModal}>
-              Close
-            </button>
-          </div>
-        </dialog>
-      )}
+      {/* Modal (MUI Dialog) */}
+      <Dialog open={!!modalProduct} onClose={closeModal}>
+        <DialogContent className="modal-content">
+          <h2>{modalProduct?.name}</h2>
+          <p>
+            {modalProduct?.name} — ${modalProduct?.price.toFixed(2)} | Category: {modalProduct?.category} | {modalProduct?.inStock ? 'In Stock' : 'Out of Stock'}
+          </p>
+          <button className="btn-secondary" aria-label="Close dialog" onClick={closeModal}>
+            Close
+          </button>
+        </DialogContent>
+      </Dialog>
 
-      {/* Toast (custom element — react-hot-toast also renders its own toasts) */}
-      {toastVisible && (
+      {/* Toast (UI contract selector: .toast[aria-live='polite']) */}
+      {showToast && (
         <div className="toast" role="status" aria-live="polite">
           {toastMsg}
         </div>

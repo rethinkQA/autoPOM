@@ -431,6 +431,145 @@ p.about-text {
   z-index: 1000;
 }
 
+/* ===== BITS UI SELECT ===== */
+.bits-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  min-width: 180px;
+  background: #fff;
+  cursor: pointer;
+  gap: 0.5rem;
+}
+
+.bits-select-trigger:focus {
+  outline: 2px solid #3498db;
+  outline-offset: 1px;
+  border-color: #3498db;
+}
+
+.bits-select-content {
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 0.25rem 0;
+  z-index: 200;
+  min-width: 180px;
+}
+
+.bits-select-item {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.bits-select-item:hover,
+.bits-select-item[data-highlighted] {
+  background: #eef5fc;
+}
+
+.bits-select-item[data-selected] {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+/* ===== BITS UI CHECKBOX ===== */
+.bits-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.bits-checkbox[data-state="checked"] {
+  background: #27ae60;
+  border-color: #27ae60;
+}
+
+.bits-checkbox-indicator {
+  color: #fff;
+  font-size: 12px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+/* ===== BITS UI RADIO ===== */
+.bits-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.bits-radio-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.9rem;
+}
+
+.bits-radio-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ccc;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.bits-radio-item[data-state="checked"] {
+  border-color: #3498db;
+}
+
+.bits-radio-indicator {
+  font-size: 10px;
+  line-height: 1;
+  color: #3498db;
+}
+
+/* ===== BITS UI DIALOG ===== */
+.bits-dialog-content {
+  border: none;
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 450px;
+  width: 90%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  background: #fff;
+}
+
+.bits-dialog-content h2 {
+  margin-bottom: 1rem;
+  color: #2c3e50;
+}
+
+.bits-dialog-content p {
+  margin-bottom: 1.5rem;
+  color: #555;
+  line-height: 1.6;
+}
+
 /* ===== FOOTER ===== */
 footer {
   background: #2c3e50;

@@ -1,6 +1,9 @@
 {
   "name": "vue-app",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "version": "0.0.0",
   "type": "module",
   "scripts": {
@@ -10,9 +13,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mdi/font": "^7.4.47",
     "@vuepic/vue-datepicker": "^12.1.0",
     "vue": "^3.5.25",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "vuetify": "^4.0.2"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

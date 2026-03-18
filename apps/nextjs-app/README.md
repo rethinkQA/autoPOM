@@ -31,7 +31,7 @@ npm start      # starts Next.js dev server on http://localhost:3006
 
 ## UI Contract
 
-All elements from the shared [UI Contract](../../shared/ui-contract.md) are implemented. Elements are identified using semantic HTML, ARIA attributes, and CSS classes (no `data-testid` attributes).
+All elements from the shared [UI Contract](../../docs/REQUIREMENTS.md) (§6) are implemented. Elements are identified using semantic HTML, ARIA attributes, and CSS classes (no `data-testid` attributes).
 
 ## Scaffolding
 

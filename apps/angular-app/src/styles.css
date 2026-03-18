@@ -394,6 +394,70 @@ p.about-text {
   background: #2c3e50 !important;
 }
 
+/* ===== Angular Material Component Overrides ===== */
+
+/* Filter bar mat-form-field sizing */
+.filter-bar .mat-mdc-form-field {
+  min-width: 180px;
+}
+
+.filter-bar .mat-mdc-checkbox {
+  align-self: center;
+}
+
+/* Mat radio button layout */
+mat-radio-button {
+  display: block;
+  padding: 0.3rem 0;
+  font-size: 0.9rem;
+}
+
+/* Mat table styling to match original design */
+.data-table.mat-mdc-table {
+  width: 100%;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.data-table .mat-mdc-header-cell {
+  background: #34495e;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.data-table .mat-sort-header-arrow {
+  color: #fff;
+}
+
+.data-table .mat-mdc-cell,
+.data-table .mat-mdc-header-cell {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.data-table .mat-mdc-row:hover {
+  background: #f9f9f9;
+}
+
+.data-table .empty-state {
+  text-align: center;
+  color: #888;
+  padding: 2rem;
+  font-style: italic;
+}
+
+/* Mat select panel */
+.mat-mdc-select-panel {
+  max-height: 300px;
+}
+
 /* ===== FOOTER ===== */
 footer {
   background: #2c3e50;

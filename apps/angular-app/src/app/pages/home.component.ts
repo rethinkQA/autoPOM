@@ -1,27 +1,39 @@
 import { Component, OnInit, OnDestroy, inject, ViewEncapsulation } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { ReactiveFormsModule, FormControl } from '@angular/forms';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '../data';
+import { MatSelectModule } from '@angular/material/select';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatRadioModule } from '@angular/material/radio';
+import { MatTableModule } from '@angular/material/table';
+import { MatSortModule, Sort } from '@angular/material/sort';
+import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+import {
+  filterAndSortProducts, cartMessage, formatDate,
+  TOAST_DURATION_MS, type SortKey,
+} from '@shared/logic';
 import { ProductDialogComponent } from './product-dialog.component';
-
-type SortKey = 'name' | 'price' | 'category' | 'stock' | null;
 
 @Component({
   selector: 'app-home',
   standalone: true,
   imports: [
     CommonModule,
-    FormsModule,
+    ReactiveFormsModule,
     MatDialogModule,
     MatSnackBarModule,
     MatDatepickerModule,
     MatFormFieldModule,
     MatInputModule,
+    MatSelectModule,
+    MatCheckboxModule,
+    MatRadioModule,
+    MatTableModule,
+    MatSortModule,
   ],
   templateUrl: './home.component.html',
   styleUrls: ['./home.component.css'],
@@ -34,20 +46,21 @@ export class HomeComponent implements OnInit, OnDestroy {
   // Data
   readonly categories = CATEGORIES;
   readonly shippingOptions = Object.entries(SHIPPING);
+  readonly displayedColumns = ['name', 'price', 'category', 'inStock', 'actions'];
 
-  // Filter state
-  searchTerm = '';
-  selectedCategory = 'All';
-  inStockOnly = false;
+  // Reactive Form Controls
+  searchControl = new FormControl('');
+  categoryControl = new FormControl('All');
+  inStockControl = new FormControl(false);
+  shippingControl = new FormControl('standard');
+  dateControl = new FormControl<Date | null>(null);
 
   // Sort state
-  sortKey: SortKey = null;
+  sortKey: SortKey | null = null;
   sortAsc = true;
 
   // Interactive state
   quantity = 1;
-  selectedShipping = 'standard';
-  deliveryDate: Date | null = null;
   actionOutput = '';
   validationMsg = '';
   showValidation = false;
@@ -74,61 +87,35 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   // ===== Computed =====
   get filteredProducts(): Product[] {
-    let filtered = PRODUCTS.filter((p) => {
-      if (this.searchTerm && !p.name.toLowerCase().includes(this.searchTerm.toLowerCase())) return false;
-      if (this.selectedCategory !== 'All' && p.category !== this.selectedCategory) return false;
-      if (this.inStockOnly && !p.inStock) return false;
-      return true;
-    });
+    const searchTerm = this.searchControl.value || '';
+    const selectedCategory = this.categoryControl.value || 'All';
+    const inStockOnly = this.inStockControl.value || false;
 
-    if (this.sortKey) {
-      filtered = [...filtered].sort((a, b) => {
-        let valA: string | number;
-        let valB: string | number;
-
-        switch (this.sortKey) {
-          case 'name':     valA = a.name.toLowerCase(); valB = b.name.toLowerCase(); break;
-          case 'price':    valA = a.price; valB = b.price; break;
-          case 'category': valA = a.category.toLowerCase(); valB = b.category.toLowerCase(); break;
-          case 'stock':    valA = a.inStock ? 1 : 0; valB = b.inStock ? 1 : 0; break;
-          default:         valA = 0; valB = 0;
-        }
-
-        if (valA < valB) return this.sortAsc ? -1 : 1;
-        if (valA > valB) return this.sortAsc ? 1 : -1;
-        return 0;
-      });
-    }
-
-    return filtered;
+    return filterAndSortProducts(
+      PRODUCTS,
+      { searchTerm, category: selectedCategory, inStockOnly },
+      { key: this.sortKey, ascending: this.sortAsc },
+    );
   }
 
   get shippingCost(): string {
-    return `$${SHIPPING[this.selectedShipping].cost.toFixed(2)}`;
+    const key = this.shippingControl.value || 'standard';
+    return `$${SHIPPING[key].cost.toFixed(2)}`;
   }
 
   get formattedDate(): string {
-    if (!this.deliveryDate) return '';
-    return this.deliveryDate.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
+    return formatDate(this.dateControl.value);
   }
 
   // ===== Handlers =====
-  handleSort(key: SortKey): void {
-    if (this.sortKey === key) {
-      this.sortAsc = !this.sortAsc;
-    } else {
-      this.sortKey = key;
+  handleMatSort(sort: Sort): void {
+    if (!sort.active || sort.direction === '') {
+      this.sortKey = null;
       this.sortAsc = true;
+    } else {
+      this.sortKey = sort.active as SortKey;
+      this.sortAsc = sort.direction === 'asc';
     }
-  }
-
-  getSortIndicator(key: string): string {
-    if (this.sortKey !== key) return ' ⇅';
-    return this.sortAsc ? ' ▲' : ' ▼';
   }
 
   increment(): void {
@@ -140,7 +127,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   addToCart(product: Product): void {
-    const msg = `Added ${this.quantity}x ${product.name} to cart`;
+    const msg = cartMessage(this.quantity, product.name);
     this.actionOutput = msg;
     this.showToastMessage(msg);
   }
@@ -158,7 +145,8 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   handleSearchKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
-      if (!this.searchTerm.trim()) {
+      const searchTerm = this.searchControl.value || '';
+      if (!searchTerm.trim()) {
         this.validationMsg = 'Please enter a search term';
         this.showValidation = true;
       } else {
@@ -168,7 +156,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   openModal(product: Product): void {
-    const dialogRef = this.dialog.open(ProductDialogComponent, {
+    this.dialog.open(ProductDialogComponent, {
       data: product,
       width: '450px',
       panelClass: 'product-dialog-panel',
@@ -176,20 +164,18 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   private showToastMessage(msg: string): void {
-    // Use MatSnackBar for technology-native toast
-    const snackBarRef = this.snackBar.open(msg, undefined, {
-      duration: 3000,
+    this.snackBar.open(msg, undefined, {
+      duration: TOAST_DURATION_MS,
       horizontalPosition: 'end',
       verticalPosition: 'bottom',
       panelClass: ['generalstore-snackbar'],
     });
 
-    // Also show inline toast for UI contract
     this.toastMsg = msg;
     this.showToast = true;
     if (this.toastTimeout) clearTimeout(this.toastTimeout);
     this.toastTimeout = setTimeout(() => {
       this.showToast = false;
-    }, 3000);
+    }, TOAST_DURATION_MS);
   }
 }

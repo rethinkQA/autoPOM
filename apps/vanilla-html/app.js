@@ -1,19 +1,8 @@
-// ===== PRODUCT DATA (Canonical — shared across all 8 apps) =====
-const PRODUCTS = [
-  { name: 'Wireless Mouse',      price: 29.99,  category: 'Electronics', inStock: true },
-  { name: 'Bluetooth Keyboard',  price: 49.99,  category: 'Electronics', inStock: true },
-  { name: 'USB-C Hub',           price: 39.99,  category: 'Electronics', inStock: false },
-  { name: 'Running Shoes',       price: 89.99,  category: 'Clothing',    inStock: true },
-  { name: 'Winter Jacket',       price: 129.99, category: 'Clothing',    inStock: false },
-  { name: 'Cooking Basics',      price: 24.99,  category: 'Books',       inStock: true },
-  { name: 'Science Fiction Novel', price: 14.99, category: 'Books',       inStock: true },
-];
-
-const SHIPPING = {
-  standard:  { label: 'Standard',  cost: 4.99 },
-  express:   { label: 'Express',   cost: 9.99 },
-  overnight: { label: 'Overnight', cost: 19.99 },
-};
+// ===== SHARED DATA & LOGIC =====
+// Imported from the canonical shared/ TypeScript sources via generated shared.js.
+// Do NOT duplicate data or logic here — use Shared.* (e.g. Shared.PRODUCTS).
+// To regenerate: node scripts/generate-vanilla-shared.mjs
+const { PRODUCTS, CATEGORIES, SHIPPING, filterProducts, sortProducts, filterAndSortProducts, toggleSort, cartMessage, formatDate, TOAST_DURATION_MS } = Shared;
 
 // ===== STATE =====
 let sortKey = null;
@@ -66,44 +55,15 @@ window.addEventListener('hashchange', navigate);
 
 // ===== TABLE RENDERING =====
 function getFilteredAndSortedProducts() {
-  const searchTerm = searchInput.value.toLowerCase().trim();
-  const category   = categorySelect.value;
-  const inStockOnly = stockCheckbox.checked;
-
-  let filtered = PRODUCTS.filter(p => {
-    // Text filter — name only, case-insensitive, substring
-    if (searchTerm && !p.name.toLowerCase().includes(searchTerm)) return false;
-    // Category filter
-    if (category !== 'All' && p.category !== category) return false;
-    // In-stock filter
-    if (inStockOnly && !p.inStock) return false;
-    return true;
-  });
-
-  // Sort
-  if (sortKey) {
-    filtered.sort((a, b) => {
-      let valA = a[sortKey];
-      let valB = b[sortKey];
-
-      // Normalize for comparison
-      if (typeof valA === 'string') {
-        valA = valA.toLowerCase();
-        valB = valB.toLowerCase();
-      }
-      // Booleans: true > false for ascending
-      if (typeof valA === 'boolean') {
-        valA = valA ? 1 : 0;
-        valB = valB ? 1 : 0;
-      }
-
-      if (valA < valB) return sortAsc ? -1 : 1;
-      if (valA > valB) return sortAsc ? 1 : -1;
-      return 0;
-    });
-  }
-
-  return filtered;
+  return filterAndSortProducts(
+    PRODUCTS,
+    {
+      searchTerm: searchInput.value,
+      category:   categorySelect.value,
+      inStockOnly: stockCheckbox.checked,
+    },
+    { key: sortKey, ascending: sortAsc },
+  );
 }
 
 function renderTable() {
@@ -182,13 +142,9 @@ function handleSort(th) {
   const key = th.dataset.sortKey;
   const headers = document.querySelectorAll('th[data-sort-key]');
 
-  if (sortKey === key) {
-    // Toggle: asc → desc → asc (no neutral)
-    sortAsc = !sortAsc;
-  } else {
-    sortKey = key;
-    sortAsc = true;
-  }
+  const next = toggleSort({ key: sortKey, ascending: sortAsc }, key);
+  sortKey = next.key;
+  sortAsc = next.ascending;
 
   // Update header classes
   headers.forEach(h => {
@@ -237,23 +193,14 @@ radioGroup.addEventListener('change', (e) => {
 
 // ===== DATE PICKER =====
 datePicker.addEventListener('change', () => {
-  if (datePicker.value) {
-    const date = new Date(datePicker.value + 'T00:00:00');
-    const formatted = date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-    dateOutput.textContent = formatted;
-  } else {
-    dateOutput.textContent = '';
-  }
+  const date = datePicker.value ? new Date(datePicker.value + 'T00:00:00') : null;
+  dateOutput.textContent = formatDate(date);
 });
 
 // ===== ADD TO CART (Action Button) =====
 function addToCart(product) {
   const qty = parseInt(quantityInput.value, 10);
-  const msg = `Added ${qty}x ${product.name} to cart`;
+  const msg = cartMessage(qty, product.name);
 
   // Update output display
   actionOutput.textContent = msg;
@@ -303,7 +250,7 @@ function showToast(message) {
   if (toastTimeout) clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
     toast.hidden = true;
-  }, 3000);
+  }, TOAST_DURATION_MS);
 }
 
 // ===== DELAYED CONTENT =====
