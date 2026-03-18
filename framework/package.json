@@ -1,7 +1,7 @@
 {
   "name": "@playwright-elements/core",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "engines": {
     "node": ">=20"
   },
