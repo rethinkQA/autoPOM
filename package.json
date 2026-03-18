@@ -13,7 +13,8 @@
   "scripts": {
     "install:all": "for dir in apps/vanilla-html apps/react-app apps/vue-app apps/angular-app apps/svelte-app apps/nextjs-app apps/lit-app; do echo \"Installing $dir...\" && (cd $dir && npm install); done",
     "generate-shared": "node scripts/generate-vanilla-shared.mjs",
-    "start:all": "npm run generate-shared && concurrently --kill-others-on-fail \"npm start --prefix apps/vanilla-html\" \"npm start --prefix apps/react-app\" \"npm start --prefix apps/vue-app\" \"npm start --prefix apps/angular-app\" \"npm start --prefix apps/svelte-app\" \"npm start --prefix apps/nextjs-app\" \"npm start --prefix apps/lit-app\"",
+    "start:all": "npm run generate-shared && concurrently --kill-others-on-fail --names vanilla,react,vue,angular,svelte,next,lit \"npm start --prefix apps/vanilla-html\" \"npm start --prefix apps/react-app\" \"npm start --prefix apps/vue-app\" \"npm start --prefix apps/angular-app\" \"npm start --prefix apps/svelte-app\" \"npm start --prefix apps/nextjs-app\" \"npm start --prefix apps/lit-app\" \"node scripts/wait-for-apps.mjs\"",
+    "healthcheck": "node scripts/wait-for-apps.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
