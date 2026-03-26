@@ -494,7 +494,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
   }
 
   // Record mode always runs headed so the user can interact
-  const browser = await chromium.launch({ headless: false });
+  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
+  const browser = await chromium.launch({ headless: false, args: launchArgs });
 
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
@@ -566,7 +567,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const browser = await chromium.launch({ headless: args.headless });
+  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
+  const browser = await chromium.launch({ headless: args.headless, args: launchArgs });
 
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
