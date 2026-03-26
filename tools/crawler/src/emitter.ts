@@ -36,6 +36,8 @@ import { labelToPropertyName, deduplicateNames, inferRouteName } from "./naming.
 const TAG_TO_ROLE: Record<string, string> = {
   nav: "navigation",
   main: "main",
+  header: "banner",
+  footer: "contentinfo",
   aside: "complementary",
   // Additional HTML elements with implicit ARIA roles per WAI-ARIA spec
   dialog: "dialog",

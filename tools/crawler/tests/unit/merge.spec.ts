@@ -41,7 +41,7 @@ test.describe("mergeKey", () => {
     const g1 = makeGroup({ label: "Nav", groupType: "nav", selector: "nav:nth-of-type(1)" });
     const g2 = makeGroup({ label: "Nav", groupType: "nav", selector: "nav[aria-label=\"Nav\"]" });
     expect(mergeKey(g1)).toBe(mergeKey(g2));
-    expect(mergeKey(g1)).toBe("nav::Nav");
+    expect(mergeKey(g1)).toBe("nav::group::Nav");
   });
 
   test("differs for groups with different labels", () => {
