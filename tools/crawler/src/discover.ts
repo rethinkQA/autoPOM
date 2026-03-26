@@ -160,9 +160,24 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
           elements.unshift(container);
         }
       }
+
+      // Filter out nested groups: if an element is a descendant of another
+      // matched element, keep only the ancestor. This prevents individual
+      // form fields (e.g. [role="group"][aria-label="Email"]) from appearing
+      // as separate groups when their parent card/form is already captured.
+      const elementSet = new Set(elements);
+      const filtered = elements.filter((el) => {
+        let parent = el.parentElement;
+        while (parent && parent !== container) {
+          if (elementSet.has(parent)) return false; // ancestor is also a group — skip this child
+          parent = parent.parentElement;
+        }
+        return true;
+      });
+
       const results: RawGroupData[] = [];
 
-      elements.forEach((el, index) => {
+      filtered.forEach((el, index) => {
         const htmlEl = el as HTMLElement;
 
         // Extract legend text (for fieldset)
