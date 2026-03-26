@@ -72,6 +72,7 @@ interface CrawlArgs {
   diff?: string;
   observeNetwork: boolean;
   headless: boolean;
+  ignoreHTTPSErrors: boolean;
   help: boolean;
 }
 
@@ -90,6 +91,7 @@ interface RecordArgs {
   url: string;
   output?: string;
   scope?: string;
+  ignoreHTTPSErrors: boolean;
   help: boolean;
 }
 
@@ -112,6 +114,7 @@ function parseCrawlArgs(argv: string[]): CrawlArgs {
     pass: 1,
     observeNetwork: false,
     headless: true,
+    ignoreHTTPSErrors: false,
     help: false,
   };
 
@@ -142,6 +145,9 @@ function parseCrawlArgs(argv: string[]): CrawlArgs {
         break;
       case "--headed":
         args.headless = false;
+        break;
+      case "--ignore-https-errors":
+        args.ignoreHTTPSErrors = true;
         break;
       case "-h":
       case "--help":
@@ -221,6 +227,7 @@ function parseRecordArgs(argv: string[]): RecordArgs {
   const args: RecordArgs = {
     mode: "record",
     url: "",
+    ignoreHTTPSErrors: false,
     help: false,
   };
 
@@ -235,6 +242,9 @@ function parseRecordArgs(argv: string[]): RecordArgs {
         break;
       case "--scope":
         args.scope = requireValue(argv, ++i, arg);
+        break;
+      case "--ignore-https-errors":
+        args.ignoreHTTPSErrors = true;
         break;
       case "-h":
       case "--help":
@@ -276,6 +286,7 @@ Options:
   --diff <file>            Compare current DOM against existing manifest
   --observe-network        Capture API dependencies during crawl
   --headed                 Run browser in headed mode (visible)
+  --ignore-https-errors    Skip TLS certificate validation
 
 ── Record Mode (Interactive) ───────────────────────────────────
 
@@ -289,6 +300,7 @@ Arguments:
 Options:
   -o, --output <file>      Write/merge manifest to file (default: stdout)
   --scope <selector>       Limit recording to a section of the page
+  --ignore-https-errors    Skip TLS certificate validation
 
 ── Generate Mode ───────────────────────────────────────────────
 
@@ -485,7 +497,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
   const browser = await chromium.launch({ headless: false });
 
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
     const page = await context.newPage();
 
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
@@ -557,7 +569,7 @@ async function main(): Promise<void> {
   const browser = await chromium.launch({ headless: args.headless });
 
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
     const page = await context.newPage();
 
     // ── Diff mode ─────────────────────────────────────────
