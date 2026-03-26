@@ -2,6 +2,9 @@
 import type { Locator } from "@playwright/test";
 import type { ActionOptions } from "./handler-types.js";
 
+/** The ARIA role literals accepted by Playwright's `getByRole()`. */
+type AriaRole = Parameters<Locator["getByRole"]>[0];
+
 /**
  * Node-safe CSS identifier escaping.
  *
@@ -116,7 +119,7 @@ export async function readSelectedOptionText(el: Locator, options?: ActionOption
 export async function clickInContainer(
   container: Locator,
   text: string,
-  options?: ActionOptions & { roles?: readonly string[] },
+  options?: ActionOptions & { roles?: readonly AriaRole[] },
 ): Promise<void> {
   if (!text.trim()) {
     throw new Error("clickInContainer: text must be a non-empty string");
