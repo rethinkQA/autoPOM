@@ -234,7 +234,8 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
   const { loc, t, base, ctx, meta } = buildElement<TableElement>(by, scope, options,
     (ms) => table(by, scope, { ...options, timeout: ms }));
   const defaultTimeout = options?.timeout;
-  const adapter = options?.adapter ?? defaultTableAdapter;\n  if (options?.adapter) validateAdapter(options.adapter);
+  const adapter = options?.adapter ?? defaultTableAdapter;
+  if (options?.adapter) validateAdapter(options.adapter);
 
   /**
    * Read headers fresh from the DOM on every call.
