@@ -30,11 +30,28 @@ export class LoggerConfig implements ILoggerConfig {
    * Pass a partial `Logger` to override specific levels (unset levels
    * keep their defaults). Pass `null` to reset to the built-in
    * `console.warn` behaviour.
+   *
+   * **Implicit debug activation:** Providing a `debug` function
+   * implicitly sets `debugEnabled: true` unless you also pass
+   * `debugEnabled: false`. This means `configureLogger({ debug: myFn })`
+   * immediately enables debug-level logging. To register a debug sink
+   * for later dynamic activation, pass both:
+   * `configureLogger({ debug: myFn, debugEnabled: false })`.
    */
   configureLogger(logger: Partial<Logger> | null): void {
     if (logger === null) {
       this._logger = { ..._defaultLogger };
     } else {
+      // Validate that any provided methods are actually functions,
+      // so callers get a clear error at configuration time rather
+      // than a cryptic "x is not a function" at call time.
+      for (const key of ["warn", "debug"] as const) {
+        if (logger[key] !== undefined && typeof logger[key] !== "function") {
+          throw new Error(
+            `configureLogger: "${key}" must be a function, got ${typeof logger[key]}.`,
+          );
+        }
+      }
       this._logger = {
         ..._defaultLogger,
         ...logger,

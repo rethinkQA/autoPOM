@@ -41,7 +41,15 @@ export interface TableAdapter {
   emptyState: string;
   /** Selector for the table body container (relative to the table root). Default: `"tbody"` */
   body: string;
-  /** Selector for all body rows including empty-state (relative to the table root). Default: `"tbody tr"` */
+  /**
+   * Selector for all body rows including empty-state (relative to the table root). Default: `"tbody tr"`
+   *
+   * **Note:** This property is not read by the built-in table methods
+   * (which use {@link dataRows} exclusively). It is provided so that
+   * custom adapters have a canonical place to declare a "raw body rows"
+   * selector for their own logic (e.g. counting total rows including
+   * empty-state placeholders).
+   */
   bodyRows: string;
 
   /**
@@ -78,7 +86,21 @@ export const defaultTableAdapter: TableAdapter = {
   body: "tbody",
   bodyRows: "tbody tr",
 };
-
+/**
+ * Validate that a custom adapter provides all required selectors.
+ * @internal
+ */
+function validateAdapter(adapter: TableAdapter): void {
+  const required: (keyof TableAdapter)[] = ["headerCells", "dataRows", "cells", "emptyState", "body", "bodyRows"];
+  for (const key of required) {
+    if (key === "sort") continue;
+    if (typeof adapter[key] !== "string" || !(adapter[key] as string).trim()) {
+      throw new RangeError(
+        `TableAdapter.${key} must be a non-empty CSS selector string.`,
+      );
+    }
+  }
+}
 /** Options for the {@link table} element factory. */
 export interface TableOptions extends ElementOptions {
   /** Override the default HTML table adapter for custom table implementations. */
@@ -97,9 +119,9 @@ export interface FindRowOptions extends ActionOptions {
   exact?: boolean;
 }
 
-/** Strip sort-indicator characters (⇅↑↓▲▼) from header text. */
+/** Strip sort-indicator characters from header text. */
 function cleanHeaderText(raw: string): string {
-  return raw.replace(/[⇅↑↓▲▼]/g, "").trim();
+  return raw.replace(/[\u2195\u21C5\u2191\u2193\u25B2\u25BC\u25B4\u25BE\u2B06\u2B07\u2B9D\u2B9F\u2190\u2192\u25C0\u25B6\u25C2\u25B8\uFE0E\uFE0F]/g, "").trim();
 }
 
 /**
@@ -212,7 +234,7 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
   const { loc, t, base, ctx, meta } = buildElement<TableElement>(by, scope, options,
     (ms) => table(by, scope, { ...options, timeout: ms }));
   const defaultTimeout = options?.timeout;
-  const adapter = options?.adapter ?? defaultTableAdapter;
+  const adapter = options?.adapter ?? defaultTableAdapter;\n  if (options?.adapter) validateAdapter(options.adapter);
 
   /**
    * Read headers fresh from the DOM on every call.
@@ -231,7 +253,16 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
     rawTexts.forEach((text, idx) => {
       const cleaned = cleanHeaderText(text);
       originals.push(cleaned);
-      map.set(cleaned.toLowerCase(), idx);
+      const key = cleaned.toLowerCase();
+      if (map.has(key)) {
+        try {
+          ctx.logger.getLogger().warn(
+            `table.readHeaders(): duplicate column name "${cleaned}" at index ${idx} ` +
+            `(first seen at index ${map.get(key)}). Last index wins.`,
+          );
+        } catch { /* logger unavailable */ }
+      }
+      map.set(key, idx);
     });
     return { map, originals };
   }
@@ -244,6 +275,8 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
       const { originals: headers } = await readHeaders(options);
 
       const trLocator = tableEl.locator(adapter.dataRows);
+      // Wait for the table body before counting rows — consistent with rowCount() (P2-181).
+      await tableEl.locator(adapter.body).waitFor({ state: "attached", timeout: options?.timeout ?? defaultTimeout });
       const rowCount = await trLocator.count();
       if (rowCount === 0) return [];
 
@@ -286,31 +319,34 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
     async sort(column: string, options?: ActionOptions) {
       const timeout = t(options);
       const tableEl = await loc();
-      // Match <th> by visible text (case-insensitive, ignoring sort indicators)
-      const allHeaders = tableEl.locator(adapter.headerCells);
-      const count = await allHeaders.count();
-      for (let i = 0; i < count; i++) {
-        const th = allHeaders.nth(i);
-        const text = cleanHeaderText((await th.textContent({ timeout })) ?? "");
-        if (text.toLowerCase() === column.toLowerCase()) {
-          // Delegate to adapter.sort() when available (component library
-          // tables like MUI, Vuetify, Angular Material may need custom
-          // sort triggers — Issue #117).
-          if (adapter.sort) {
-            await adapter.sort(tableEl, column, i, th, { timeout });
-          } else {
-            await th.click({ timeout });
-          }
-          return;
-        }
+      const { map: headerMap, originals } = await readHeaders(options);
+      const colIdx = headerMap.get(column.toLowerCase());
+
+      if (colIdx === undefined) {
+        throw new ColumnNotFoundError(
+          `Cannot sort by "${column}": no <th> found matching text. ` +
+          `Available columns: ${originals.join(", ")}`,
+          { column, availableColumns: originals },
+        );
       }
 
-      const { originals: available } = await readHeaders(options);
-      throw new ColumnNotFoundError(
-        `Cannot sort by "${column}": no <th> found matching text. ` +
-        `Available columns: ${available.join(", ")}`,
-        { column, availableColumns: available },
-      );
+      const allHeaders = tableEl.locator(adapter.headerCells);
+      const th = allHeaders.nth(colIdx);
+
+      // Delegate to adapter.sort() when available (component library
+      // tables like MUI, Vuetify, Angular Material may need custom
+      // sort triggers — Issue #117).
+      if (adapter.sort) {
+        await adapter.sort(tableEl, column, colIdx, th, { timeout });
+      } else {
+        await th.click({ timeout });
+      }
+
+      // Brief settling to let the DOM re-render after sort (Issue #61).
+      const firstRow = tableEl.locator(adapter.dataRows).first();
+      if ((await firstRow.count()) > 0) {
+        await firstRow.locator(adapter.cells).first().waitFor({ state: "attached", timeout });
+      }
     },
 
     async headers(options?: ActionOptions): Promise<string[]> {
@@ -319,18 +355,18 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
     },
 
     async isEmpty(options?: ActionOptions) {
-      const timeout = t(options);
+      // P2-233: Always use wait-and-check semantics for consistency.
+      // Without this, isEmpty() without timeout does point-in-time check
+      // while isEmpty({ timeout }) waits, producing different results.
+      const timeout = t(options) ?? defaultTimeout;
       const emptyState = (await loc()).locator(adapter.emptyState);
-      if (timeout !== undefined) {
-        try {
-          await emptyState.first().waitFor({ state: "attached", timeout });
-          return true;
-        } catch (err) {
-          if (isTimeoutError(err)) return false;
-          throw err;
-        }
+      try {
+        await emptyState.first().waitFor({ state: "attached", timeout: timeout ?? 5000 });
+        return true;
+      } catch (err) {
+        if (isTimeoutError(err)) return false;
+        throw err;
       }
-      return (await emptyState.count()) > 0;
     },
 
     async emptyText(options?: ActionOptions) {
@@ -347,6 +383,9 @@ export function table(by: By, scope: Scope, options?: TableOptions): TableElemen
     async findRow(criteria: Record<string, string>, options?: FindRowOptions): Promise<TableRowElement> {
       if (Object.keys(criteria).length === 0) {
         throw new Error("findRow: criteria must contain at least one column/value pair.");
+      }
+      if (Object.values(criteria).some(v => v === "")) {
+        throw new Error("findRow: criteria values must be non-empty strings. Empty strings match all rows.");
       }
       const exact = options?.exact ?? false;
       const { map: headerMap, originals } = await readHeaders(options);
@@ -401,6 +440,9 @@ function createTableRowElement(
   tableLoc?: () => Promise<Locator>,
   exact: boolean = false,
 ): TableRowElement {
+  // P3-105 / P3-242: rowLocator is positional (nth(matchIdx)). After
+  // table sort/filter the index may point to a different row. Use
+  // refresh() to re-locate the row by its original criteria.
   const { t, base, meta } = buildElementFromProvider<TableRowElement>({
     locProvider: () => rowLocator,
     rebuild: (ms) => createTableRowElement(rowLocator, readHeaders, criteria, ms, ctx, adapter, tableLoc, exact),
@@ -433,8 +475,9 @@ function createTableRowElement(
     },
 
     async refresh(): Promise<TableRowElement> {
-      // Re-read fresh headers and validate criteria against them.
-      const { map: headerMap, originals } = await readHeaders();
+      // P2-210: Pass the row's effective timeout to readHeaders()
+      // so that row-level withTimeout() overrides propagate correctly.
+      const { map: headerMap, originals } = await readHeaders({ timeout: defaultTimeout });
       const serializedCriteria = validateAndSerializeCriteria(criteria, headerMap, originals);
 
       // Use the captured table locator instead of XPath ancestor traversal

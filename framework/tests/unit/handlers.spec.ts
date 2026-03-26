@@ -7,6 +7,7 @@ import {
   getHandlerByType,
   getRoleFallbacks,
 } from "../../src/defaults.js";
+import { ROLE_PRIORITY } from "../../src/handler-registry.js";
 import type { ElementHandler } from "../../src/handler-types.js";
 
 // ── handlers read-only view ─────────────────────────────────
@@ -297,5 +298,63 @@ test.describe("getRoleFallbacks", () => {
     const a = getRoleFallbacks();
     const b = getRoleFallbacks();
     expect(a).toBe(b); // same array reference (cached)
+  });
+});
+
+// ── ROLE_PRIORITY sync ──────────────────────────────────────
+
+test.describe("ROLE_PRIORITY sync with default handlers", () => {
+  test("every container/widget role from default handlers has an explicit priority entry", () => {
+    // Roles that are probed as fallbacks by resolveLabeled should have an
+    // explicit entry in ROLE_PRIORITY so their order is deterministic.
+    // Individual-element roles (checkbox, radio, textbox, searchbox) are
+    // excluded — they are not container/widget roles and are not expected
+    // in the priority list.
+    const individualElementRoles = new Set([
+      "checkbox",
+      "radio",
+      "textbox",
+      "searchbox",
+    ]);
+
+    const handlerRoles = new Set<string>();
+    for (const h of getHandlers()) {
+      for (const rule of h.detect) {
+        for (const role of rule.roles ?? []) {
+          if (!individualElementRoles.has(role)) {
+            handlerRoles.add(role);
+          }
+        }
+      }
+    }
+
+    const missingFromPriority = [...handlerRoles].filter(
+      (role) => !ROLE_PRIORITY.includes(role as never),
+    );
+
+    expect(
+      missingFromPriority,
+      `ROLE_PRIORITY is missing roles declared by default handlers: ${missingFromPriority.join(", ")}. ` +
+        `Add them to ROLE_PRIORITY in handler-registry.ts or to the individualElementRoles exclusion set above.`,
+    ).toEqual([]);
+  });
+
+  test("ROLE_PRIORITY has no entries for roles not in any handler", () => {
+    const allHandlerRoles = new Set<string>();
+    for (const h of getHandlers()) {
+      for (const rule of h.detect) {
+        for (const role of rule.roles ?? []) {
+          allHandlerRoles.add(role);
+        }
+      }
+    }
+
+    const stale = ROLE_PRIORITY.filter((role) => !allHandlerRoles.has(role));
+
+    expect(
+      stale,
+      `ROLE_PRIORITY contains roles not declared by any handler: ${stale.join(", ")}. ` +
+        `Remove them or add a handler that declares the role.`,
+    ).toEqual([]);
   });
 });

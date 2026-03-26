@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "url": "http://localhost:3003/#/",
+  "timestamp": "2026-03-19T15:09:50.305Z",
+  "scope": null,
+  "passCount": 1,
+  "groups": [
+    {
+      "label": "GeneralStore Vue",
+      "selector": "header",
+      "groupType": "header",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "Home",
+      "selector": "nav",
+      "groupType": "nav",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "Popular Items",
+      "selector": "main",
+      "groupType": "main",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "Name",
+      "selector": "table",
+      "groupType": "generic",
+      "wrapperType": "table",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "Quantity",
+      "selector": "fieldset:has(> legend)[aria-label=\"Quantity\"]",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "Shipping Method",
+      "selector": "fieldset:has(> legend)[aria-label=\"Shipping Method\"]",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "Delivery Date",
+      "selector": "fieldset:has(> legend)[aria-label=\"Delivery Date\"]",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z",
+      "notes": "needs-adapter"
+    },
+    {
+      "label": "© 2026 GeneralStore — Vue Test Target",
+      "selector": "footer",
+      "groupType": "footer",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.285Z"
+    },
+    {
+      "label": "input-v-1-messages",
+      "selector": "#input-v-1-messages",
+      "groupType": "generic",
+      "wrapperType": "toast",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.287Z"
+    },
+    {
+      "label": "input-v-6-messages",
+      "selector": "#input-v-6-messages",
+      "groupType": "generic",
+      "wrapperType": "toast",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.287Z"
+    }
+  ]
+}

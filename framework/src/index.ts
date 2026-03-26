@@ -9,6 +9,9 @@
  * middleware, element building blocks), import from
  * `"@playwright-elements/core/extend"` instead.
  *
+ * For the Playwright test fixture (automatic context setup/teardown),
+ * import from `"@playwright-elements/core/test-fixture"`.
+ *
  * For low-level implementation access (no semver guarantees),
  * import from `"@playwright-elements/core/internals"`.
  */
@@ -75,6 +78,12 @@ export {
   resetResolveRetry,
 } from "./defaults.js";
 
+// ── Timeout/retry configuration ─────────────────────────────
+
+export { resetTimeouts, getTimeouts, removeTimeoutOverride } from "./timeouts.js";
+export { configureTimeoutsGuarded as configureTimeouts } from "./defaults.js";
+export type { TimeoutConfig } from "./timeouts.js";
+
 // ── Re-export element interfaces ────────────────────────────
 
 export type {
@@ -118,6 +127,7 @@ export {
   runWithContext,
   setStrictContextMode,
   setFallbackContext,
+  peekContextStore,
   resetWarningState,
 } from "./context.js";
 export type { IFrameworkContext } from "./types.js";

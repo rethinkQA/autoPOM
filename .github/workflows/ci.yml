@@ -1,0 +1,342 @@
+# CI — install → build → lint → test (framework + crawler)
+#
+# Uses Playwright's built-in webServer config to auto-start the 7 fixture apps.
+# Caches node_modules per package for faster re-runs.
+
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Build & Lint ─────────────────────────────────────────────
+  build-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Validate .nvmrc matches engines.node
+        run: |
+          NVMRC_VER=$(tr -d 'v \n' < .nvmrc)
+          NVMRC_MAJOR=$(echo "$NVMRC_VER" | cut -d. -f1)
+          ENGINES=$(node -p "require('./package.json').engines.node")
+          echo ".nvmrc: $NVMRC_VER (major=$NVMRC_MAJOR), engines.node: $ENGINES"
+          MIN_MAJOR=$(echo "$ENGINES" | grep -oE '[0-9]+' | head -1)
+          if [ -z "$MIN_MAJOR" ]; then
+            echo "::error::Cannot parse engines.node ($ENGINES)"
+            exit 1
+          fi
+          if [ "$NVMRC_MAJOR" -lt "$MIN_MAJOR" ]; then
+            echo "::error::.nvmrc major ($NVMRC_MAJOR) is below engines.node minimum ($MIN_MAJOR from $ENGINES)"
+            exit 1
+          fi
+
+      - name: Install root + workspace deps
+        run: npm ci
+
+      - name: Cache app node_modules
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            apps/react-app/node_modules
+            apps/vue-app/node_modules
+            apps/angular-app/node_modules
+            apps/svelte-app/node_modules
+            apps/nextjs-app/node_modules
+            apps/lit-app/node_modules
+            apps/vanilla-html/node_modules
+          key: app-deps-${{ runner.os }}-${{ hashFiles('apps/*/package-lock.json') }}
+          restore-keys: |
+            app-deps-${{ runner.os }}-
+
+      - name: Validate lockfiles exist
+        run: |
+          MISSING=0
+          for dir in apps/*/; do
+            if [ ! -f "${dir}package-lock.json" ]; then
+              echo "::error::Missing package-lock.json in ${dir}"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then exit 1; fi
+
+      - name: Install app deps
+        run: npm run install:all
+
+      - name: Build crawler (framework tests depend on crawler types)
+        run: cd tools/crawler && npx tsc -p tsconfig.json
+
+      - name: Type-check framework
+        run: cd framework && npx tsc --noEmit -p tsconfig.check.json
+
+      - name: Type-check crawler
+        run: cd tools/crawler && npx tsc --noEmit -p tsconfig.check.json
+
+      - name: Type-check shared
+        run: cd shared && npx tsc --noEmit
+
+      - name: Type-check shared (Angular TS 5.8 compat)
+        run: cd shared && npx -p typescript@5.8 tsc --noEmit
+
+      - name: Verify test counts in docs
+        run: npm run test:counts:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Generate vanilla shared bundle
+        run: npm run generate-shared
+
+      - name: Build apps (compilation check)
+        run: |
+          BUILT=0
+          for dir in apps/*/; do
+            if node -e "const p=require('./${dir}package.json'); process.exit(p.scripts?.build ? 0 : 1)" 2>/dev/null; then
+              echo "Building ${dir}..."
+              npm run build --prefix "${dir}" || { echo "::error::Build failed in ${dir}"; exit 1; }
+              BUILT=$((BUILT + 1))
+            fi
+          done
+          if [ "$BUILT" -eq 0 ]; then
+            echo "::error::No apps had a build script — expected at least one"
+            exit 1
+          fi
+          echo "Successfully built $BUILT app(s)"
+
+      - name: Validate Vite major version consistency
+        run: |
+          VERSIONS=""
+          for dir in apps/*/; do
+            VER=$(node -e "
+              const p = require('./${dir}package.json');
+              const v = (p.devDependencies || {}).vite || (p.dependencies || {}).vite || '';
+              if (v) process.stdout.write(v.replace(/^[~^>=< ]+/, '').replace(/-.*$/, '').split('.')[0]);
+            " 2>/dev/null)
+            if [ -n "$VER" ]; then
+              echo "${dir}: vite major=$VER"
+              VERSIONS="$VERSIONS $VER"
+            fi
+          done
+          TRIMMED=$(echo "$VERSIONS" | tr -d ' ')
+          if [ -z "$TRIMMED" ]; then
+            echo "::error::No Vite apps found — expected at least one"
+            exit 1
+          fi
+          UNIQUE=$(echo "$VERSIONS" | tr ' ' '\n' | sort -u | grep -c .)
+          if [ "$UNIQUE" -gt 1 ]; then
+            echo "::error::Vite major version mismatch across apps: $VERSIONS"
+            exit 1
+          fi
+
+      - name: Validate component matrix (REQUIREMENTS §6.7)
+        run: node scripts/validate-component-matrix.mjs
+
+  # ── Framework tests ──────────────────────────────────────────
+  test-framework:
+    needs: build-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install root + workspace deps
+        run: npm ci
+
+      - name: Cache app node_modules
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            apps/react-app/node_modules
+            apps/vue-app/node_modules
+            apps/angular-app/node_modules
+            apps/svelte-app/node_modules
+            apps/nextjs-app/node_modules
+            apps/lit-app/node_modules
+            apps/vanilla-html/node_modules
+          key: app-deps-${{ runner.os }}-${{ hashFiles('apps/*/package-lock.json') }}
+          restore-keys: |
+            app-deps-${{ runner.os }}-
+
+      - name: Install app deps
+        run: npm run install:all
+
+      - name: Generate vanilla shared bundle
+        run: npm run generate-shared
+
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(cd framework && npx playwright --version | tr ' ' '-')" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-framework-${{ steps.pw-version.outputs.version }}-${{ runner.os }}
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: cd framework && npx playwright install --with-deps chromium
+
+      - name: Install Playwright deps (cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: cd framework && npx playwright install-deps chromium
+
+      - name: Run unit tests
+        run: cd framework && npx playwright test --config=playwright.unit.config.ts
+
+      - name: Start all app servers
+        run: |
+          set -m  # enable job control for process groups
+          npm run start:all &
+          echo $! > /tmp/app-servers-framework.pid
+        env:
+          CI: true
+
+      - name: Wait for servers
+        run: npm run healthcheck
+
+      - name: Run integration tests
+        run: cd framework && npx playwright test
+
+      - name: Stop app servers
+        if: always()
+        run: |
+          if [ -f /tmp/app-servers-framework.pid ]; then
+            PID=$(cat /tmp/app-servers-framework.pid)
+            if [[ "$PID" =~ ^[0-9]+$ ]]; then
+              kill -- -"$PID" 2>/dev/null || kill "$PID" 2>/dev/null || true
+              pkill -P "$PID" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: framework-test-results
+          path: |
+            framework/test-results/
+            framework/playwright-report/
+          retention-days: 7
+
+  # ── Crawler tests ────────────────────────────────────────────
+  test-crawler:
+    needs: build-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install root + workspace deps
+        run: npm ci
+
+      - name: Cache app node_modules
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            apps/react-app/node_modules
+            apps/vue-app/node_modules
+            apps/angular-app/node_modules
+            apps/svelte-app/node_modules
+            apps/nextjs-app/node_modules
+            apps/lit-app/node_modules
+            apps/vanilla-html/node_modules
+          key: app-deps-${{ runner.os }}-${{ hashFiles('apps/*/package-lock.json') }}
+          restore-keys: |
+            app-deps-${{ runner.os }}-
+
+      - name: Install app deps
+        run: npm run install:all
+
+      - name: Generate vanilla shared bundle
+        run: npm run generate-shared
+
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(cd tools/crawler && npx playwright --version | tr ' ' '-')" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-crawler-${{ steps.pw-version.outputs.version }}-${{ runner.os }}
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: cd tools/crawler && npx playwright install --with-deps chromium
+
+      - name: Install Playwright deps (cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: cd tools/crawler && npx playwright install-deps chromium
+
+      - name: Run unit tests
+        run: cd tools/crawler && npx playwright test --config=playwright.unit.config.ts
+
+      - name: Start all app servers
+        run: |
+          set -m  # enable job control for process groups
+          npm run start:all &
+          echo $! > /tmp/app-servers-crawler.pid
+        env:
+          CI: true
+
+      - name: Wait for servers
+        run: npm run healthcheck
+
+      - name: Run integration tests
+        run: cd tools/crawler && npx playwright test
+
+      - name: Stop app servers
+        if: always()
+        run: |
+          if [ -f /tmp/app-servers-crawler.pid ]; then
+            PID=$(cat /tmp/app-servers-crawler.pid)
+            if [[ "$PID" =~ ^[0-9]+$ ]]; then
+              kill -- -"$PID" 2>/dev/null || kill "$PID" 2>/dev/null || true
+              pkill -P "$PID" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crawler-test-results
+          path: tools/crawler/test-results/
+          retention-days: 7

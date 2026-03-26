@@ -101,6 +101,10 @@ export { cssEscape, clickInContainer, readSelectedOptionText } from "./dom-helpe
 export { networkSettleMiddleware } from "./network-settle-middleware.js";
 export type { NetworkSettleOptions } from "./network-settle-middleware.js";
 
+// ── Error classification extensibility ──────────────────────
+
+export { registerRetryablePattern, resetRetryablePatterns } from "./playwright-errors.js";
+
 // ── Element options ─────────────────────────────────────────
 
 export type { ElementOptions } from "./elements/index.js";

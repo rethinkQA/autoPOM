@@ -1,5 +1,4 @@
 import { test, expect } from "../src/test-fixture.js";
-import { By, group } from "../src/index.js";
 import { homePage } from "./pages/home.js";
 
 test.describe("group.overrideHandler() — string type name", () => {

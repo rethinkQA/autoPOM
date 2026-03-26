@@ -15,6 +15,7 @@
 
 import { test, expect } from "@playwright/test";
 import { crawlPage } from "../src/crawler.js";
+import { recordPage } from "../src/record-api.js";
 import type { CrawlerManifest, WrapperType } from "../src/types.js";
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -65,34 +66,40 @@ test.describe("Cross-app structure validation", () => {
   });
 
   test("has at least one dialog (always-in-DOM apps)", async ({ page }, testInfo) => {
-    // Dialog elements in React/Vue/Angular/Svelte/Next.js are portaled
-    // and only exist when opened. Vanilla and Lit keep <dialog> in DOM.
-    // This matches the ROADMAP design: "user opens dialog, then runs pass 2."
-    // Only vanilla keeps <dialog> always in the DOM.
-    // Lit conditionally renders its dialog (not in DOM when closed).
-    // React/Vue/Angular/Svelte/Next.js use portals/overlays.
+    // [P1-13] Non-vanilla apps use portaled dialogs — recorder triggers them.
     const project = testInfo.project.name;
-    if (project !== "vanilla") {
-      test.skip();
-      return;
-    }
-
     await page.goto("/");
-    const manifest = await crawlPage(page);
-    expect(countByWrapper(manifest, "dialog")).toBeGreaterThanOrEqual(1);
+
+    if (project === "vanilla") {
+      const manifest = await crawlPage(page);
+      expect(countByWrapper(manifest, "dialog")).toBeGreaterThanOrEqual(1);
+    } else {
+      const base = await crawlPage(page);
+      const manifest = await recordPage(page, async (p) => {
+        await p.locator("table >> text=Wireless Mouse").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+      expect(countByWrapper(manifest, "dialog")).toBeGreaterThanOrEqual(1);
+    }
   });
 
-  test("has at least one toast/live-region (vanilla)", async ({ page }, testInfo) => {
-    // Toast elements are conditionally rendered in most frameworks.
-    // Only test on vanilla where the toast div is always in the DOM.
-    if (testInfo.project.name !== "vanilla") {
-      test.skip();
-      return;
-    }
-
+  test("has at least one toast/live-region", async ({ page }, testInfo) => {
+    // [P1-13] Non-vanilla apps conditionally render toasts — recorder triggers them.
+    const project = testInfo.project.name;
     await page.goto("/");
-    const manifest = await crawlPage(page);
-    expect(countByWrapper(manifest, "toast")).toBeGreaterThanOrEqual(1);
+
+    if (project === "vanilla") {
+      const manifest = await crawlPage(page);
+      expect(countByWrapper(manifest, "toast")).toBeGreaterThanOrEqual(1);
+    } else {
+      const base = await crawlPage(page);
+      const manifest = await recordPage(page, async (p) => {
+        // Click "Add to Cart" to trigger toast
+        await p.locator("button >> text=Add to Cart").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+      expect(countByWrapper(manifest, "toast")).toBeGreaterThanOrEqual(1);
+    }
   });
 
   test("has fieldset or form groups", async ({ page }) => {

@@ -133,8 +133,8 @@ export function buildElement<T>(
   rebuild: (ms: number) => T,
 ): ElementInfra<T> {
   const defaultTimeout = options?.timeout;
-  if (defaultTimeout !== undefined && defaultTimeout <= 0) {
-    throw new RangeError(`ElementOptions.timeout must be positive, got ${defaultTimeout}`);
+  if (defaultTimeout !== undefined && (!Number.isFinite(defaultTimeout) || defaultTimeout < 0)) {
+    throw new RangeError(`ElementOptions.timeout must be a finite non-negative number, got ${defaultTimeout}`);
   }
   const resolvedCtx = (options?.context ?? getActiveContext());
   const loc = () => by.resolve(scope, resolvedCtx.logger.getLogger());
@@ -182,8 +182,11 @@ export function requireHandler(ctx: IFrameworkContext, type: string): ElementHan
 /**
  * Create a standalone timeout resolver.
  *
- * Useful for helpers that don't follow the standard `by / scope`
- * pattern (e.g. `createTableRowElement`).
+ * @deprecated This function is unused — `buildElement` and
+ * `buildElementFromProvider` inline the same logic directly.
+ * Kept for backward compatibility with external consumers.
+ *
+ * @internal
  */
 export function resolveTimeout(
   defaultTimeout?: number,
@@ -229,8 +232,8 @@ export interface BuildFromProviderOptions<T> {
 export function buildElementFromProvider<T>(
   opts: BuildFromProviderOptions<T>,
 ): ElementInfra<T> {
-  if (opts.defaultTimeout !== undefined && opts.defaultTimeout <= 0) {
-    throw new RangeError(`ElementOptions.timeout must be positive, got ${opts.defaultTimeout}`);
+  if (opts.defaultTimeout !== undefined && (!Number.isFinite(opts.defaultTimeout) || opts.defaultTimeout < 0)) {
+    throw new RangeError(`ElementOptions.timeout must be a finite non-negative number, got ${opts.defaultTimeout}`);
   }
   const resolvedCtx = opts.context ?? getActiveContext();
   const loc = async () => opts.locProvider();

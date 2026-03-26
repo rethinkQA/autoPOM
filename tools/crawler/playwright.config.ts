@@ -1,4 +1,10 @@
 import { defineConfig } from "@playwright/test";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { APP_DEFINITIONS } from "@playwright-elements/shared/apps";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const appsDir = resolve(__dirname, "../../apps");
 
 /**
  * Playwright config for crawler integration tests.
@@ -6,34 +12,29 @@ import { defineConfig } from "@playwright/test";
  * Reuses the same 7 fixture apps from the framework test suite.
  * Each app is started on its designated port.
  */
-const apps = [
-  { name: "vanilla",  port: 3001, prefix: "vanilla-html" },
-  { name: "react",    port: 3002, prefix: "react-app" },
-  { name: "vue",      port: 3003, prefix: "vue-app" },
-  { name: "angular",  port: 3004, prefix: "angular-app" },
-  { name: "svelte",   port: 3005, prefix: "svelte-app" },
-  { name: "nextjs",   port: 3006, prefix: "nextjs-app" },
-  { name: "lit",      port: 3007, prefix: "lit-app" },
-] as const;
+const apps = APP_DEFINITIONS;
 
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: ["**/unit/**"],
   timeout: 30_000,
   expect: { timeout: 5_000 },
+  forbidOnly: !!process.env.CI,
   fullyParallel: true,
-  retries: 0,
+  retries: process.env.CI ? 1 : 0,
+  workers: process.env.CI ? 2 : undefined,
   reporter: [["list"]],
 
   use: {
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
 
   webServer: apps.map((app) => ({
-    command: `npm start --prefix ../../apps/${app.prefix}`,
+    command: `npm start --prefix ${resolve(appsDir, app.prefix)}`,
     url: `http://localhost:${app.port}`,
     reuseExistingServer: true,
-    timeout: 30_000,
+    timeout: process.env.CI ? 120_000 : 60_000,
   })),
 
   projects: apps.map((app) => ({

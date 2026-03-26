@@ -1,8 +1,8 @@
 # Review Synthesis Report — @playwright-elements/core
 
-> ## ⚠️ SUPERSEDED
+> ## ⚠️ SUPERSEDED — DO NOT USE FOR CURRENT PROJECT STATUS
 >
-> **This report is a historical snapshot from 2026-03-15 (post-Phase 10, pre-Phase 10.8).** The scores, priority matrix, and risk assessment below **do not reflect the current project state.** Significant work has been completed since this review:
+> **This report is a historical snapshot from 2026-03-15 (post-Phase 10, pre-Phase 10.8).** The scores, priority matrix, and risk assessment below **do not reflect the current project state.** All issues identified in this review have been resolved. Significant work has been completed since:
 >
 > - **All 8 P0 issues** resolved in Phase 10.8 (Post-Review Stabilization)
 > - **Phases 11–13** completed: runtime crawler, emitter, validation suite
@@ -10,13 +10,14 @@
 > - **`editableSelectAdapter`** extracted; `comboboxSet` refactored into thin dispatcher
 > - **48+ new unit tests** added (element classifier, label resolution, select adapter, etc.)
 > - **Complete Phase 10 cross-app migration** — all 7 apps validated
-> - **149 architecture issues tracked and resolved** (see `framework/ARCHITECTURE_ISSUES.md`)
+> - **149 architecture issues tracked and resolved** (see [`ARCHITECTURE_ISSUES.md`](ARCHITECTURE_ISSUES.md))
 >
 > **For current project status, see:**
-> - [`framework/README.md`](../framework/README.md) — compatibility matrix, test counts, API docs
-> - [`framework/ARCHITECTURE_ISSUES.md`](../framework/ARCHITECTURE_ISSUES.md) — live issue tracker
+> - [`docs/ISSUES.md`](../ISSUES.md) — live issue tracker (replaces this report)
+> - [`framework/README.md`](../../framework/README.md) — compatibility matrix, test counts, API docs
+> - [`docs/ROADMAP.md`](../ROADMAP.md) — phase summary and open work items
 >
-> Current test count: **1080 tests (861 integration + 219 unit)**, all passing.
+> Current test count: see [`docs/ROADMAP.md`](../ROADMAP.md) for live numbers. See [`docs/ISSUES.md`](../ISSUES.md) for live status.
 
 ---
 

@@ -1,5 +1,7 @@
 # Framework v0.2 — Cross-App Validation Plan
 
+> **⚠️ HISTORICAL** — Test counts and status in this file reflect the state at time of writing, not current totals. See [ROADMAP.md](../ROADMAP.md) for up-to-date numbers.
+
 > **Created:** 2026-03-07
 > **Status:** Complete — 861/861 integration tests + 219 unit tests pass across all 7 apps
 > **Prerequisite:** All 7 apps are built and verified. Framework has 261 passing tests against vanilla-html (port 3001). Zero architectural issues.

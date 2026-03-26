@@ -3,30 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "scripts": {
     "dev": "next dev -p 3006",
     "build": "next build",
-    "start": "next dev -p 3006",
+    "start": "next build && next start -p 3006",
     "lint": "eslint"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@mui/material": "^7.3.9",
-    "next": "16.1.6",
-    "react": "19.2.3",
-    "react-datepicker": "^9.1.0",
-    "react-dom": "19.2.3",
-    "react-hot-toast": "^2.6.0"
+    "@emotion/react": "~11.14.0",
+    "@emotion/styled": "~11.14.1",
+    "@mui/material": "~7.3.9",
+    "next": "~16.1.6",
+    "react": "~19.2.0",
+    "react-datepicker": "~9.1.0",
+    "react-dom": "~19.2.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.6",
-    "typescript": "^5"
+    "@types/node": "~20.19.0",
+    "@types/react": "~19.2.14",
+    "@types/react-dom": "~19.2.3",
+    "eslint": "~10.0.3",
+    "eslint-config-next": "~16.1.6",
+    "typescript": "~5.9.3"
   }
 }

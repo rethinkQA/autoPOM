@@ -47,12 +47,35 @@ export function radio(by: By, scope: Scope, options?: ElementOptions): RadioElem
       // Support both native <input type="radio"> and ARIA role="radio" (e.g. Bits UI)
       const radios = container.locator("input[type='radio'], [role='radio']");
       await radios.first().waitFor({ state: "attached", timeout });
-      const count = await radios.count();
+      // P2-169: Wait for the radio count to stabilize — framework-rendered
+      // UIs may render options incrementally across render cycles.
+      let count = await radios.count();
+      const stabilizeDeadline = Date.now() + Math.min(timeout ?? 5000, 1000);
+      while (Date.now() < stabilizeDeadline) {
+        await container.page().evaluate(() => new Promise<void>(r =>
+          requestAnimationFrame(() => r()),
+        ));
+        const newCount = await radios.count();
+        if (newCount === count) break;
+        count = newCount;
+      }
       const labels: string[] = [];
 
       for (let i = 0; i < count; i++) {
         const label = await resolveInputLabel(radios.nth(i), container, { timeout });
-        if (label) labels.push(label);
+        if (label) {
+          labels.push(label);
+        } else {
+          labels.push("[unlabeled]");
+          try {
+            ctx.logger.getLogger().warn(
+              `radio.options(): radio input at index ${i} has no resolvable label — ` +
+              `added as "[unlabeled]". Add an aria-label or associated <label> to make it identifiable.`,
+            );
+          } catch {
+            // logger not available — skip warning
+          }
+        }
       }
 
       return labels;

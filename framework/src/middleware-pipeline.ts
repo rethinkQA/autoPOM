@@ -23,8 +23,18 @@ export class MiddlewarePipeline implements IMiddlewarePipeline {
    */
   private _debugEnabledProvider?: () => boolean;
 
-  constructor(debugEnabledProvider?: () => boolean) {
+  /**
+   * Optional provider for emitting warnings through the framework's
+   * configurable Logger abstraction.  Injected by {@link FrameworkContext}
+   * so that type-corruption warnings are routed through the same
+   * channel as all other framework diagnostics.
+   * Falls back to `console.warn` when not provided.
+   */
+  private _warnProvider?: (msg: string) => void;
+
+  constructor(debugEnabledProvider?: () => boolean, warnProvider?: (msg: string) => void) {
     this._debugEnabledProvider = debugEnabledProvider;
+    this._warnProvider = warnProvider;
   }
 
   /**
@@ -48,6 +58,22 @@ export class MiddlewarePipeline implements IMiddlewarePipeline {
 
   /**
    * Register a middleware at the given position.
+   *
+   * **Nested-action guard (P2-128):** When action A triggers action B
+   * within the same async call-chain (e.g. `group.writeAll()` calling
+   * `handler.set()` for each field), the inner action B **skips** the
+   * middleware pipeline to prevent double logging, retries, and timing.
+   * This guard is per-async-chain (via `AsyncLocalStorage`), NOT per-element.
+   *
+   * This means cross-element scenarios (click button A → read toast B)
+   * within the same `await` chain also skip middleware for the inner call.
+   * To force middleware execution on a nested call, set
+   * `forceMiddleware: true` on the inner action's {@link ActionContext}:
+   *
+   * ```ts
+   * // In a custom middleware or action:
+   * await runAction({ ...ctx, forceMiddleware: true }, () => el.get());
+   * ```
    *
    * @param mw       — The middleware function to register.
    * @param position — Where to insert (`"first"`, `"last"` (default),
@@ -162,11 +188,19 @@ export class MiddlewarePipeline implements IMiddlewarePipeline {
     const debugEnabled = this._debugEnabledProvider?.() ?? false;
     let actionResultRef: { value: unknown } | undefined;
 
+    let actionExecuted = false;
     const next = async (): Promise<unknown> => {
       if (index < middlewares.length) {
         const mw = middlewares[index++];
         return mw(context, next);
       }
+      if (actionExecuted) {
+        throw new Error(
+          "[framework] Middleware bug: next() called after action already executed. " +
+          "A middleware is calling next() more than once.",
+        );
+      }
+      actionExecuted = true;
       // Run the actual action inside an AsyncLocalStorage scope so
       // that any action-method calls made *within* this action (in
       // the same async chain) bypass the pipeline.
@@ -185,7 +219,11 @@ export class MiddlewarePipeline implements IMiddlewarePipeline {
     // `as Promise<T>` cast) is caught here rather than silently
     // corrupting the caller.  In debug mode, the error is thrown;
     // otherwise a warning is emitted via console.warn.
-    return next().then((pipelineResult) => {
+    //
+    // The check also runs when the pipeline rejects — a middleware
+    // that both corrupts the return value AND throws would otherwise
+    // mask the corruption behind the error.
+    const checkCorruption = (pipelineResult: unknown): void => {
       if (actionResultRef !== undefined) {
         const actionVal = actionResultRef.value;
         const actionType = actionVal === null ? "null" : typeof actionVal;
@@ -202,7 +240,7 @@ export class MiddlewarePipeline implements IMiddlewarePipeline {
           if (debugEnabled) {
             throw new Error(msg);
           }
-          console.warn(msg);
+          (this._warnProvider ?? console.warn)(msg);
         }
 
         // For object types, also compare constructor names so that
@@ -224,11 +262,29 @@ export class MiddlewarePipeline implements IMiddlewarePipeline {
             if (debugEnabled) {
               throw new Error(msg);
             }
-            console.warn(msg);
+            (this._warnProvider ?? console.warn)(msg);
           }
         }
       }
-      return pipelineResult as T;
-    }) as Promise<T>;
+    };
+
+    return next().then(
+      (pipelineResult) => {
+        // P2-167: Warn when no middleware called next() all the way to the action.
+        if (actionResultRef === undefined) {
+          const msg =
+            `[framework] Middleware short-circuited the action pipeline for ` +
+            `"${context.action}" on "${context.elementType}" — did a middleware forget to call next()?`;
+          (this._warnProvider ?? console.warn)(msg);
+        }
+        checkCorruption(pipelineResult);
+        return pipelineResult as T;
+      },
+      (err: unknown) => {
+        // P2-100: Skip corruption check on rejection — comparing against
+        // `undefined` always produces a false positive for non-void actions.
+        throw err;
+      },
+    ) as Promise<T>;
   }
 }

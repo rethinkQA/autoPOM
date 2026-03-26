@@ -35,10 +35,19 @@ import { labelToPropertyName, deduplicateNames, inferRouteName } from "./naming.
 
 const TAG_TO_ROLE: Record<string, string> = {
   nav: "navigation",
-  header: "banner",
-  footer: "contentinfo",
   main: "main",
   aside: "complementary",
+  // Additional HTML elements with implicit ARIA roles per WAI-ARIA spec
+  dialog: "dialog",
+  details: "group",
+  menu: "menu",
+  search: "search",
+  article: "article",
+  section: "region",
+  // P2-251: Only use By.role("form") when the form has an accessible name.
+  // Bare <form> without aria-label does not expose the "form" role per ARIA spec.
+  form: "form",
+  table: "table",
 };
 
 function selectorToByExpression(selector: string, group: ManifestGroup): string {
@@ -55,11 +64,13 @@ function selectorToByExpression(selector: string, group: ManifestGroup): string 
     /^\[role="([^"]+)"\]\[aria-label="([^"]+)"\]$/,
   );
   if (roleLabelMatch) {
-    return `By.role("${roleLabelMatch[1]}", { name: "${roleLabelMatch[2]}" })`;
+    return `By.role("${roleLabelMatch[1]}", { name: "${escapeStringForTs(roleLabelMatch[2])}" })`;
   }
 
   // Simple tag names with known ARIA roles
-  if (TAG_TO_ROLE[s]) {
+  // P2-251: <form> only exposes role="form" when it has an accessible name.
+  // For bare `form` tag without aria-label, fall through to By.css()
+  if (TAG_TO_ROLE[s] && s !== "form") {
     return `By.role("${TAG_TO_ROLE[s]}")`;
   }
 
@@ -69,7 +80,7 @@ function selectorToByExpression(selector: string, group: ManifestGroup): string 
     /^fieldset\[aria-label="([^"]+)"\]$/,
   );
   if (fieldsetAriaMatch) {
-    return `By.role("group", { name: "${fieldsetAriaMatch[1]}" })`;
+    return `By.role("group", { name: "${escapeStringForTs(fieldsetAriaMatch[1])}" })`;
   }
 
   // Legacy: fieldset with legend text (Playwright-specific :text-is pseudo-class).
@@ -78,7 +89,7 @@ function selectorToByExpression(selector: string, group: ManifestGroup): string 
     /^fieldset:has\(>\s*legend:text-is\("([^"]+)"\)\)$/,
   );
   if (fieldsetLegacyMatch) {
-    return `By.role("group", { name: "${fieldsetLegacyMatch[1]}" })`;
+    return `By.role("group", { name: "${escapeStringForTs(fieldsetLegacyMatch[1])}" })`;
   }
 
   // Dialog/table by role attribute in selector
@@ -100,9 +111,14 @@ function selectorToByExpression(selector: string, group: ManifestGroup): string 
     // If it also has a role, use By.role with name
     const roleInSelector = s.match(/\[role="([^"]+)"\]/);
     if (roleInSelector) {
-      return `By.role("${roleInSelector[1]}", { name: "${ariaLabelMatch[1]}" })`;
+      return `By.role("${roleInSelector[1]}", { name: "${escapeStringForTs(ariaLabelMatch[1])}" })`;
     }
-    return `By.label("${ariaLabelMatch[1]}")`;
+    // P2-194: check if tag portion has an implicit ARIA role
+    const tagPart = s.split(/[.#\[]/)[0];
+    if (tagPart && TAG_TO_ROLE[tagPart]) {
+      return `By.role("${TAG_TO_ROLE[tagPart]}", { name: "${escapeStringForTs(ariaLabelMatch[1])}" })`;
+    }
+    return `By.label("${escapeStringForTs(ariaLabelMatch[1])}")`;
   }
 
   // aria-live selectors (toast)
@@ -116,7 +132,13 @@ function selectorToByExpression(selector: string, group: ManifestGroup): string 
 }
 
 function escapeStringForTs(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/\0/g, "\\0");
 }
 
 // ── Factory mapping ─────────────────────────────────────────
@@ -126,6 +148,7 @@ const WRAPPER_TO_FACTORY: Record<WrapperType, string> = {
   table: "table",
   dialog: "dialog",
   toast: "toast",
+  datePicker: "datePicker",
 };
 
 // ── Import collection ───────────────────────────────────────
@@ -153,17 +176,18 @@ export function emitPageObject(
 ): string {
   const frameworkImport = options?.frameworkImport ?? "@playwright-elements/core";
   const emitWaitForReady = options?.emitWaitForReady !== false && 
-    (manifest.apiDependencies?.length ?? 0) > 0;
+    (manifest.apiDependencies?.some(d => d.timing === "page-load") ?? false);
   const generatedMarkers = options?.generatedMarkers !== false;
   const routeName = options?.routeName ?? inferRouteName(manifest.url);
 
   const groups = manifest.groups;
 
-  // Build property name map
-  const nameMap = deduplicateNames(
+  // Build property name list (index-based to handle duplicate labels)
+  const names = deduplicateNames(
     groups.map((g) => g.label),
     options?.propertyNameOverrides,
   );
+  const nameOf = (g: ManifestGroup) => names[groups.indexOf(g)];
 
   // Collect needed imports
   const factories = collectImports(groups);
@@ -212,30 +236,37 @@ export function emitPageObject(
   lines.push(`    // ── Page-level label scanning ────────────────────────────`);
   lines.push(`    ...root,`);
 
-  // Categorize groups for organized output
-  const landmarks = groups.filter((g) =>
-    ["nav", "header", "footer", "main", "aside"].includes(g.groupType),
-  );
-  const fieldsets = groups.filter((g) =>
-    ["fieldset", "form", "region"].includes(g.groupType),
-  );
-  const specialWrappers = groups.filter((g) =>
-    g.wrapperType !== "group",
-  );
-  const otherGroups = groups.filter(
-    (g) =>
-      g.wrapperType === "group" &&
-      !["nav", "header", "footer", "main", "aside", "fieldset", "form", "region"].includes(
-        g.groupType,
-      ),
-  );
+  // Categorize groups for organized output — mutually exclusive (P2-283)
+  const emittedSet = new Set<ManifestGroup>();
+  const landmarks = groups.filter((g) => {
+    if (["nav", "header", "footer", "main", "aside"].includes(g.groupType) && g.wrapperType === "group") {
+      emittedSet.add(g);
+      return true;
+    }
+    return false;
+  });
+  const fieldsets = groups.filter((g) => {
+    if (!emittedSet.has(g) && ["fieldset", "form", "region"].includes(g.groupType) && g.wrapperType === "group") {
+      emittedSet.add(g);
+      return true;
+    }
+    return false;
+  });
+  const specialWrappers = groups.filter((g) => {
+    if (!emittedSet.has(g) && g.wrapperType !== "group") {
+      emittedSet.add(g);
+      return true;
+    }
+    return false;
+  });
+  const otherGroups = groups.filter((g) => !emittedSet.has(g));
 
   // Emit landmarks
   if (landmarks.length > 0) {
     lines.push(``);
     lines.push(`    // ── Landmarks ───────────────────────────────────────────`);
     for (const g of landmarks) {
-      const propName = nameMap.get(g.label)!;
+      const propName = nameOf(g);
       const byExpr = selectorToByExpression(g.selector, g);
       lines.push(`    ${propName}: group(${byExpr}, page),`);
     }
@@ -246,7 +277,7 @@ export function emitPageObject(
     lines.push(``);
     lines.push(`    // ── Scoped containers ───────────────────────────────────`);
     for (const g of fieldsets) {
-      const propName = nameMap.get(g.label)!;
+      const propName = nameOf(g);
       const byExpr = selectorToByExpression(g.selector, g);
       const adapterComment = g.notes?.includes("needs-adapter")
         ? " // TODO: add adapter — date picker needs manual configuration"
@@ -260,7 +291,7 @@ export function emitPageObject(
     lines.push(``);
     lines.push(`    // ── Typed wrappers ──────────────────────────────────────`);
     for (const g of specialWrappers) {
-      const propName = nameMap.get(g.label)!;
+      const propName = nameOf(g);
       const factory = WRAPPER_TO_FACTORY[g.wrapperType];
       const byExpr = selectorToByExpression(g.selector, g);
       const comment = g.notes?.includes("needs-adapter")
@@ -277,7 +308,7 @@ export function emitPageObject(
     lines.push(``);
     lines.push(`    // ── Other groups ────────────────────────────────────────`);
     for (const g of otherGroups) {
-      const propName = nameMap.get(g.label)!;
+      const propName = nameOf(g);
       const byExpr = selectorToByExpression(g.selector, g);
       lines.push(`    ${propName}: group(${byExpr}, page),`);
     }
@@ -320,14 +351,18 @@ function emitWaitForReadyFunction(
 
   if (pageLoadDeps.length === 1) {
     const dep = pageLoadDeps[0];
+    // P2-121: escape dep.pattern for TS string literal
+    // P2-141: strip wildcard segments so .includes() works as prefix match
+    const safePattern = escapeStringForTs(dep.pattern.replace(/\/\*/g, "").replace(/\?[^=]+=\*/g, ""));
     lines.push(
-      `  await page.waitForResponse(resp => resp.url().includes("${dep.pattern}") && resp.status() === 200);`,
+      `  await page.waitForResponse(resp => resp.url().includes("${safePattern}") && resp.status() === 200);`,
     );
   } else {
     lines.push(`  await Promise.all([`);
     for (const dep of pageLoadDeps) {
+      const safePattern = escapeStringForTs(dep.pattern.replace(/\/\*/g, "").replace(/\?[^=]+=\*/g, ""));
       lines.push(
-        `    page.waitForResponse(resp => resp.url().includes("${dep.pattern}") && resp.status() === 200),`,
+        `    page.waitForResponse(resp => resp.url().includes("${safePattern}") && resp.status() === 200),`,
       );
     }
     lines.push(`  ]);`);
@@ -373,7 +408,9 @@ function normalizeSelectorPattern(selector: string): string {
  * Compute a string key for a shape (for grouping routes by identical shapes).
  */
 function shapeKey(shape: ShapeEntry[]): string {
-  return shape.map((s) => `${s.wrapperType}:${s.selectorPattern}`).join("|");
+  // Use \x00 (null byte) as separator to avoid collisions with characters
+  // that can appear in CSS selectors (e.g. '|' in [lang|="en"]).
+  return shape.map((s) => `${s.wrapperType}:${s.selectorPattern}`).join("\x00");
 }
 
 /**
@@ -419,21 +456,20 @@ export function detectTemplates(routes: RouteManifest[]): {
     const fixedLabels = new Map<string, string>();
     const varyingLabels = new Map<string, Map<string, string>>();
 
-    // Use the first route's group order as reference
+    // P1-292: Use positional index instead of normalized-selector find()
+    // to avoid wrong-group matching when two groups share the same normalized pattern.
     const refGroups = routeGroup[0].manifest.groups;
 
     for (let i = 0; i < refGroups.length; i++) {
       const selector = refGroups[i].selector;
 
-      // Check if all routes have the same label for this selector
+      // Check if all routes have the same label for this positional group
       const labelsByRoute = new Map<string, string>();
       let allSame = true;
       const firstLabel = refGroups[i].label;
 
       for (const route of routeGroup) {
-        const matchingGroup = route.manifest.groups.find(
-          (g) => normalizeSelectorPattern(g.selector) === normalizeSelectorPattern(selector),
-        );
+        const matchingGroup = route.manifest.groups[i];
         if (matchingGroup) {
           labelsByRoute.set(route.route, matchingGroup.label);
           if (matchingGroup.label !== firstLabel) {
@@ -512,7 +548,7 @@ export function emitTemplate(
   // If there are varying labels, emit config interface
   if (template.varyingLabels.size > 0) {
     lines.push(`interface TemplateConfig {`);
-    for (const [selector, labelsByRoute] of template.varyingLabels) {
+    for (const [_selector, labelsByRoute] of template.varyingLabels) {
       const propName = labelToPropertyName(
         [...labelsByRoute.values()][0],
       ) + "Label";
@@ -537,16 +573,32 @@ export function emitTemplate(
     (rm) => rm.route === template.routes[0],
   )?.manifest;
   if (refManifest) {
-    const nameMap = deduplicateNames(
+    const names = deduplicateNames(
       refManifest.groups.map((g) => g.label),
       options?.propertyNameOverrides,
     );
 
-    for (const g of refManifest.groups) {
-      const propName = nameMap.get(g.label)!;
+    // P1-291: Build map of group selector → config property name
+    // so we can wire config values into the template body.
+    const selectorToConfigProp = new Map<string, string>();
+    for (const [selector, labelsByRoute] of template.varyingLabels) {
+      const configPropName = labelToPropertyName(
+        [...labelsByRoute.values()][0],
+      ) + "Label";
+      selectorToConfigProp.set(selector, configPropName);
+    }
+
+    for (const [i, g] of refManifest.groups.entries()) {
+      const propName = names[i];
       const factory = WRAPPER_TO_FACTORY[g.wrapperType];
-      const byExpr = selectorToByExpression(g.selector, g);
-      lines.push(`    ${propName}: ${factory}(${byExpr}, page),`);
+      const configProp = selectorToConfigProp.get(g.selector);
+      if (configProp) {
+        // Use config value for groups with varying labels
+        lines.push(`    ${propName}: ${factory}(By.label(config.${configProp}), page),`);
+      } else {
+        const byExpr = selectorToByExpression(g.selector, g);
+        lines.push(`    ${propName}: ${factory}(${byExpr}, page),`);
+      }
     }
   }
 
@@ -559,7 +611,7 @@ export function emitTemplate(
     const funcName = `${rm.route}Page`;
     if (template.varyingLabels.size > 0) {
       const configEntries: string[] = [];
-      for (const [selector, labelsByRoute] of template.varyingLabels) {
+      for (const [_selector, labelsByRoute] of template.varyingLabels) {
         const propName = labelToPropertyName(
           [...labelsByRoute.values()][0],
         ) + "Label";

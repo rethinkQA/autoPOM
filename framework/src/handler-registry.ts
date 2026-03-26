@@ -8,7 +8,7 @@
  */
 
 import type { Locator } from "@playwright/test";
-import type { ElementHandler, HandlerPosition } from "./handler-types.js";
+import type { ElementHandler, HandlerPosition, DetectRule } from "./handler-types.js";
 import type { Logger, AriaRole, IHandlerRegistry } from "./types.js";
 import { createDefaultHandlers } from "./default-handlers.js";
 import { classifyElement, type SerializedEntry } from "./element-classifier.js";
@@ -16,8 +16,10 @@ import { classifyElement, type SerializedEntry } from "./element-classifier.js";
 /**
  * Explicit, stable ordering of ARIA roles probed by `resolveLabeled`
  * when `getByLabel` finds nothing.
+ *
+ * @internal Exported for testing — not part of the public API.
  */
-const ROLE_PRIORITY: AriaRole[] = [
+export const ROLE_PRIORITY: AriaRole[] = [
   "group",
   "radiogroup",
   "listbox",
@@ -28,6 +30,31 @@ const ROLE_PRIORITY: AriaRole[] = [
   "button",
   "link",
 ];
+
+/**
+ * WAI-ARIA roles supported by Playwright's `getByRole()`.
+ * Used for early validation in {@link HandlerRegistry.registerHandler}.
+ *
+ * @internal
+ */
+const VALID_ARIA_ROLES: ReadonlySet<string> = new Set([
+  "alert", "alertdialog", "application", "article", "banner",
+  "blockquote", "button", "caption", "cell", "checkbox", "code",
+  "columnheader", "combobox", "complementary", "contentinfo",
+  "definition", "deletion", "dialog", "directory", "document",
+  "emphasis", "feed", "figure", "form", "generic", "grid",
+  "gridcell", "group", "heading", "img", "insertion", "link",
+  "list", "listbox", "listitem", "log", "main", "marquee",
+  "math", "menu", "menubar", "menuitem", "menuitemcheckbox",
+  "menuitemradio", "meter", "navigation", "none", "note",
+  "option", "paragraph", "presentation", "progressbar", "radio",
+  "radiogroup", "region", "row", "rowgroup", "rowheader",
+  "scrollbar", "search", "searchbox", "separator", "slider",
+  "spinbutton", "status", "strong", "subscript", "superscript",
+  "switch", "tab", "table", "tablist", "tabpanel", "term",
+  "textbox", "timer", "toolbar", "tooltip", "tree", "treegrid",
+  "treeitem",
+]);
 
 // ── HandlerRegistry class ───────────────────────────────────
 
@@ -92,6 +119,11 @@ export class HandlerRegistry implements IHandlerRegistry {
     handler: ElementHandler,
     position: HandlerPosition = "last",
   ): void {
+    if (!handler.type?.trim()) {
+      throw new Error(
+        `registerHandler: handler.type must be a non-empty string.`,
+      );
+    }
     if (this._handlers.some((h) => h.type === handler.type)) {
       throw new Error(
         `registerHandler: handler with type "${handler.type}" is already registered.`,
@@ -130,6 +162,56 @@ export class HandlerRegistry implements IHandlerRegistry {
             `(tags, roles, or attr). The rule would never match any element.`,
         );
       }
+      // Warn on unrecognised ARIA role names — likely a typo or
+      // a role that Playwright's getByRole() doesn't support.
+      if (rule.roles) {
+        for (const role of rule.roles) {
+          if (!VALID_ARIA_ROLES.has(role)) {
+            this._loggerProvider().warn(
+              `registerHandler: handler "${handler.type}" uses unrecognised ARIA role "${role}". ` +
+              `This may be a typo or a role not supported by Playwright's getByRole().`,
+            );
+          }
+        }
+      }
+      if (rule.requireChild) {
+        // P2-232: Validate CSS selector syntax at registration time using
+        // Node.js-compatible heuristic checks (document.querySelector is
+        // unavailable in Node.js where tests run).
+        const sel = rule.requireChild;
+        // Check for obviously unbalanced brackets
+        const openBrackets = (sel.match(/\[/g) || []).length;
+        const closeBrackets = (sel.match(/\]/g) || []).length;
+        if (openBrackets !== closeBrackets) {
+          throw new Error(
+            `registerHandler: handler "${handler.type}" has a detect rule with an invalid ` +
+              `requireChild CSS selector "${sel}" (unbalanced brackets).`,
+          );
+        }
+        // Check for unbalanced parentheses
+        const openParens = (sel.match(/\(/g) || []).length;
+        const closeParens = (sel.match(/\)/g) || []).length;
+        if (openParens !== closeParens) {
+          throw new Error(
+            `registerHandler: handler "${handler.type}" has a detect rule with an invalid ` +
+              `requireChild CSS selector "${sel}" (unbalanced parentheses).`,
+          );
+        }
+        // Check for empty selector
+        if (!sel.trim()) {
+          throw new Error(
+            `registerHandler: handler "${handler.type}" has a detect rule with an empty ` +
+              `requireChild CSS selector.`,
+          );
+        }
+        // Check for double colons used incorrectly (e.g. th::nth-child)
+        if (/::(?!before|after|first-line|first-letter|placeholder|selection|backdrop|marker|spelling-error|grammar-error)/.test(sel)) {
+          this._loggerProvider().warn(
+            `registerHandler: handler "${handler.type}" has a requireChild selector "${sel}" ` +
+              `with a double-colon pseudo-element. Did you mean a single colon for a pseudo-class?`,
+          );
+        }
+      }
     }
 
     // Defensive clone: prevent silent corruption if the caller later
@@ -142,8 +224,8 @@ export class HandlerRegistry implements IHandlerRegistry {
         tags: rule.tags ? [...rule.tags] : undefined,
         inputTypes: rule.inputTypes ? [...rule.inputTypes] : undefined,
         roles: rule.roles ? [...rule.roles] : undefined,
-        attr: rule.attr ? [...rule.attr] as [string, string] : undefined,
-      })),
+        ...(rule.attr ? { attr: [...rule.attr] as [string, string] } : {}),
+      } as DetectRule)),
     };
 
     // Freeze the clone (and its detect rules) so that callers who obtain
@@ -274,7 +356,8 @@ export class HandlerRegistry implements IHandlerRegistry {
     if (this._roleFallbacksVersion === this._registryVersion) return this._roleFallbacks;
 
     const discoveredRoles = new Set(
-      this._handlers.flatMap((h) => h.detect.flatMap((d) => d.roles ?? [])),
+      this._handlers.flatMap((h) => h.detect.flatMap((d) => d.roles ?? []))
+        .filter((r) => VALID_ARIA_ROLES.has(r)),
     );
 
     this._roleFallbacks = [

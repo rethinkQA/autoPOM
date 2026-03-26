@@ -47,7 +47,6 @@ react-app/
 │   │   └── About.tsx      ← store description
 │   ├── App.tsx            ← layout + routing
 │   ├── App.css            ← all styles
-│   ├── data.ts            ← canonical product data + constants
 │   ├── main.tsx           ← entry point
 │   └── index.css
 ├── index.html

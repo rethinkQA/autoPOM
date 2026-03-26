@@ -7,13 +7,15 @@
  */
 
 import type { Locator } from "@playwright/test";
-import type { ElementHandler, ActionOptions, LabelActionOptions } from "./handler-types.js";
+import type { ElementHandler, ActionOptions, DetectRule } from "./handler-types.js";
 import { readSelectedOptionText } from "./dom-helpers.js";
 import { readCheckedRadioLabel, resolveInputLabel } from "./label-resolution.js";
 import { genericNonEditableSelectAdapter } from "./adapters/generic-select-adapter.js";
 import { editableSelectAdapter } from "./adapters/editable-select-adapter.js";
-import { isRetryableInteractionError } from "./playwright-errors.js";
-import { TOGGLE_FIRST_ATTEMPT_MS } from "./timeouts.js";
+import { isRetryableInteractionError, isInterceptedError } from "./playwright-errors.js";
+import { getTimeouts } from "./timeouts.js";
+import { getActiveContext } from "./context.js";
+import { ElementNotFoundError } from "./errors.js";
 
 // ── Stateless interaction helpers ───────────────────────────
 // Exported so custom handlers can reuse common behaviours
@@ -26,22 +28,28 @@ export function parseBooleanValue(value: string | boolean): boolean {
   if (lower === "true") return true;
   if (lower === "false") return false;
   throw new TypeError(
-    `toggleSet expected a boolean or "true"/"false", got string "${value}"`,
+    `parseBooleanValue expected a boolean or "true"/"false", got string "${value}"`,
   );
 }
 
 export const toggleSet = async (el: Locator, value: string | boolean, options?: ActionOptions) => {
   const t = options?.timeout;
   const checked = parseBooleanValue(value);
+  const start = Date.now();
+  const firstAttemptTimeout = t ?? getTimeouts().toggleFirstAttemptMs;
   // Try normal check first (works for native checkboxes and MUI).
   // Fall back to force:true for shadow DOM overlays (e.g. Shoelace
   // sl-checkbox renders a <span> over the real <input>).
+  // P3-178: Only catch interception errors — genuinely invisible or
+  // animating elements should NOT be force-clicked.
   try {
-    checked ? await el.check({ timeout: Math.min(t ?? TOGGLE_FIRST_ATTEMPT_MS, TOGGLE_FIRST_ATTEMPT_MS) }) : await el.uncheck({ timeout: Math.min(t ?? TOGGLE_FIRST_ATTEMPT_MS, TOGGLE_FIRST_ATTEMPT_MS) });
+    if (checked) { await el.check({ timeout: firstAttemptTimeout }); } else { await el.uncheck({ timeout: firstAttemptTimeout }); }
   } catch (e) {
-    if (!isRetryableInteractionError(e)) throw e;
-    // Normal check failed (shadow DOM overlay, etc.) — fall back to force:true
-    checked ? await el.check({ timeout: t, force: true }) : await el.uncheck({ timeout: t, force: true });
+    if (!isInterceptedError(e)) throw e;
+    // Normal check failed (shadow DOM overlay, etc.) — fall back to force:true.
+    // Budget the remaining time so total wall-clock doesn't exceed the caller's intent.
+    const remaining = t != null ? Math.max(0, t - (Date.now() - start)) : undefined;
+    if (checked) { await el.check({ timeout: remaining, force: true }); } else { await el.uncheck({ timeout: remaining, force: true }); }
   }
 };
 export const toggleGet = async (el: Locator, options?: ActionOptions) =>
@@ -49,7 +57,6 @@ export const toggleGet = async (el: Locator, options?: ActionOptions) =>
 
 export const fillSet = async (el: Locator, value: string | boolean, options?: ActionOptions) => {
   const t = options?.timeout;
-  await el.clear({ timeout: t });
   await el.fill(String(value), { timeout: t });
 };
 export const fillGet = async (el: Locator, options?: ActionOptions): Promise<string> =>
@@ -58,11 +65,20 @@ export const fillGet = async (el: Locator, options?: ActionOptions): Promise<str
 // ── Stateless set/get helpers for inline handlers ───────────
 
 /**
- * Set (check) a single radio button. The value parameter is ignored —
- * checking a radio is a boolean operation.  Use `radiogroupSet` to
- * select a radio by label text within a group.
+ * Set (check) a single radio button.  Use `radiogroupSet` to select
+ * a radio by label text within a group.
+ *
+ * @throws {TypeError} if `value` is `false` — radio buttons cannot be
+ * unchecked individually (only another radio in the group can be selected).
  */
-const radioSet = async (el: Locator, _value: string | boolean, options?: ActionOptions) => {
+const radioSet = async (el: Locator, value: string | boolean, options?: ActionOptions) => {
+  if (value === false || value === "false") {
+    throw new TypeError(
+      "radioSet: cannot uncheck a radio button. Radio buttons can only be " +
+        "selected, not deselected. To change the selection, check a different " +
+        "radio in the group using radiogroupSet.",
+    );
+  }
   await el.check({ timeout: options?.timeout });
 };
 const radioGet = async (el: Locator, options?: ActionOptions) => {
@@ -77,7 +93,10 @@ const selectGet = async (el: Locator, options?: ActionOptions) => {
 };
 
 const comboboxSet = async (el: Locator, value: string | boolean, options?: ActionOptions) => {
-  const t = options?.timeout;
+
+  // P2-103: Auto-wait for the combobox to be attached before evaluate(),
+  // which unlike click()/fill() does not auto-wait.
+  await el.waitFor({ state: "attached", timeout: options?.timeout });
 
   // Detect whether the combobox element is editable (input/textarea) or
   // non-editable (div, button, span — typical of component library selects).
@@ -133,10 +152,15 @@ const comboboxSet = async (el: Locator, value: string | boolean, options?: Actio
  * `inputValue()` because textContent on `<input>` is always empty.
  */
 const comboboxGet = async (el: Locator, options?: ActionOptions): Promise<string> => {
+  // P2-103: Auto-wait for the combobox to be attached before evaluate(),
+  // which unlike click()/fill() does not auto-wait.
+  await el.waitFor({ state: "attached", timeout: options?.timeout });
+
   // Single evaluate() to avoid two round-trips (Issue #168).
-  const { tagName, readOnly: isReadOnly } = await el.evaluate((node) => ({
+  const { tagName, readOnly: isReadOnly, inputMode } = await el.evaluate((node) => ({
     tagName: node.tagName.toLowerCase(),
     readOnly: (node as HTMLInputElement).readOnly === true,
+    inputMode: (node as HTMLInputElement).getAttribute?.("inputmode") ?? null,
   }));
   const isEditable = (tagName === "input" || tagName === "textarea") && !isReadOnly;
 
@@ -144,7 +168,16 @@ const comboboxGet = async (el: Locator, options?: ActionOptions): Promise<string
     return genericNonEditableSelectAdapter.read(el, options);
   }
 
-  // For all editable <input>/<textarea> elements (including inputmode="none"),
+  // Hybrid input (inputmode="none") — e.g. Vuetify v-select: the <input>
+  // value is empty; read from the non-editable ancestor instead (Issue #70).
+  if (inputMode === "none") {
+    const clickTarget = el.locator("xpath=ancestor::*[@role='combobox'][1]");
+    if ((await clickTarget.count()) > 0) {
+      return genericNonEditableSelectAdapter.read(clickTarget.first(), options);
+    }
+  }
+
+  // For all editable <input>/<textarea> elements,
   // delegate to the editable adapter (Issue #119).
   return editableSelectAdapter.read(el, options);
 };
@@ -162,16 +195,30 @@ const radiogroupSet = async (el: Locator, value: string | boolean, options?: Act
 
   // Fallback: ARIA radios (e.g. Shoelace sl-radio) where accessible name
   // comes from element text content, not a <label> association.
+  // Use the same try-then-force pattern as toggleSet for shadow DOM
+  // overlays where the real <input> is hidden behind a decorative span.
   const byRole = el.getByRole("radio", { name: label });
   if ((await byRole.count()) > 0) {
-    await byRole.first().click({ timeout: t });
+    try {
+      await byRole.first().click({ timeout: t });
+    } catch (e) {
+      if (!isInterceptedError(e)) throw e;
+      await byRole.first().click({ timeout: t, force: true });
+    }
     return;
   }
 
-  throw new Error(`radiogroupSet: could not find radio option "${label}"`);
+  throw new ElementNotFoundError(
+    `radiogroupSet: could not find radio option "${label}". ` +
+    `Tried getByLabel("${label}") (0 matches), then getByRole("radio", { name: "${label}" }) (0 matches).`,
+    { query: label, triedStrategies: ["getByLabel", "getByRole('radio')"], container: "radiogroup" },
+  );
 };
 const radiogroupGet = async (el: Locator, options?: ActionOptions) => {
-  return readCheckedRadioLabel(el, options);
+  // P2-170: readCheckedRadioLabel now returns null for "no selection"
+  // and "" for "checked but unlabeled". Convert null to "" for backward
+  // compatibility — callers can check for null via readCheckedRadioLabel directly.
+  return (await readCheckedRadioLabel(el, options)) ?? "";
 };
 
 /**
@@ -197,6 +244,12 @@ const radiogroupGet = async (el: Locator, options?: ActionOptions) => {
  * @param options - Action options (timeout, etc.).
  */
 const checkboxgroupSet = async (el: Locator, value: string | boolean | string[], options?: ActionOptions) => {
+  if (typeof value === "boolean") {
+    throw new TypeError(
+      `checkboxgroupSet: boolean values are not supported. ` +
+      `Pass a comma-separated string or string[] of checkbox labels to check.`,
+    );
+  }
   const t = options?.timeout;
   const desired = Array.isArray(value)
     ? value.map((s) => s.trim()).filter(Boolean)
@@ -207,40 +260,70 @@ const checkboxgroupSet = async (el: Locator, value: string | boolean | string[],
   // Support both native <input type="checkbox"> and ARIA role="checkbox"
   const checkboxes = el.locator('input[type="checkbox"], [role="checkbox"]');
   const count = await checkboxes.count();
+  const matched = new Set<string>();
   for (let i = 0; i < count; i++) {
     const cb = checkboxes.nth(i);
     const labelText = await resolveInputLabel(cb, el, options);
-    const shouldCheck = desired.some(
+    const matchedLabel = desired.find(
       (d) => labelText.toLowerCase() === d.toLowerCase(),
     );
+    const shouldCheck = matchedLabel !== undefined;
+    if (shouldCheck) matched.add(matchedLabel.toLowerCase());
     // Use the same try-then-fallback pattern as toggleSet for shadow DOM
     // overlays (e.g. Shoelace sl-checkbox renders a <span> over the real <input>).
+    const cbStart = Date.now();
+    const firstAttemptTimeout = t ?? getTimeouts().toggleFirstAttemptMs;
     try {
-      shouldCheck
-        ? await cb.check({ timeout: Math.min(t ?? TOGGLE_FIRST_ATTEMPT_MS, TOGGLE_FIRST_ATTEMPT_MS) })
-        : await cb.uncheck({ timeout: Math.min(t ?? TOGGLE_FIRST_ATTEMPT_MS, TOGGLE_FIRST_ATTEMPT_MS) });
+      if (shouldCheck) { await cb.check({ timeout: firstAttemptTimeout }); } else { await cb.uncheck({ timeout: firstAttemptTimeout }); }
     } catch (e) {
-      if (!isRetryableInteractionError(e)) throw e;
-      shouldCheck
-        ? await cb.check({ timeout: t, force: true })
-        : await cb.uncheck({ timeout: t, force: true });
+      if (!isInterceptedError(e)) throw e;
+      const remaining = t != null ? Math.max(0, t - (Date.now() - cbStart)) : undefined;
+      if (shouldCheck) { await cb.check({ timeout: remaining, force: true }); } else { await cb.uncheck({ timeout: remaining, force: true }); }
     }
+  }
+  // Verify all desired labels were found in the group.
+  const unmatched = desired.filter((d) => !matched.has(d.toLowerCase()));
+  if (unmatched.length > 0) {
+    throw new Error(
+      `checkboxgroupSet: ${unmatched.length} desired label(s) not found in the checkbox group: ` +
+        `${unmatched.map((l) => `"${l}"`).join(", ")}. ` +
+        `Available labels: ${Array.from({ length: count }, (_, i) => i).length} checkbox(es) found.`,
+    );
   }
 };
 const checkboxgroupGet = async (el: Locator, options?: ActionOptions) => {
-  // Support both native checked and ARIA aria-checked
+  // Support both native checked and ARIA aria-checked.
+  // Web component libraries (e.g. Shoelace) render both a hidden native
+  // <input type="checkbox"> and a <div role="checkbox" aria-checked="true">
+  // inside the same shadow host.  Query both selectors but deduplicate
+  // by label text (case-insensitive) to avoid returning ["In Stock", "In Stock"].
   const nativeChecked = el.locator('input[type="checkbox"]:checked');
-  const ariaChecked = el.locator('[role="checkbox"][aria-checked="true"]');
+  const ariaChecked = el.locator('[role="checkbox"][aria-checked="true"], [role="checkbox"][aria-checked="mixed"]');
+  const seen = new Set<string>();
   const labels: string[] = [];
+  let dupCount = 0;
   const nativeCount = await nativeChecked.count();
   for (let i = 0; i < nativeCount; i++) {
     const label = await resolveInputLabel(nativeChecked.nth(i), el, options);
-    if (label) labels.push(label);
+    const key = label.toLowerCase();
+    if (label && !seen.has(key)) { seen.add(key); labels.push(label); } else if (label) { dupCount++; }
   }
   const ariaCount = await ariaChecked.count();
   for (let i = 0; i < ariaCount; i++) {
     const label = await resolveInputLabel(ariaChecked.nth(i), el, options);
-    if (label) labels.push(label);
+    const key = label.toLowerCase();
+    if (label && !seen.has(key)) { seen.add(key); labels.push(label); } else if (label) { dupCount++; }
+  }
+  if (dupCount > 0) {
+    const msg =
+      `[framework] checkboxgroupGet: deduplicated ${dupCount} checkbox(es) with duplicate labels. ` +
+      `If this is unexpected (not a shadow DOM artifact), your checkbox group may have ` +
+      `identically-labeled checkboxes that cannot be distinguished by label text.`;
+    try {
+      getActiveContext().logger.getLogger().warn(msg);
+    } catch {
+      console.warn(msg);
+    }
   }
   return labels;
 };
@@ -294,14 +377,24 @@ const DEFAULT_HANDLERS: readonly Readonly<ElementHandler>[] = [
     ],
     expectedValueType: ["string"],
     valueKind: "string",
-    set: fillSet,
+    set: async (el: Locator, value: string | boolean, options?: ActionOptions) => {
+      await el.fill(String(value), { timeout: options?.timeout });
+    },
     get: fillGet,
   },
 
   /* ── Native tags ─────────────────────────────────────────── */
   {
     type: "select",
-    detect: [{ tags: ["select"] }, { roles: ["listbox"] }],
+    detect: [
+      { tags: ["select"] },
+      { roles: ["listbox"] },
+      // Shoelace / web component custom element tag names.
+      // Matched directly by tag so the classifier doesn't rely on
+      // requireChild probing, which fails for deeply nested shadow
+      // DOMs (Issue 116, P1-18).
+      { tags: ["sl-select"] },
+    ],
     expectedValueType: ["string"],
     valueKind: "string",
     set: selectSet,
@@ -401,6 +494,7 @@ const DEFAULT_HANDLERS: readonly Readonly<ElementHandler>[] = [
 for (const h of DEFAULT_HANDLERS) {
   for (const rule of h.detect) Object.freeze(rule);
   Object.freeze(h.detect);
+  if (h.expectedValueType) Object.freeze(h.expectedValueType);
   Object.freeze(h);
 }
 
@@ -480,7 +574,7 @@ export type CreateHandlerConfig = Partial<ElementHandler> & {
 export function createHandler(config: CreateHandlerConfig): ElementHandler {
   const { extends: baseType, ...overrides } = config;
   const base = getDefaultHandlerByType(baseType);
-  return {
+  const handler: ElementHandler = {
     ...base,
     ...overrides,
     // Deep-clone detect rules to break shared references with the pristine
@@ -492,7 +586,16 @@ export function createHandler(config: CreateHandlerConfig): ElementHandler {
       tags: r.tags ? [...r.tags] : undefined,
       roles: r.roles ? [...r.roles] : undefined,
       inputTypes: r.inputTypes ? [...r.inputTypes] : undefined,
-      attr: r.attr ? [...r.attr] as [string, string] : undefined,
-    })),
+      ...(r.attr ? { attr: [...r.attr] as [string, string] } : {}),
+    } as DetectRule)),
   };
+
+  // Freeze the handler (and its detect rules) to match the depth
+  // applied by registerHandler() — prevents accidental mutation
+  // when the handler is used directly without registration.
+  for (const rule of handler.detect) Object.freeze(rule);
+  Object.freeze(handler.detect);
+  Object.freeze(handler);
+
+  return handler;
 }

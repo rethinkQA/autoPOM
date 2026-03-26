@@ -157,3 +157,13 @@ export function resetAll(): void {
   checkMutationScope("resetAll");
   getActiveContext().reset();
 }
+
+// ── Timeout defaults (P2-227) ────────────────────────────────
+
+import { configureTimeouts as _configureTimeouts, type TimeoutConfig } from "./timeouts.js";
+
+/** @see configureTimeouts in timeouts.ts — wrapped with mutation-scope guard. */
+export function configureTimeoutsGuarded(overrides: Partial<TimeoutConfig>): void {
+  checkMutationScope("configureTimeouts");
+  _configureTimeouts(overrides);
+}

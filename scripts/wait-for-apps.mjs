@@ -4,6 +4,11 @@
  * Health-check script: polls each app server until all respond with HTTP 200,
  * then exits 0. Exits 1 if any server fails to respond within the timeout.
  *
+ * NOTE: A successful HTTP response (status < 400) confirms server availability
+ * but does NOT guarantee client-side readiness (e.g. JS hydration).  Dev servers
+ * may return 200 before client bundles finish loading.  Playwright's test-level
+ * auto-retry and `waitFor` assertions handle the client-readiness gap.
+ *
  * Usage:
  *   node scripts/wait-for-apps.mjs [--timeout 60000] [--interval 1000]
  *
@@ -13,16 +18,10 @@
  */
 
 import http from "node:http";
+import { loadAppDefinitions } from "./load-apps.mjs";
 
-const APPS = [
-  { name: "vanilla-html", port: 3001 },
-  { name: "react-app", port: 3002 },
-  { name: "vue-app", port: 3003 },
-  { name: "angular-app", port: 3004 },
-  { name: "svelte-app", port: 3005 },
-  { name: "nextjs-app", port: 3006 },
-  { name: "lit-app", port: 3007 },
-];
+const APP_DEFINITIONS = await loadAppDefinitions();
+const APPS = APP_DEFINITIONS.map((a) => ({ name: a.prefix, port: a.port }));
 
 // --- CLI / env config -------------------------------------------------
 
@@ -32,23 +31,31 @@ function parseArgs() {
   let interval = Number(process.env.HEALTH_INTERVAL_MS) || 1_000;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--timeout" && args[i + 1]) timeout = Number(args[++i]);
-    if (args[i] === "--interval" && args[i + 1]) interval = Number(args[++i]);
+    if (args[i] === "--timeout" && args[i + 1]) {
+      const v = Number(args[++i]);
+      if (!Number.isFinite(v) || v <= 0) { console.error("--timeout must be a positive number"); process.exit(1); }
+      timeout = v;
+    }
+    if (args[i] === "--interval" && args[i + 1]) {
+      const v = Number(args[++i]);
+      if (!Number.isFinite(v) || v <= 0) { console.error("--interval must be a positive number"); process.exit(1); }
+      interval = v;
+    }
   }
   return { timeout, interval };
 }
 
 // --- HTTP probe -------------------------------------------------------
 
-/** Resolves `true` if the server responds with any 2xx/3xx status. */
+/** Resolves `true` if the server responds with HTTP 200–299. */
 function probe(port) {
   return new Promise((resolve) => {
     const req = http.get(`http://localhost:${port}/`, (res) => {
       res.resume(); // drain
-      resolve(res.statusCode < 400);
+      resolve(res.statusCode >= 200 && res.statusCode < 300);
     });
     req.on("error", () => resolve(false));
-    req.setTimeout(2_000, () => {
+    req.setTimeout(5_000, () => {
       req.destroy();
       resolve(false);
     });

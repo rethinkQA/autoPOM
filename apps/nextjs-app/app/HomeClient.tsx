@@ -11,7 +11,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, TableSortLabel,
   Dialog, DialogContent,
 } from '@mui/material';
-import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+import { PRODUCTS, CATEGORIES, SHIPPING, type Product, type ShippingKey } from '@shared/data';
 import {
   filterAndSortProducts, toggleSort, cartMessage, formatDate,
   TOAST_DURATION_MS, type SortKey,
@@ -36,7 +36,7 @@ export default function HomePage() {
 
   // ===== Interactive state =====
   const [quantity, setQuantity] = useState(1);
-  const [shipping, setShipping] = useState('standard');
+  const [shipping, setShipping] = useState<ShippingKey>('standard');
   const [deliveryDate, setDeliveryDate] = useState<Date | null>(null);
   const [actionOutput, setActionOutput] = useState('');
   const [validationMsg, setValidationMsg] = useState('');

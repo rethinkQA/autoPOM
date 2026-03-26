@@ -14,8 +14,8 @@ import { type Product } from './data';
 
 // ===== Types =====
 
-/** Canonical sort keys matching Product field names. */
-export type SortKey = 'name' | 'price' | 'category' | 'inStock';
+/** Canonical sort keys — derived from Product field names to stay in sync. */
+export type SortKey = keyof Product;
 
 export interface FilterCriteria {
   searchTerm: string;
@@ -44,19 +44,19 @@ export function filterProducts(products: readonly Product[], criteria: FilterCri
 // ===== Sort =====
 
 /** Sort products by the given key. Returns a new array (never mutates input). */
-export function sortProducts(products: Product[], sort: SortCriteria): Product[] {
-  if (!sort.key) return products;
+export function sortProducts(products: readonly Product[], sort: SortCriteria): Product[] {
+  if (!sort.key) return [...products];
   const key = sort.key;
   const asc = sort.ascending;
   return [...products].sort((a, b) => {
     let valA: string | number | boolean = a[key];
     let valB: string | number | boolean = b[key];
 
-    if (typeof valA === 'string') {
+    if (typeof valA === 'string' && typeof valB === 'string') {
       valA = valA.toLowerCase();
-      valB = (valB as string).toLowerCase();
+      valB = valB.toLowerCase();
     }
-    if (typeof valA === 'boolean') {
+    if (typeof valA === 'boolean' && typeof valB === 'boolean') {
       valA = valA ? 1 : 0;
       valB = valB ? 1 : 0;
     }

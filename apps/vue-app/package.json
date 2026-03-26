@@ -2,9 +2,9 @@
   "name": "vue-app",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "start": "vite --port 3003",
@@ -13,18 +13,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mdi/font": "^7.4.47",
-    "@vuepic/vue-datepicker": "^12.1.0",
-    "vue": "^3.5.25",
-    "vue-router": "^4.6.4",
-    "vuetify": "^4.0.2"
+    "@mdi/font": "~7.4.47",
+    "@vuepic/vue-datepicker": "~12.1.0",
+    "vue": "~3.5.25",
+    "vue-router": "~4.6.4",
+    "vuetify": "~4.0.2"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
-    "@vitejs/plugin-vue": "^6.0.2",
-    "@vue/tsconfig": "^0.8.1",
+    "@types/node": "~20.19.0",
+    "@vitejs/plugin-vue": "~6.0.2",
+    "@vue/tsconfig": "~0.8.1",
     "typescript": "~5.9.3",
-    "vite": "^7.3.1",
-    "vue-tsc": "^3.1.5"
+    "vite": "~7.3.1",
+    "vue-tsc": "~3.1.5"
   }
 }

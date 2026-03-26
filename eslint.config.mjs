@@ -15,9 +15,16 @@ export default tseslint.config(
       "**/test-results/**",
       // Generated docs
       "framework/docs/**",
-      // Apps with their own ESLint configs — lint those from their own root
+      // React and Next.js apps have their own framework-specific ESLint configs
+      // (apps/react-app/eslint.config.js, apps/nextjs-app/eslint.config.mjs)
+      // and are linted separately via their own npm scripts.  Including them
+      // here would cause rule conflicts with eslint-plugin-react / eslint-config-next.
       "apps/react-app/**",
       "apps/nextjs-app/**",
+      // Framework-specific file formats that need dedicated parsers.
+      // The .ts/.js files in these apps ARE covered by this root config.
+      "**/*.vue",
+      "**/*.svelte",
     ],
   },
 
@@ -50,8 +57,16 @@ export default tseslint.config(
       },
     },
     rules: {
-      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", destructuredArrayIgnorePattern: "^_", varsIgnorePattern: "^_" }],
       "@typescript-eslint/no-explicit-any": "warn",
+    },
+  },
+
+  // ── Test files — relax rules for test mocks/stubs ────────
+  {
+    files: ["**/*.spec.ts", "**/tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
 );

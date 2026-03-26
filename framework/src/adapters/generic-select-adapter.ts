@@ -24,14 +24,7 @@
 import type { SelectAdapter } from "../elements/select-adapter.js";
 import { cssEscape } from "../dom-helpers.js";
 import { isRetryableInteractionError } from "../playwright-errors.js";
-import {
-  SELECT_CLICK_TIMEOUT_MS,
-  SELECT_MAX_RETRIES,
-  SELECT_RETRY_DELAY_MS,
-  SELECT_EXPAND_DEADLINE_MS,
-  SELECT_OPTION_VISIBLE_MS,
-  POLL_INTERVAL_MS,
-} from "../timeouts.js";
+import { getTimeouts } from "../timeouts.js";
 
 export const genericNonEditableSelectAdapter: SelectAdapter = {
   async select(locator, value, options) {
@@ -42,9 +35,14 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
     // Use page-level locators (not XPath ancestors) so searches work
     // even when the combobox lives inside a shadow root (e.g. Shoelace).
     const page = locator.page();
-    const clickTimeout = Math.min(t ?? SELECT_CLICK_TIMEOUT_MS, SELECT_CLICK_TIMEOUT_MS);
+    const cfg = getTimeouts();
+    const clickTimeout = t ?? cfg.selectClickTimeoutMs;
+    // Total deadline so the retry loop can't exceed the caller's
+    // timeout budget regardless of selectMaxRetries.
+    const deadline = Date.now() + (t ?? cfg.selectClickTimeoutMs * cfg.selectMaxRetries);
 
-    for (let attempt = 0; attempt < SELECT_MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < cfg.selectMaxRetries; attempt++) {
+      if (Date.now() > deadline) break;
       // ── Open the dropdown ───────────────────────────────────
       // Flush any pending framework renders (Lit requestUpdate, Vue
       // nextTick, etc.) before interacting with the dropdown.  This
@@ -79,7 +77,10 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
           await locator.click({ timeout: clickTimeout }).catch((e: unknown) => {
             if (!isRetryableInteractionError(e)) throw e;
           });
-          await page.waitForTimeout(SELECT_RETRY_DELAY_MS);
+          // P2-101: use rAF-based wait instead of fixed waitForTimeout
+          await page.evaluate(() => new Promise<void>(r =>
+            requestAnimationFrame(() => requestAnimationFrame(() => r())),
+          ));
           continue;
         }
       } else {
@@ -87,15 +88,18 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
         // Wait for the dropdown to actually open.
         // Poll getAttribute() instead of using expect().toHaveAttribute()
         // to avoid a runtime dependency on @playwright/test.
-        const expandDeadline = Date.now() + SELECT_EXPAND_DEADLINE_MS;
+        const expandDeadline = Date.now() + cfg.selectExpandDeadlineMs;
         while (Date.now() < expandDeadline) {
           const val = await locator.getAttribute("aria-expanded").catch(() => null);
           if (val === "true") break;
-          await page.waitForTimeout(POLL_INTERVAL_MS);
+          // P2-101: use rAF-based wait instead of fixed waitForTimeout
+          await page.evaluate(() => new Promise<void>(r =>
+            requestAnimationFrame(() => r()),
+          ));
         }
         // Wait for the popup/options to be rendered and visible.
         try {
-          await page.locator('[role="option"]').first().waitFor({ state: "visible", timeout: SELECT_OPTION_VISIBLE_MS });
+          await page.locator('[role="option"]').first().waitFor({ state: "visible", timeout: cfg.selectOptionVisibleMs });
         } catch (e) {
           if (!isRetryableInteractionError(e)) throw e;
           // Options may not be role="option" (native <option>) — continue
@@ -142,8 +146,16 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
         }
       }
 
-      // ── Strategy 3: page-level getByRole ───────────────────
-      const option = page.getByRole("option", { name: value });
+      // ── Strategy 3: scoped or page-level getByRole ─────────
+      // P2-136: Scope option search to the aria-controls/aria-owns listbox
+      // when available to avoid racing with concurrent dropdowns.
+      const scopedListboxId3 =
+        (await locator.getAttribute("aria-controls").catch(() => null)) ??
+        (await locator.getAttribute("aria-owns").catch(() => null));
+      const optionScope3 = scopedListboxId3
+        ? page.locator(`#${cssEscape(scopedListboxId3)}`).getByRole("option", { name: value })
+        : page.getByRole("option", { name: value });
+      const option = optionScope3;
       if ((await option.count()) > 0) {
         try {
           await option.first().click({ timeout: clickTimeout });
@@ -165,7 +177,9 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
         if (cssCount === 0) continue;
         for (let i = 0; i < cssCount; i++) {
           const text = ((await cssOptions.nth(i).textContent()) ?? "").trim();
-          if (text === value) {
+          // P2-102: Use case-insensitive, whitespace-normalized comparison
+          // for consistency with Strategies 1-3 (accessible-name matching).
+          if (text.toLowerCase() === String(value).toLowerCase()) {
             try {
               await cssOptions.nth(i).click({ timeout: clickTimeout });
               return;
@@ -177,8 +191,10 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
         }
       }
 
-      // Wait before retry
-      await page.waitForTimeout(SELECT_RETRY_DELAY_MS);
+      // P2-101: use rAF-based wait before retry instead of fixed waitForTimeout
+      await page.evaluate(() => new Promise<void>(r =>
+        requestAnimationFrame(() => requestAnimationFrame(() => r())),
+      ));
     }
 
     throw new Error(
@@ -201,52 +217,66 @@ export const genericNonEditableSelectAdapter: SelectAdapter = {
 
   async options(locator, options) {
     const page = locator.page();
-    const clickTimeout = Math.min(options?.timeout ?? SELECT_CLICK_TIMEOUT_MS, SELECT_CLICK_TIMEOUT_MS);
+    const cfg = getTimeouts();
+    const clickTimeout = options?.timeout ?? cfg.selectClickTimeoutMs;
 
     // Open the dropdown to enumerate options
     const expanded = await locator.getAttribute("aria-expanded").catch(() => null);
     if (expanded !== "true") {
       await locator.click({ timeout: clickTimeout });
       // Wait for dropdown to open
-      const expandDeadline = Date.now() + SELECT_EXPAND_DEADLINE_MS;
+      const expandDeadline = Date.now() + cfg.selectExpandDeadlineMs;
       while (Date.now() < expandDeadline) {
         const val = await locator.getAttribute("aria-expanded").catch(() => null);
         if (val === "true") break;
-        await page.waitForTimeout(POLL_INTERVAL_MS);
+        // P2-101: use rAF-based wait instead of fixed waitForTimeout
+        await page.evaluate(() => new Promise<void>(r =>
+          requestAnimationFrame(() => r()),
+        ));
       }
     }
 
-    // Collect option text via aria-controls/aria-owns listbox first
-    const listboxId =
-      (await locator.getAttribute("aria-controls").catch(() => null)) ??
-      (await locator.getAttribute("aria-owns").catch(() => null));
-
-    let labels: string[] = [];
-    if (listboxId) {
-      const escapedId = cssEscape(listboxId);
-      const optionEls = page.locator(`#${escapedId}`).getByRole("option");
-      const count = await optionEls.count();
-      for (let i = 0; i < count; i++) {
-        const text = ((await optionEls.nth(i).textContent()) ?? "").trim();
-        if (text) labels.push(text);
+    try {
+      // P2-301: Wait for dropdown options to render before reading.
+      // Portal-mounted dropdowns (MUI, Vuetify, Shoelace) render async.
+      try {
+        await page.locator('[role="option"]').first().waitFor({ state: "attached", timeout: clickTimeout });
+      } catch {
+        // Options may not be role="option" (native <option>) — continue
       }
-    }
 
-    // Fallback: page-level role="option"
-    if (labels.length === 0) {
-      const optionEls = page.getByRole("option");
-      const count = await optionEls.count();
-      for (let i = 0; i < count; i++) {
-        const text = ((await optionEls.nth(i).textContent()) ?? "").trim();
-        if (text) labels.push(text);
+      // Collect option text via aria-controls/aria-owns listbox first
+      const listboxId =
+        (await locator.getAttribute("aria-controls").catch(() => null)) ??
+        (await locator.getAttribute("aria-owns").catch(() => null));
+
+      const labels: string[] = [];
+      if (listboxId) {
+        const escapedId = cssEscape(listboxId);
+        const optionEls = page.locator(`#${escapedId}`).getByRole("option");
+        const count = await optionEls.count();
+        for (let i = 0; i < count; i++) {
+          const text = ((await optionEls.nth(i).textContent()) ?? "").trim();
+          if (text) labels.push(text);
+        }
       }
+
+      // Fallback: page-level role="option"
+      if (labels.length === 0) {
+        const optionEls = page.getByRole("option");
+        const count = await optionEls.count();
+        for (let i = 0; i < count; i++) {
+          const text = ((await optionEls.nth(i).textContent()) ?? "").trim();
+          if (text) labels.push(text);
+        }
+      }
+
+      return labels;
+    } finally {
+      // Always close the dropdown, even if reading options fails.
+      await locator.click({ timeout: clickTimeout }).catch((e: unknown) => {
+        if (!isRetryableInteractionError(e)) throw e;
+      });
     }
-
-    // Close the dropdown by clicking the trigger again
-    await locator.click({ timeout: clickTimeout }).catch((e: unknown) => {
-      if (!isRetryableInteractionError(e)) throw e;
-    });
-
-    return labels;
   },
 };

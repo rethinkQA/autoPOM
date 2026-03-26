@@ -6,4 +6,8 @@ export default defineConfig({
   fullyParallel: true,
   retries: 0,
   reporter: [["list"]],
+
+  use: {
+    trace: "retain-on-failure",
+  },
 });

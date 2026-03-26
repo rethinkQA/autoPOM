@@ -22,6 +22,8 @@ test.describe("Navigation and page structure", () => {
     const text = await about.aboutText.read();
     expect(text).toContain("GeneralStore");
     expect(text).toContain("one-stop shop");
+    // P3-152: verify URL changed to reflect the about route
+    expect(page.url()).toMatch(/about/i);
   });
 
   test("click Home link restores home view", async ({ page }) => {
@@ -34,6 +36,8 @@ test.describe("Navigation and page structure", () => {
     const about = aboutPage(page);
     await expect(await home.productTable.locator()).toBeVisible();
     await expect(await about.aboutText.locator()).toBeHidden();
+    // P3-152: verify URL no longer contains about route
+    expect(page.url()).not.toMatch(/about/i);
   });
 
   test("direct navigation to about shows about view", async ({ page }) => {

@@ -50,7 +50,7 @@ test.describe("Dialog — modal lifecycle", () => {
     const dialogLoc = await home.modal.locator();
     await dialogLoc.press("Escape");
     // Wait for the dialog to actually close (handles animation/unmount delays)
-    await dialogLoc.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => {});
+    await dialogLoc.waitFor({ state: "hidden", timeout: 5_000 });
     expect(await home.modal.isOpen()).toBe(false);
   });
 
@@ -94,7 +94,7 @@ test.describe("Dialog — modal lifecycle", () => {
       // Fallback: some frameworks wrap dialogs in an overlay
       await page.mouse.click(2, 2);
     }
-    await dialogLoc.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => {});
+    await dialogLoc.waitFor({ state: "hidden", timeout: 5_000 });
     expect(await home.modal.isOpen()).toBe(false);
   });
 });

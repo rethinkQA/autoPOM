@@ -32,7 +32,17 @@ function serialize(handlers: ElementHandler[]): SerializedEntry[] {
   return handlers.map((h, idx) => ({ idx, detect: h.detect }));
 }
 
-const silentLogger = { warn: () => {}, debug: () => {}, debugEnabled: false };
+const capturedWarnings: string[] = [];
+const capturingLogger = {
+  warn: (msg: string) => capturedWarnings.push(msg),
+  debug: () => {},
+  debugEnabled: false,
+};
+
+// Clear captured warnings before each test
+test.beforeEach(() => {
+  capturedWarnings.length = 0;
+});
 
 // ── Phase 1: Tag matching ───────────────────────────────────
 
@@ -45,7 +55,7 @@ test.describe("classifyElement — tag matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [selectHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("select");
   });
 
@@ -57,7 +67,7 @@ test.describe("classifyElement — tag matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [textareaHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("textarea");
   });
 
@@ -74,7 +84,7 @@ test.describe("classifyElement — tag matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [checkboxHandler, textHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("checkbox");
   });
 
@@ -88,7 +98,7 @@ test.describe("classifyElement — tag matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [checkboxHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     // checkbox handler should NOT match; fallback (input) should win
     expect(result.type).toBe("input");
   });
@@ -105,7 +115,7 @@ test.describe("classifyElement — role matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [comboHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("combobox");
   });
 
@@ -120,7 +130,7 @@ test.describe("classifyElement — role matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [checkboxHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("checkbox");
   });
 
@@ -132,7 +142,7 @@ test.describe("classifyElement — role matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [radioGroupHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("radiogroup");
   });
 });
@@ -150,7 +160,7 @@ test.describe("classifyElement — attribute matching", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [stepperHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("stepper");
   });
 
@@ -165,7 +175,7 @@ test.describe("classifyElement — attribute matching", () => {
     const handlers = [stepperHandler, fallback];
 
     await expect(
-      classifyElement(el, handlers, serialize(handlers), fallback, silentLogger),
+      classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger),
     ).rejects.toThrow(NoHandlerMatchError);
   });
 });
@@ -189,7 +199,7 @@ test.describe("classifyElement — requireChild (Phase 2)", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [radioGroupHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("radiogroup");
   });
 
@@ -210,7 +220,7 @@ test.describe("classifyElement — requireChild (Phase 2)", () => {
 
     // fieldset matches the tag, but requireChild fails — should throw
     await expect(
-      classifyElement(el, handlers, serialize(handlers), fallback, silentLogger),
+      classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger),
     ).rejects.toThrow(NoHandlerMatchError);
   });
 });
@@ -227,7 +237,7 @@ test.describe("classifyElement — priority ordering", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [checkboxHandler, switchHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("checkbox");
   });
 
@@ -250,7 +260,7 @@ test.describe("classifyElement — priority ordering", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [checkboxGroupHandler, fieldsetHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("checkboxgroup");
   });
 
@@ -272,7 +282,7 @@ test.describe("classifyElement — priority ordering", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [fieldsetHandler, checkboxGroupHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("fieldset");
   });
 });
@@ -289,7 +299,7 @@ test.describe("classifyElement — no match", () => {
     const handlers = [selectHandler, fallback];
 
     await expect(
-      classifyElement(el, handlers, serialize(handlers), fallback, silentLogger),
+      classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger),
     ).rejects.toThrow(NoHandlerMatchError);
   });
 
@@ -301,7 +311,7 @@ test.describe("classifyElement — no match", () => {
     const handlers = [fallback];
 
     try {
-      await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+      await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
       expect(true).toBe(false); // should not reach here
     } catch (e) {
       expect(e).toBeInstanceOf(NoHandlerMatchError);
@@ -317,7 +327,7 @@ test.describe("classifyElement — no match", () => {
     const handlers = [fallback];
 
     try {
-      await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+      await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
       expect(true).toBe(false);
     } catch (e) {
       expect(e).toBeInstanceOf(NoHandlerMatchError);
@@ -338,7 +348,7 @@ test.describe("classifyElement — fallback option", () => {
     const handlers = [selectHandler, fallback];
 
     const result = await classifyElement(
-      el, handlers, serialize(handlers), fallback, silentLogger, { fallback: true },
+      el, handlers, serialize(handlers), fallback, capturingLogger, { fallback: true },
     );
     expect(result.type).toBe("input");
   });
@@ -352,7 +362,7 @@ test.describe("classifyElement — fallback option", () => {
     const handlers = [selectHandler, fallback];
 
     const result = await classifyElement(
-      el, handlers, serialize(handlers), fallback, silentLogger, { fallback: true },
+      el, handlers, serialize(handlers), fallback, capturingLogger, { fallback: true },
     );
     expect(result.type).toBe("select");
   });
@@ -372,7 +382,7 @@ test.describe("classifyElement — multiple detect rules", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [switchHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("switch");
   });
 
@@ -387,7 +397,7 @@ test.describe("classifyElement — multiple detect rules", () => {
     const fallback = makeHandler("input", [{ tags: ["input"] }]);
     const handlers = [checkboxHandler, fallback];
 
-    const result = await classifyElement(el, handlers, serialize(handlers), fallback, silentLogger);
+    const result = await classifyElement(el, handlers, serialize(handlers), fallback, capturingLogger);
     expect(result.type).toBe("checkbox");
   });
 });

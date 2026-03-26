@@ -46,6 +46,7 @@ import { HandlerRegistry } from "./handler-registry.js";
 import { MiddlewarePipeline } from "./middleware-pipeline.js";
 import { LoggerConfig } from "./logger-config.js";
 import { ResolveRetryConfig } from "./resolve-retry-config.js";
+import { resetRetryablePatterns } from "./playwright-errors.js";
 import type { IFrameworkContext } from "./types.js";
 
 // ── FrameworkContext class ───────────────────────────────────
@@ -67,8 +68,10 @@ export class FrameworkContext implements IFrameworkContext {
     this.handlers = new HandlerRegistry(() => this.logger.getLogger());
     this.middleware = new MiddlewarePipeline(
       () => this.logger.getLogger().debugEnabled ?? false,
+      (msg) => this.logger.getLogger().warn(msg),
     );
     this.resolveRetry = new ResolveRetryConfig();
+    this.resolveRetry.setLoggerProvider(() => this.logger.getLogger());
   }
 
   // ── Full reset ─────────────────────────────────────────
@@ -78,7 +81,10 @@ export class FrameworkContext implements IFrameworkContext {
    *
    * Equivalent to calling `handlers.resetHandlers()`,
    * `middleware.clearMiddleware()`, `logger.configureLogger(null)`,
-   * and `resolveRetry.resetResolveRetry()` individually.
+   * `resolveRetry.resetResolveRetry()`, and `resetRetryablePatterns()`
+   * individually. Also resets module-level warning state so that
+   * warnings fire again in subsequent tests.
+   *
    * Designed for test teardown:
    *
    * ```ts
@@ -90,6 +96,8 @@ export class FrameworkContext implements IFrameworkContext {
     this.middleware.clearMiddleware();
     this.logger.configureLogger(null);
     this.resolveRetry.resetResolveRetry();
+    resetRetryablePatterns();
+    resetWarningState();
   }
 }
 
@@ -176,8 +184,25 @@ let _fallbackContext: IFrameworkContext | undefined;
  *
  * Pass `undefined` to clear the fallback after the test completes.
  */
-export function setFallbackContext(ctx: IFrameworkContext | undefined): void {
+export function setFallbackContext(ctx: IFrameworkContext | undefined): IFrameworkContext | undefined {
+  const prev = _fallbackContext;
   _fallbackContext = ctx;
+  return prev;
+}
+
+/**
+ * Peek at the current AsyncLocalStorage store without any fallback logic.
+ *
+ * Returns the ALS-stored context if one is active, or `undefined` otherwise.
+ * Unlike {@link getActiveContext}, this never throws and never falls back
+ * to `_fallbackContext` or `defaultContext`.
+ *
+ * P2-248: Used by the test fixture to verify ALS propagation without
+ * clearing the fallback context (which would create a window where
+ * framework code gets "no active context" errors).
+ */
+export function peekContextStore(): IFrameworkContext | undefined {
+  return _contextStorage.getStore();
 }
 
 /**
@@ -201,6 +226,9 @@ export function setStrictContextMode(enabled: boolean): void {
 /** Tracks which mutation warnings have already been emitted (one per operation). */
 const _mutationWarned = new Set<string>();
 
+/** Tracks whether the getActiveContext() fallback warning has been emitted. */
+let _contextFallbackWarned = false;
+
 /**
  * Reset all module-level warning state so that warnings fire again.
  *
@@ -213,6 +241,7 @@ const _mutationWarned = new Set<string>();
  */
 export function resetWarningState(): void {
   _mutationWarned.clear();
+  _contextFallbackWarned = false;
 }
 
 /**
@@ -229,7 +258,7 @@ export function resetWarningState(): void {
  */
 export function checkMutationScope(operation: string): void {
   if (_contextStorage.getStore()) return; // inside an ALS scope — safe
-  if (_fallbackContext) return;            // inside a fixture fallback — safe
+  if (_fallbackContext && _fallbackContext !== defaultContext) return; // inside a fixture fallback — safe
 
   if (_strictContextMode) {
     throw new Error(
@@ -281,20 +310,21 @@ export function getActiveContext(): IFrameworkContext {
     );
   }
 
-  // Falling back to the shared global defaultContext — emit a visible
-  // warning via stderr on EVERY call so the degradation is never silent.
-  // Uses console.error directly (not the framework logger) to avoid
-  // circular dependencies, interference with logger tests, and to
-  // ensure the message appears on stderr where CI systems typically
-  // surface it.
-  console.error(
-    "[framework] getActiveContext() was called outside an AsyncLocalStorage scope " +
-      "(e.g. outside a test fixture). The shared global defaultContext is being used. " +
-      "If this is unintentional, wrap your code with runWithContext() or use the " +
-      "Playwright fixture to get an isolated context. " +
-      "Strict context mode is ON by default — this path was reached because " +
-      "setStrictContextMode(false) was called explicitly.",
-  );
+  // P2-219: Falling back to the shared global defaultContext — emit a
+  // once-per-reset-cycle warning via stderr.  The boolean flag is reset
+  // by resetWarningState() (called between tests by the fixture), so
+  // each test independently sees the warning on first occurrence.
+  if (!_contextFallbackWarned) {
+    _contextFallbackWarned = true;
+    console.error(
+      "[framework] getActiveContext() was called outside an AsyncLocalStorage scope " +
+        "(e.g. outside a test fixture). The shared global defaultContext is being used. " +
+        "If this is unintentional, wrap your code with runWithContext() or use the " +
+        "Playwright fixture to get an isolated context. " +
+        "Strict context mode is ON by default — this path was reached because " +
+        "setStrictContextMode(false) was called explicitly.",
+    );
+  }
   return defaultContext;
 }
 

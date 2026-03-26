@@ -94,16 +94,27 @@ export interface NetworkSettleOptions {
   /**
    * Optional callback fired when the timeout expires before the
    * network settles.  Receives the list of still-pending request URLs.
-   * Defaults to `console.warn(...)`.
+   * Defaults to logging via `warn` (see below) or `console.warn(...)`.
    */
   onTimeout?: (pendingUrls: string[]) => void;
+
+  /**
+   * Warning function used for the default timeout message when
+   * `onTimeout` is not provided.  Accepts the framework's
+   * `Logger.warn` to keep all diagnostics in the configured channel.
+   *
+   * @default console.warn
+   */
+  warn?: (msg: string) => void;
 }
 
 // ── Default configuration ───────────────────────────────────
 
-const DEFAULT_IDLE_TIME = 300;
-const DEFAULT_TIMEOUT = 10_000;
-const DEFAULT_ACTIONS = ["write", "click", "writeAll"];
+import {
+  NETWORK_IDLE_TIME_MS,
+  NETWORK_SETTLE_TIMEOUT_MS,
+  NETWORK_SETTLE_ACTIONS,
+} from "./timeouts.js";
 
 // ── Core: waitForNetworkSettle ──────────────────────────────
 
@@ -115,13 +126,15 @@ const DEFAULT_ACTIONS = ["write", "click", "writeAll"];
  * a promise that resolves when the network settles (or the timeout
  * expires).
  */
-function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idleTime" | "timeout">> & Pick<NetworkSettleOptions, "ignore" | "onRequest" | "onRequestDone" | "onTimeout">) {
+function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idleTime" | "timeout">> & Pick<NetworkSettleOptions, "ignore" | "onRequest" | "onRequestDone" | "onTimeout" | "warn">) {
 
   const pending = new Set<Request>();
   let settleResolve: (() => void) | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
+  /** Whether any (non-ignored) request was observed during tracking. */
+  let hadRequests = false;
 
   /**
    * Whether the action phase is complete. Settlement detection is
@@ -154,6 +167,7 @@ function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idl
   const onRequest = (req: Request) => {
     const url = req.url();
     if (shouldIgnore(url)) return;
+    hadRequests = true;
     pending.add(req);
     opts.onRequest?.(url);
     // Reset idle timer — new activity
@@ -182,7 +196,8 @@ function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idl
         if (opts.onTimeout) {
           opts.onTimeout(pendingUrls);
         } else {
-          console.warn(
+          const warn = opts.warn ?? console.warn;
+          warn(
             `[networkSettleMiddleware] Timed out after ${opts.timeout}ms with ` +
             `${pendingUrls.length} pending request(s):\n` +
             pendingUrls.map((u) => `  • ${u}`).join("\n"),
@@ -202,19 +217,28 @@ function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idl
    * Signal that the action has completed.  This begins settlement
    * detection: the idle timer starts counting from this point.
    *
-   * A small async deferral (`setTimeout(0)`) is inserted before
+   * Two event-loop deferrals (`setTimeout` chained) are used before
    * the first `checkSettle()` call so that any `fetch()` calls
    * triggered synchronously by the action have time to emit their
-   * `"request"` event.  Without this, `pending.size === 0` could
-   * be true momentarily and the idle timer would start before the
-   * request event fires — a race condition that becomes visible
-   * with short `idleTime` values (Issue #137).
+   * `"request"` event.  A single `setTimeout(0)` was insufficient
+   * because Playwright's request-event dispatch can lag by more
+   * than one microtask turn — the double deferral gives the event
+   * loop enough cycles to process pending I/O callbacks (Issue #137).
    */
   function signalActionComplete() {
     actionComplete = true;
-    // Defer the first settle check by one event-loop turn to allow
-    // pending request events to propagate.
-    setTimeout(() => checkSettle(), 0);
+    // If no requests were observed during the action, resolve immediately
+    // to avoid the idle wait penalty (P2-178).
+    if (!hadRequests && pending.size === 0) {
+      settled = true;
+      clearTimeout(timeoutTimer);
+      settleResolve?.();
+      return;
+    }
+    // Two event-loop turns: first turn processes I/O callbacks from
+    // the action (e.g. fetch dispatch); second turn catches any
+    // request events queued during the first turn.
+    setTimeout(() => setTimeout(() => checkSettle(), 0), 0);
   }
 
   function cleanup() {
@@ -223,6 +247,12 @@ function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idl
     page.off("requestfailed", onRequestDone);
     clearTimeout(idleTimer);
     clearTimeout(timeoutTimer);
+    // Resolve the promise if still pending (e.g. action threw before
+    // signalActionComplete) to prevent GC-leak of the dangling promise.
+    if (!settled) {
+      settled = true;
+      settleResolve?.();
+    }
   }
 
   return { promise, cleanup, signalActionComplete };
@@ -250,13 +280,14 @@ function trackNetwork(page: Page, opts: Required<Pick<NetworkSettleOptions, "idl
 export function networkSettleMiddleware(
   options?: NetworkSettleOptions,
 ): Middleware {
-  const idleTime = options?.idleTime ?? DEFAULT_IDLE_TIME;
-  const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-  const actions = new Set(options?.actions ?? DEFAULT_ACTIONS);
+  const idleTime = options?.idleTime ?? NETWORK_IDLE_TIME_MS;
+  const timeout = options?.timeout ?? NETWORK_SETTLE_TIMEOUT_MS;
+  const actions = new Set(options?.actions ?? NETWORK_SETTLE_ACTIONS);
   const ignore = options?.ignore;
   const onRequest = options?.onRequest;
   const onRequestDone = options?.onRequestDone;
   const onTimeout = options?.onTimeout;
+  const warn = options?.warn;
 
   const mw: Middleware = async (
     context: ActionContext,
@@ -288,6 +319,7 @@ export function networkSettleMiddleware(
       onRequest,
       onRequestDone,
       onTimeout,
+      warn,
     });
 
     try {

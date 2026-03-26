@@ -58,9 +58,9 @@ test.describe("networkSettleMiddleware", () => {
   test("does not wait for ignored URL patterns", async ({ page }) => {
     let analyticsCallCompleted = false;
 
-    // Intercept an analytics endpoint with a long delay
+    // Intercept an analytics endpoint with a very long delay
     await page.route("**/analytics*", async (route) => {
-      await new Promise((r) => setTimeout(r, 2000)); // Very long delay
+      await new Promise((r) => setTimeout(r, 15000)); // Very long delay — must outlast any CI slowness
       analyticsCallCompleted = true;
       await route.fulfill({ status: 200, body: "ok" });
     });
@@ -194,18 +194,20 @@ test.describe("networkSettleMiddleware", () => {
   });
 
   test("skips actions not in the configured list", async ({ page }) => {
-    let settleWaited = false;
-
     await page.route("**/api/check*", async (route) => {
       await new Promise((r) => setTimeout(r, 200));
-      settleWaited = true;
       await route.fulfill({ status: 200, body: "ok" });
     });
+
+    // A click action should NOT wait for network (only "write" is configured)
+    // Verify via structural check: track whether the settle middleware intercepted the request
+    let settleIntercepted = false;
 
     // Only watch "write" — "click" should pass through without waiting
     useMiddleware(networkSettleMiddleware({
       idleTime: 100,
       actions: ["write"],
+      onRequest: () => { settleIntercepted = true; },
     }));
 
     const root = group(By.css("body"), page);
@@ -219,20 +221,10 @@ test.describe("networkSettleMiddleware", () => {
       document.addEventListener("click", trigger, { capture: true, once: true });
     });
 
-    // A click action should NOT wait for network (only "write" is configured)
-    // The button click test pattern — the settle won't have waited
-    // We just verify the click completes without the 200ms delay being enforced
-    const startTime = Date.now();
     await root.click("Add to Cart");
-    const elapsed = Date.now() - startTime;
 
-    // The click should complete quickly (well under 200ms network delay + 100ms idle)
-    // since "click" is not in the watched actions list.
-    // Note: This is a heuristic — the click itself may take some time.
-    // The key assertion is that settleWaited should be false when we check immediately.
-    // (The fetch may complete async later, but we don't wait for it.)
-    // We just verify the middleware didn't block on it.
-    expect(elapsed).toBeLessThan(2000);
+    // The middleware should NOT have intercepted the request for a "click" action
+    expect(settleIntercepted).toBe(false);
   });
 
   test("waits for multiple concurrent API calls to settle", async ({ page }) => {
@@ -277,5 +269,115 @@ test.describe("networkSettleMiddleware", () => {
     // Both calls should have completed before write() returned
     expect(call1Done).toBe(true);
     expect(call2Done).toBe(true);
+  });
+
+  test("waits for real fetch triggered by DOM interaction (not setTimeout simulation)", async ({ page }) => {
+    // This test validates the middleware against a more realistic scenario:
+    // a browser-initiated fetch() that goes through the full network stack
+    // (request → server processing → response), rather than just a setTimeout
+    // inside a route handler. The route handler fulfills immediately, but the
+    // fetch is initiated asynchronously after a DOM mutation (as happens in
+    // real apps with reactive frameworks like React/Vue).
+    let fetchReceived = false;
+
+    await page.route("**/api/validate*", async (route) => {
+      fetchReceived = true;
+      // Fulfill immediately — no setTimeout. The test validates that the
+      // middleware properly detects the in-flight request lifecycle, not
+      // artificial delays.
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ valid: true, stock: 5 }),
+      });
+    });
+
+    useMiddleware(networkSettleMiddleware({ idleTime: 100, timeout: 5000 }));
+
+    const root = group(By.css("body"), page);
+
+    // Set up a DOM mutation observer that triggers fetch asynchronously,
+    // simulating a reactive framework re-rendering and issuing an API call
+    // after state updates (e.g., React useEffect, Vue watcher).
+    await page.evaluate(() => {
+      let fired = false;
+      const trigger = () => {
+        if (fired) return;
+        fired = true;
+        // Use requestAnimationFrame + microtask to simulate the timing of
+        // reactive frameworks (state update → re-render → side effect).
+        requestAnimationFrame(() => {
+          queueMicrotask(() => {
+            fetch("/api/validate?q=test")
+              .then((r) => r.json())
+              .then((data) => {
+                // Simulate the app updating the DOM based on the response
+                const el = document.createElement("span");
+                el.className = "validation-result";
+                el.textContent = data.valid ? "Valid" : "Invalid";
+                document.body.appendChild(el);
+              });
+          });
+        });
+      };
+      new MutationObserver((_, obs) => { trigger(); obs.disconnect(); })
+        .observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      document.addEventListener("click", trigger, { capture: true, once: true });
+    });
+
+    await root.write("Category", "Electronics");
+
+    // The fetch should have completed by the time write() returns
+    expect(fetchReceived).toBe(true);
+  });
+
+  test("waits for real unintercepted HTTP request to app server", async ({ page }) => {
+    // This test validates the middleware against a fully real network request:
+    // no Playwright route interception, no simulated delays. The fetch goes
+    // to the actual running app server (same origin), exercising the full
+    // browser network stack (DNS, TCP, HTTP request/response lifecycle).
+    // The middleware must detect the in-flight request via Playwright's
+    // request/requestfinished events — not via route handlers.
+
+    let responseReceived = false;
+
+    useMiddleware(networkSettleMiddleware({ idleTime: 150, timeout: 5000 }));
+
+    const root = group(By.css("body"), page);
+
+    // Listen for the real request completing via Playwright's event system
+    // (the same mechanism the middleware uses internally).
+    page.on("requestfinished", (req) => {
+      if (req.url().includes("favicon") || req.url() === page.url()) return;
+      responseReceived = true;
+    });
+
+    // Trigger a real fetch to the app server's own URL (guaranteed to exist)
+    // on any UI interaction. No route interception — this goes through the
+    // full network stack.
+    await page.evaluate(() => {
+      let fired = false;
+      const trigger = () => {
+        if (fired) return;
+        fired = true;
+        // Fetch the current page's own URL with a cache-busting param.
+        // This is a real HTTP request to the running dev server.
+        fetch(`${window.location.origin}/?_settle_test=${Date.now()}`)
+          .then(() => {
+            const el = document.createElement("span");
+            el.className = "settle-verification";
+            el.textContent = "settled";
+            document.body.appendChild(el);
+          });
+      };
+      new MutationObserver((_, obs) => { trigger(); obs.disconnect(); })
+        .observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      document.addEventListener("click", trigger, { capture: true, once: true });
+    });
+
+    await root.write("Category", "Electronics");
+
+    // By the time write() returns, the real HTTP request should have completed
+    expect(responseReceived).toBe(true);
   });
 });

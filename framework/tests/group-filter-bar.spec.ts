@@ -13,6 +13,15 @@ test.describe("Group — Filter Bar", () => {
     expect(await home.productTable.rowCount()).toBe(1);
   });
 
+  test("search filter is case-insensitive", async ({ page }) => {
+    const home = homePage(page);
+    // P3-173: verify uppercase search matches lowercase product names
+    await home.filters.write("Search Products", "MOUSE");
+    expect(await home.productTable.rowCount()).toBe(1);
+    const rows = await home.productTable.rows();
+    expect(rows[0].Name).toBe("Wireless Mouse");
+  });
+
   test("set and get select dropdown via label", async ({ page }) => {
     const home = homePage(page);
     await home.filters.write("Category", "Electronics");
@@ -132,7 +141,13 @@ test.describe("Group — Filter Bar", () => {
     for (const category of ["Electronics", "Books", "Clothing"]) {
       await home.filters.write("Category", category);
       expect(await home.filters.read("Category")).toBe(category);
-      expect(await home.productTable.rowCount()).toBeGreaterThan(0);
+      const rowCount = await home.productTable.rowCount();
+      expect(rowCount).toBeGreaterThan(0);
+      // Verify every visible row actually belongs to the selected category
+      for (let i = 0; i < rowCount; i++) {
+        const row = await home.productTable.row(i);
+        expect(await row.get("Category")).toBe(category);
+      }
     }
     // "All" should restore full table
     await home.filters.write("Category", "All");

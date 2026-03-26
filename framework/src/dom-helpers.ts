@@ -20,54 +20,68 @@ export function cssEscape(value: string): string {
   // Minimal polyfill — handles the common cases for DOM IDs.
   // Full spec: https://drafts.csswg.org/cssom/#serialize-an-identifier
   const str = String(value);
-  const length = str.length;
+  const codePoints = [...str]; // iterate by code point, not code unit
+  const length = codePoints.length;
   let result = "";
 
   for (let i = 0; i < length; i++) {
-    const ch = str.charCodeAt(i);
+    const cp = codePoints[i].codePointAt(0)!;
 
     // Null byte
-    if (ch === 0x0000) {
+    if (cp === 0x0000) {
       result += "\uFFFD";
       continue;
     }
 
     if (
       // Control characters (U+0001–U+001F, U+007F)
-      (ch >= 0x0001 && ch <= 0x001f) ||
-      ch === 0x007f
+      (cp >= 0x0001 && cp <= 0x001f) ||
+      cp === 0x007f
     ) {
-      result += "\\" + ch.toString(16) + " ";
+      result += "\\" + cp.toString(16) + " ";
       continue;
     }
 
     if (i === 0) {
       // Digit as first char
-      if (ch >= 0x0030 && ch <= 0x0039) {
-        result += "\\" + ch.toString(16) + " ";
+      if (cp >= 0x0030 && cp <= 0x0039) {
+        result += "\\" + cp.toString(16) + " ";
         continue;
       }
       // Hyphen-minus as first char followed by nothing or another hyphen
-      if (ch === 0x002d && length === 1) {
-        result += "\\" + str.charAt(i);
+      if (cp === 0x002d && length === 1) {
+        result += "\\" + codePoints[i];
         continue;
+      }
+      // P3-100: Hyphen followed by a digit as the second char
+      if (cp === 0x002d && length > 1) {
+        const nextCp = codePoints[1].codePointAt(0)!;
+        if (nextCp >= 0x0030 && nextCp <= 0x0039) {
+          result += "\\" + cp.toString(16) + " ";
+          continue;
+        }
       }
     }
 
-    // Characters that need escaping
-    if (
-      ch < 0x0080 &&
-      ch !== 0x002d && // -
-      ch !== 0x005f && // _
-      !(ch >= 0x0030 && ch <= 0x0039) && // 0-9
-      !(ch >= 0x0041 && ch <= 0x005a) && // A-Z
-      !(ch >= 0x0061 && ch <= 0x007a) // a-z
-    ) {
-      result += "\\" + str.charAt(i);
+    // Characters outside BMP — always safe to include as-is
+    if (cp >= 0x0080) {
+      result += codePoints[i];
       continue;
     }
 
-    result += str.charAt(i);
+    // ASCII characters that need escaping
+    if (
+      cp !== 0x002d && // -
+      cp !== 0x005f && // _
+      !(cp >= 0x0030 && cp <= 0x0039) && // 0-9
+      !(cp >= 0x0041 && cp <= 0x005a) && // A-Z
+      !(cp >= 0x0061 && cp <= 0x007a) // a-z
+    ) {
+      result += "\\" + codePoints[i];
+      continue;
+    }
+
+    result += codePoints[i];
   }
 
   return result;
@@ -102,7 +116,7 @@ export async function readSelectedOptionText(el: Locator, options?: ActionOption
 export async function clickInContainer(
   container: Locator,
   text: string,
-  options?: ActionOptions,
+  options?: ActionOptions & { roles?: readonly string[] },
 ): Promise<void> {
   if (!text.trim()) {
     throw new Error("clickInContainer: text must be a non-empty string");
@@ -110,7 +124,7 @@ export async function clickInContainer(
   const t = options?.timeout;
 
   // All roles in priority order.
-  const roles = [
+  const roles = options?.roles ?? [
     "button",
     "link",
     "menuitem",
@@ -121,6 +135,12 @@ export async function clickInContainer(
   ] as const;
 
   // Build locators for every role and count them in parallel.
+  //
+  // NOTE: Known TOCTOU race — between the count() check and the subsequent
+  // click(), the DOM can mutate (e.g. animations, portaled elements).  In
+  // practice, Playwright's built-in auto-retry/waiting on click() handles
+  // most cases.  Using locator.click() directly would avoid the race but
+  // would lose the prioritised role cascade.
   const roleLocators = roles.map(role =>
     container.getByRole(role, { name: text }),
   );

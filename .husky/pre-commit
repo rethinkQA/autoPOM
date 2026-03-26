@@ -8,7 +8,11 @@ SHARED_CHANGED=$(git diff --cached --name-only -- 'shared/data.ts' 'shared/logic
 
 if [ -n "$SHARED_CHANGED" ]; then
   echo "🔄 shared/ sources changed — regenerating apps/vanilla-html/shared.js…"
+
+  # Ensure we generate from the staged versions, not the working tree
+  git stash --keep-index --quiet 2>/dev/null || true
   node scripts/generate-vanilla-shared.mjs
+  git stash pop --quiet 2>/dev/null || true
 
   # Stage the (possibly updated) generated file so the commit includes it
   git add apps/vanilla-html/shared.js
@@ -23,7 +27,7 @@ fi
 if [ "$SKIP_TEST_COUNTS" = "1" ]; then
   echo "⏭  Skipping test-count verification (SKIP_TEST_COUNTS=1)."
 else
-  SPECS_CHANGED=$(git diff --cached --name-only -- '*.spec.ts')
+  SPECS_CHANGED=$(git diff --cached --name-only -- '**/*.spec.ts')
 
   if [ -n "$SPECS_CHANGED" ]; then
     echo "🔢 Spec files changed — verifying doc test counts…"

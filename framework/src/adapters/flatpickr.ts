@@ -13,9 +13,22 @@
 import type { Locator } from "@playwright/test";
 import type { DatePickerAdapter } from "../elements/datePicker.js";
 import type { ActionOptions } from "../handler-types.js";
+import { cssEscape } from "../dom-helpers.js";
 
 function parseDate(dateStr: string) {
   const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(
+      `Invalid date string "${dateStr}": expected format YYYY-MM-DD with month 1–12 and day 1–31.`,
+    );
+  }
+  // Validate the date actually exists (e.g. reject Feb 31)
+  const date = new Date(year, month - 1, day);
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error(
+      `Invalid date "${dateStr}": ${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} does not exist.`,
+    );
+  }
   return { year, month, day };
 }
 
@@ -56,6 +69,12 @@ export function createFlatpickrAdapter(locale = "en-US"): DatePickerAdapter {
       const displayedMonth = Number(await monthSelect.inputValue({ timeout })) + 1; // 0-based
       const displayedYear = Number(await yearInput.inputValue({ timeout }));
 
+      if (Number.isNaN(displayedMonth) || Number.isNaN(displayedYear)) {
+        throw new Error(
+          `flatpickr: month select or year input returned non-numeric value`,
+        );
+      }
+
       if (displayedMonth === month && displayedYear === year) break;
 
       // Determine direction: go backward if target is before current
@@ -68,10 +87,24 @@ export function createFlatpickrAdapter(locale = "en-US"): DatePickerAdapter {
       await page.waitForTimeout(50);
     }
 
+    // Throw if navigation failed — prevents selecting a day in the wrong month.
+    {
+      const finalMonth = Number(await calendar.locator("select.flatpickr-monthDropdown-months").inputValue({ timeout })) + 1;
+      const finalYear = Number(await calendar.locator("input.cur-year").inputValue({ timeout }));
+      if (finalMonth !== month || finalYear !== year) {
+        throw new Error(
+          `flatpickr: failed to navigate to ${year}-${String(month).padStart(2, "0")} after ${maxAttempts} attempts (stuck on ${finalYear}-${String(finalMonth).padStart(2, "0")})`,
+        );
+      }
+    }
+
     // Click the target day span using its aria-label
     const ariaLabel = buildAriaLabel(year, month, day, locale);
-    const dayCell = calendar.locator(`span.flatpickr-day[aria-label="${ariaLabel}"]`);
+    const dayCell = calendar.locator(`span.flatpickr-day[aria-label="${cssEscape(ariaLabel)}"]`);
     await dayCell.click({ timeout });
+
+    // Wait for the calendar to close after day selection (P2-184).
+    await calendar.waitFor({ state: "hidden", timeout }).catch(() => {});
   },
 
   async read(el: Locator, options?: ActionOptions) {

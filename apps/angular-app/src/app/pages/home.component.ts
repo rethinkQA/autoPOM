@@ -11,7 +11,7 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatRadioModule } from '@angular/material/radio';
 import { MatTableModule } from '@angular/material/table';
 import { MatSortModule, Sort } from '@angular/material/sort';
-import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+import { PRODUCTS, CATEGORIES, SHIPPING, type Product, type ShippingKey } from '@shared/data';
 import {
   filterAndSortProducts, cartMessage, formatDate,
   TOAST_DURATION_MS, type SortKey,
@@ -52,7 +52,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   searchControl = new FormControl('');
   categoryControl = new FormControl('All');
   inStockControl = new FormControl(false);
-  shippingControl = new FormControl('standard');
+  shippingControl = new FormControl<ShippingKey>('standard');
   dateControl = new FormControl<Date | null>(null);
 
   // Sort state
@@ -164,13 +164,6 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   private showToastMessage(msg: string): void {
-    this.snackBar.open(msg, undefined, {
-      duration: TOAST_DURATION_MS,
-      horizontalPosition: 'end',
-      verticalPosition: 'bottom',
-      panelClass: ['generalstore-snackbar'],
-    });
-
     this.toastMsg = msg;
     this.showToast = true;
     if (this.toastTimeout) clearTimeout(this.toastTimeout);

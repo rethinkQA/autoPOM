@@ -1,5 +1,7 @@
 # Test Target Application Library
 
+[![CI](https://github.com/AaronJessen/playwright-elements/actions/workflows/ci.yml/badge.svg)](https://github.com/AaronJessen/playwright-elements/actions/workflows/ci.yml)
+
 > **GeneralStore** — A collection of minimal web apps implementing a fictional storefront, built with different frontend technologies. These apps serve as stable, predictable test targets for a standardized Playwright-based testing framework.
 
 ---
@@ -32,10 +34,10 @@ cd apps/vanilla-html && npm start
 | `vanilla-html` | HTML / CSS / JS (no framework) | 3001 | `npx serve -l 3001` | ✅ Done |
 | `react-app` | React 19 + TypeScript (Vite 7) | 3002 | `vite --port 3002` | ✅ Done |
 | `vue-app` | Vue 3.5 + TypeScript (Vite 7) | 3003 | `vite --port 3003` | ✅ Done |
-| `angular-app` | Angular 17+ (Angular CLI) | 3004 | `ng serve --port 3004` | ✅ Done |
+| `angular-app` | Angular 19 (Angular CLI) | 3004 | `ng serve --port 3004` | ✅ Done |
 | `svelte-app` | Svelte 5+ (Vite 7) | 3005 | `vite --port 3005` | ✅ Done |
 | `nextjs-app` | Next.js 16 (SSR, App Router) | 3006 | `next dev -p 3006` | ✅ Done |
-| `lit-app` | Lit 3 (Web Components, Vite 6) | 3007 | `vite --port 3007` | ✅ Done |
+| `lit-app` | Lit 3 (Web Components, Vite 7) | 3007 | `vite --port 3007` | ✅ Done |
 
 > **HTMX deferred:** An `htmx-app` was originally planned but deferred from v0.1. The 7 apps above provide sufficient technology diversity.
 
@@ -44,10 +46,10 @@ cd apps/vanilla-html && npm start
 - **Vanilla HTML:** Reference implementation — plain HTML/CSS/JS, native `<dialog>`, native `<input type="date">`, hash-based routing. All elements identified by semantic HTML, ARIA attributes, and CSS classes.
 - **React app:** React 19, react-router-dom (HashRouter), MUI (TextField, Select, Checkbox, RadioGroup, Table, Dialog, Snackbar), react-datepicker for date picker.
 - **Vue app:** Vue 3.5 Composition API, vue-router 4 (hash history), Vuetify (v-text-field, v-select, v-checkbox, v-radio-group, v-data-table, v-dialog, v-snackbar), @vuepic/vue-datepicker.
-- **Angular app:** Angular 17+ standalone components, Angular Router (hash location), Angular Material (mat-form-field, mat-select, mat-checkbox, mat-radio-group, mat-table + matSort, MatDialog, MatSnackBar, mat-datepicker).
-- **Svelte app:** Svelte 5+, hash-based routing, Bits UI (Select, Checkbox, RadioGroup, Dialog), flatpickr for date picker, svelte-french-toast.
+- **Angular app:** Angular 19 standalone components, Angular Router (hash location), Angular Material (mat-form-field, mat-select, mat-checkbox, mat-radio-group, mat-table + matSort, MatDialog, MatSnackBar, mat-datepicker).
+- **Svelte app:** Svelte 5+, hash-based routing, Bits UI (Select, Checkbox, RadioGroup, Dialog), flatpickr for date picker, custom `$state`-based toast.
 - **Next.js app:** Next.js 16 (App Router, SSR dev mode), MUI (same component set as React app), react-datepicker, react-hot-toast, server/client component split.
-- **Lit app:** Lit 3, Vite 6, TypeScript. Shoelace form controls (sl-input, sl-select, sl-checkbox, sl-radio-group) in shadow DOM, custom Lit web components for dialog and toast, native `<input type="date">`. Hash-based routing.
+- **Lit app:** Lit 3, Vite 7, TypeScript. Shoelace form controls (sl-input, sl-select, sl-checkbox, sl-radio-group) in shadow DOM, custom Lit web components for dialog and toast, native `<input type="date">`. Hash-based routing.
 
 ---
 
@@ -59,7 +61,7 @@ cd apps/vanilla-html && npm start
 | react-app | 3002 | ✅ | MUI (TextField, Select, Checkbox, RadioGroup, Table, Dialog, Snackbar) + react-datepicker |
 | vue-app | 3003 | ✅ | Vuetify (v-text-field, v-select, v-checkbox, v-radio-group, v-data-table, v-dialog, v-snackbar) + vue-datepicker |
 | angular-app | 3004 | ✅ | Angular Material (mat-form-field, mat-select, mat-checkbox, mat-radio-group, mat-table, MatDialog, MatSnackBar, mat-datepicker) |
-| svelte-app | 3005 | ✅ | Bits UI (Select, Checkbox, RadioGroup, Dialog) + flatpickr + svelte-french-toast |
+| svelte-app | 3005 | ✅ | Bits UI (Select, Checkbox, RadioGroup, Dialog) + flatpickr + custom `$state` toast |
 | nextjs-app | 3006 | ✅ | MUI (same as react-app) + react-datepicker + react-hot-toast |
 | lit-app | 3007 | ✅ | Shoelace (sl-input, sl-select, sl-checkbox, sl-radio-group) + custom Lit dialog/toast + native date input |
 
@@ -90,7 +92,7 @@ test_app/
 │   └── lit-app/             ← Lit web components
 ├── framework/               ← Playwright element interaction library
 │   ├── src/                 ← By class, handler registry, group element, typed wrappers
-│   ├── tests/               ← 924 integration + 219 unit tests
+│   ├── tests/               ← 1,043 integration + 263 unit tests
 │   └── playwright.config.ts
 ├── tools/crawler/           ← Runtime page crawler + page object emitter
 ├── docs/
@@ -114,7 +116,7 @@ The `framework/` directory contains a **Playwright-based element interaction lib
 - **Auto-detection** — handler registry classifies elements (checkbox, select, radio group, etc.) automatically
 - **Group element** — `write()`, `read()`, `writeAll()`, `readAll()`, `click()`, `find()` for any container
 - **Typed wrappers** — `table.sort()`, `stepper.increment()`, `dialog.close()` for rich behaviour
-- **2,088 tests passing** — framework: 924 integration (7 apps) + 219 unit; crawler: 868 integration (7 apps) + 77 unit
+- **1,716 tests passing** — framework: 1,043 integration (7 apps) + 263 unit; crawler: 329 integration (7 apps) + 81 unit
 
 See [`framework/README.md`](framework/README.md) for full API documentation.
 

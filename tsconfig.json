@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "compilerOptions": {
+    "paths": {
+      "@playwright-elements/shared/*": ["./shared/*"],
+      "@playwright-elements/core": ["./framework/src/index.ts"],
+      "@playwright-elements/core/*": ["./framework/src/*"]
+    }
+  },
+  "references": [
+    { "path": "framework" },
+    { "path": "tools/crawler" },
+    { "path": "shared" }
+  ]
+}

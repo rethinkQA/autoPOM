@@ -12,7 +12,20 @@ import type { ActionOptions } from "../handler-types.js";
  * Convert YYYY-MM-DD → MM/dd/yyyy for react-datepicker's text input.
  */
 function toReactFormat(dateStr: string): string {
-  const [year, month, day] = dateStr.split("-");
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) {
+    throw new Error(
+      `Invalid date string "${dateStr}": expected format YYYY-MM-DD`,
+    );
+  }
+  const [year, month, day] = parts;
+  const y = Number(year), m = Number(month), d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d) ||
+      m < 1 || m > 12 || d < 1 || d > 31) {
+    throw new Error(
+      `Invalid date string "${dateStr}": expected format YYYY-MM-DD with month 1–12 and day 1–31`,
+    );
+  }
   return `${month}/${day}/${year}`;
 }
 
@@ -22,7 +35,7 @@ export const reactDatePickerAdapter: DatePickerAdapter = {
     // Clear then type the formatted date — react-datepicker parses typed input.
     await el.click({ timeout: options?.timeout });
     await el.fill("", { timeout: options?.timeout });
-    await el.pressSequentially(formatted, { delay: 30, timeout: options?.timeout });
+    await el.pressSequentially(formatted, { delay: 50, timeout: options?.timeout });
     // Press Enter to confirm the date and close the popup.
     await el.press("Enter", { timeout: options?.timeout });
   },

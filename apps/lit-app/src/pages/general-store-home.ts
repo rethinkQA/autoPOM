@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+import { PRODUCTS, CATEGORIES, SHIPPING, type Product, type ShippingKey } from '@shared/data';
 import {
   filterAndSortProducts, toggleSort, cartMessage,
   TOAST_DURATION_MS, type SortKey,
@@ -24,7 +24,7 @@ export class GeneralStoreHome extends LitElement {
   @state() private _sortKey: SortKey | null = null;
   @state() private _sortAsc = true;
   @state() private _quantity = 1;
-  @state() private _shipping = 'standard';
+  @state() private _shipping: ShippingKey = 'standard';
   @state() private _dateValue = '';
   @state() private _actionOutput = '';
   @state() private _validationMessage = '';

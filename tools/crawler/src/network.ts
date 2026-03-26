@@ -88,6 +88,9 @@ export class NetworkObserver {
       }
     }
 
+    // P3-308: Clear state so the observer can be reused.
+    this.responses = [];
+
     return Array.from(seen.values());
   }
 
@@ -133,8 +136,11 @@ export class NetworkObserver {
         "css", "scss", "less",
         "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "avif",
         "woff", "woff2", "ttf", "eot", "otf",
-        "map", "json",
+        "map",
+        // P2-250: removed "json" — JSON endpoints (e.g. /api/products.json)
+        // are legitimate API dependencies. Use content-type filtering instead.
         "mp4", "webm", "mp3", "wav",
+        "wasm",
       ]);
 
       // Also skip HMR websocket, vite internals, etc.

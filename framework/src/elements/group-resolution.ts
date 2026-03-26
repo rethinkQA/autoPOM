@@ -61,12 +61,13 @@ export function validateReturnedValue(
   value: unknown,
   expectedKind: ValueKind,
   handler: ElementHandler | HandlerActions,
+  callerName: string = "readTyped",
 ): void {
   const actualKind = classifyRuntimeKind(value);
   if (actualKind !== expectedKind) {
     const handlerName = "type" in handler ? handler.type : "custom override";
     throw new TypeError(
-      `group.readTyped("${label}", "${expectedKind}"): handler "${handlerName}" ` +
+      `group.${callerName}("${label}", "${expectedKind}"): handler "${handlerName}" ` +
       `returned a value of type ${actualKind} (${JSON.stringify(value)}), ` +
       `expected ${expectedKind}.`,
     );
@@ -79,7 +80,10 @@ export function validateReturnedValue(
  */
 function classifyRuntimeKind(value: unknown): string {
   if (Array.isArray(value)) {
-    return value.every((v) => typeof v === "string") ? "string[]" : "unknown[]";
+    if (value.every((v) => typeof v === "string")) return "string[]";
+    throw new TypeError(
+      `group arrays must contain only strings, got: ${typeof value[0]}`,
+    );
   }
   if (typeof value === "string") return "string";
   if (typeof value === "boolean") return "boolean";

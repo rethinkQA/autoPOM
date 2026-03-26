@@ -11,6 +11,7 @@
 
 import { test, expect } from "@playwright/test";
 import { crawlPage } from "../src/crawler.js";
+import { recordPage } from "../src/record-api.js";
 import type { CrawlerManifest, ManifestGroup, WrapperType } from "../src/types.js";
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -103,24 +104,27 @@ test.describe("Crawler — Group Discovery", () => {
     expect(tables.length).toBeGreaterThanOrEqual(1);
   });
 
-  test("discovers dialog as special wrapper (vanilla only — others use portals)", async ({ page, browserName }, testInfo) => {
-    // Dialogs in React/Vue/Angular/Svelte/Next.js are portaled/overlay-based
-    // and only exist in the DOM when opened. They require pass 2 after user
-    // interaction. Vanilla and Lit use always-in-DOM <dialog> elements.
-    // Only vanilla keeps <dialog> always in the DOM.
-    // Lit conditionally renders <general-store-dialog> (removed when closed).
-    // React/Vue/Angular/Svelte/Next.js use portals/overlays.
+  test("discovers dialog as special wrapper (vanilla only — others use portals)", async ({ page, browserName: _browserName }, testInfo) => {
+    // [P1-13] Dialog portaled/conditionally rendered in non-vanilla apps.
+    // Non-vanilla apps need the recorder to trigger dialog appearance.
     const project = testInfo.project.name;
-    if (project !== "vanilla") {
-      test.skip();
-      return;
-    }
 
     await page.goto("/");
-    const manifest = await crawlPage(page);
 
-    const dialogs = groupsByWrapper(manifest, "dialog");
-    expect(dialogs.length).toBeGreaterThanOrEqual(1);
+    if (project === "vanilla") {
+      const manifest = await crawlPage(page);
+      const dialogs = groupsByWrapper(manifest, "dialog");
+      expect(dialogs.length).toBeGreaterThanOrEqual(1);
+    } else {
+      // Use recorder: click a product name to open the dialog
+      const base = await crawlPage(page);
+      const manifest = await recordPage(page, async (p) => {
+        await p.locator("table >> text=Wireless Mouse").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+      const dialogs = groupsByWrapper(manifest, "dialog");
+      expect(dialogs.length).toBeGreaterThanOrEqual(1);
+    }
   });
 
   test("discovers toast/live-region (when always in DOM)", async ({ page }, testInfo) => {

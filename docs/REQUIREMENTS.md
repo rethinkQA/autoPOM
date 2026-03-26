@@ -54,7 +54,7 @@ They are not products. They are not demos. They are **test fixtures at the appli
 ```
 test_app/
 ├── docs/
-│   ├── REQUIREMENTS.md          ← this document (includes framework design in §11)
+│   ├── REQUIREMENTS.md          ← this document
 │   └── ROADMAP.md               ← implementation roadmap
 ├── apps/
 │   ├── vanilla-html/            ← plain HTML/CSS/JS, no build step
@@ -62,11 +62,11 @@ test_app/
 │   ├── vue-app/                 ← Vue 3 (Vite)
 │   ├── angular-app/             ← Angular (Angular CLI)
 │   ├── svelte-app/              ← Svelte (Vite)
-│   ├── nextjs-app/              ← Next.js (SSR dev mode, no API routes)
+│   ├── nextjs-app/              ← Next.js (production build, no API routes)
 │   └── lit-app/                 ← Lit web components
-├── docs/
-│   ├── REQUIREMENTS.md          ← this document
-│   └── ROADMAP.md
+├── framework/                   ← Playwright element interaction library
+├── tools/crawler/               ← Runtime page crawler + page object emitter
+├── shared/                      ← Shared data & logic (TypeScript)
 └── README.md
 ```
 
@@ -81,11 +81,11 @@ These technologies were selected to stress-test different rendering and DOM inte
 | App | Technology | Why It Matters to a Test Framework |
 |-----|-----------|-----------------------------------|
 | `vanilla-html` | HTML / CSS / JS (no framework) | Baseline — raw DOM, no virtual DOM, no lifecycle. Proves the framework doesn't accidentally depend on framework-specific behavior. |
-| `react-app` | React 18+ (Vite) | Virtual DOM, synthetic events, async state updates, component re-renders. The most common SPA target. |
+| `react-app` | React 19 (Vite) | Virtual DOM, synthetic events, async state updates, component re-renders. The most common SPA target. |
 | `vue-app` | Vue 3 (Composition API, Vite) | Reactive proxy system, template-based rendering, transition system. |
-| `angular-app` | Angular 17+ (standalone components) | Zone.js change detection, RxJS async patterns, strict typing, shadow DOM option. |
+| `angular-app` | Angular 19 (standalone components) | Zone.js change detection, RxJS async patterns, strict typing, shadow DOM option. |
 | `svelte-app` | Svelte 5+ (Vite) | Compile-time framework — no runtime library in the DOM. Tests that the framework doesn't rely on runtime framework globals. |
-| `nextjs-app` | Next.js 14+ (SSR dev mode) | File-based routing, server-side rendering, hydration edge cases. Runs via `next dev` to exercise real SSR + hydration — validates that the test framework correctly waits for hydration before interacting with elements. |
+| `nextjs-app` | Next.js 16 (production build) | File-based routing, server-side rendering, hydration edge cases. Runs via `next build && next start` to exercise production SSR + hydration — validates that the test framework correctly waits for hydration before interacting with elements. |
 | `lit-app` | Lit 3+ | Native Web Components, Shadow DOM by default. Critical for testing shadow DOM piercing/interaction strategies. |
 
 > **Note:** This list is intentionally opinionated. It covers the major rendering paradigms (virtual DOM, reactive, compiled, web components). Additional apps (e.g., HTMX) can be added later without disrupting existing ones.
@@ -226,7 +226,7 @@ The `vanilla-html` app uses only native HTML elements (`<input type="date">`, `<
 3. **Element identification is outcome-based.** The framework identifies elements by accessible name, role, label association, visible text, or other semantic anchors that survive component library changes — not by tag name or CSS class.
 4. **Interaction model is technology-aware.** The test framework abstracts over different DOM structures to verify identical outcomes. For example, selecting a date in a native `<input type="date">` uses `page.fill()`, while a React datepicker requires clicking to open, navigating months, and clicking a day cell. A native `<select>` uses `selectOption()`, while MUI Select requires clicking to open a listbox popup and clicking an option.
 
-> **Why this matters:** The v0.1 apps used native `<select>`, native `<table>`, and native `<input>` everywhere. Phase 10 replaced native elements with component libraries, breaking that false confidence and forcing the framework to prove its cross-technology thesis. **Result: 700/700 integration tests pass across all 7 apps with genuinely different DOM structures.**
+> **Why this matters:** The v0.1 apps used native `<select>`, native `<table>`, and native `<input>` everywhere. Phase 10 replaced native elements with component libraries, breaking that false confidence and forcing the framework to prove its cross-technology thesis. **Result: 1,043/1,043 integration tests pass across all 7 apps with genuinely different DOM structures.**
 
 #### Component Matrix _(verified — Phase 10 complete)_
 
@@ -239,7 +239,7 @@ The `vanilla-html` app uses only native HTML elements (`<input type="date">`, `<
 | Data table | Native `<table>` | MUI `<Table>` + `<TableSortLabel>` | Vuetify `<v-data-table>` | `<mat-table>` + `matSort` | Raw `<table>` (Bits UI has no table) | MUI `<Table>` + `<TableSortLabel>` | Raw `<table>` (Shoelace has no table) |
 | Date picker | Native `<input type="date">` | `react-datepicker` | `@vuepic/vue-datepicker` | Angular Material `mat-datepicker` | `flatpickr` | `react-datepicker` | Native `<input type="date">` |
 | Modal / Dialog | Native `<dialog>` | MUI `<Dialog>` | Vuetify `<v-dialog>` | Angular CDK `Dialog` | Bits UI `<Dialog.Root>` | MUI `<Dialog>` | Custom `<general-store-dialog>` (Lit web component) |
-| Toast | Custom `<div>` | MUI `<Snackbar>` + `<Alert>` | Vuetify `<v-snackbar>` | Angular Material `MatSnackBar` | `svelte-french-toast` | `react-hot-toast` | Custom `<general-store-toast>` (Lit web component) |
+| Toast | Custom `<div>` | MUI `<Snackbar>` + `<Alert>` | Vuetify `<v-snackbar>` | Custom `<div>` toast | Custom `$state`-based toast | Custom `<div>` toast | Custom `<general-store-toast>` (Lit web component) |
 
 > **Vanilla stays fully native.** It is the baseline — raw HTML with zero libraries.
 >
@@ -257,7 +257,7 @@ The framework's testing strategy is:
 
 This is how production test frameworks operate. The framework exposes a component-aware abstraction layer (e.g., `datePicker.select(date)` that dispatches to the right interaction strategy, `group.write("Category", "Electronics")` that handles both native `<select>` and MUI Select via the handler registry).
 
-> **The 700 integration tests served as the regression safety net.** As each app migrated to its component library, tests that broke revealed real gaps in the framework's handler registry and adapter layer. This breakage was the point — it was the signal that the framework was being tested against genuinely different DOM. All 700 tests now pass across all 7 apps.
+> **The 1,043 integration tests (149 tests × 7 apps) served as the regression safety net.** As each app migrated to its component library, tests that broke revealed real gaps in the framework's handler registry and adapter layer. This breakage was the point — it was the signal that the framework was being tested against genuinely different DOM. All 924 tests now pass across all 7 apps.
 
 ---
 
@@ -304,7 +304,7 @@ npm start     # serves on assigned port
 
 ### 7.5 Dependency Management
 
-- **Lockfiles committed:** Every app's `package-lock.json` must be committed to the repo. This ensures reproducible installs across machines.
+- **Lockfiles committed:** Every app's `package-lock.json` must be committed to the repo. This ensures reproducible installs across machines. Workspace packages (`framework`, `tools/crawler`) are managed by the root lockfile via npm workspaces and do not require standalone lockfiles.
 - **Major versions pinned:** Use exact or tilde (`~`) ranges in `package.json` for framework dependencies (React, Vue, Angular, Svelte, Next.js, Lit, HTMX). Avoid caret (`^`) for major framework packages to prevent unintended breaking upgrades.
 - **Shared tool versions:** All Vite-based apps (React, Vue, Svelte) should use the same Vite major version. Document the version in each app's README.
 - **Upgrade policy:** Dependency upgrades are intentional, not automatic. When upgrading, update one app first, verify the UI contract still holds, then propagate to the others.
@@ -321,7 +321,7 @@ This library is considered **complete for v0.1** when:
 - [x] Each app has a local `README.md` documenting the technology, start command, and any caveats
 - [x] All 7 apps can be started simultaneously via a root-level `start:all` script
 - [x] Framework library (§11) is implemented and validated against vanilla-html
-- [x] All 7 apps migrated to idiomatic component libraries (Phase 10) — 700/700 integration tests + 219 unit tests passing
+- [x] All 7 apps migrated to idiomatic component libraries (Phase 10) — 1,043/1,043 integration tests + 263 unit tests passing
 - [x] Framework handles genuinely different DOM structures across 6 component libraries — library-specific logic is isolated in adapters (DatePickerAdapter, SelectAdapter) while detection uses generic ARIA/role-based strategies
 
 ---
@@ -356,7 +356,7 @@ The following were originally open questions. Decisions recorded here for tracea
 | Q4 | Intentional bug page? | **Deferred — not in v0.1.** | The v0.1 focus is on building fully working UI contract implementations. An intentional bugs page can be added in a future version when the external test framework needs to validate failure detection. |
 | Q5 | Node version pinning? | **Yes — `.nvmrc` at repo root, pinned to Node 20 LTS.** | 8 apps with independent `node_modules` and no version pinning will hit "works on my machine" issues. One file, zero ongoing cost. |
 | Q6 | HTMX server dependency vs. G4 (no backend)? | **Permitted — use a minimal static file server (~30 lines Express) to serve HTML partials from a `/partials` directory.** | This is functionally identical to what `npx serve` does — a file server, not a backend. The partials are static assets, not API responses. HTMX's value is server-driven DOM updates; a client-only fake would test nothing `vanilla-html` doesn't already cover. **Acknowledged asymmetry:** the HTMX app is the only app requiring a custom `server.js` — every other app uses an off-the-shelf tool (Vite, `serve`, `next dev`, `ng serve`). The Express server must remain stateless, perform zero processing, and be documented in the HTMX app's README with a code review note confirming it is a pure file server. |
-| Q7 | Next.js static export vs. SSR? | **SSR dev mode (`next dev -p 3006`).** | `output: 'export'` eliminates hydration and SSR behavior — the very things that justify Next.js's inclusion. `next dev` is a dev server (same as Vite), not a production backend. No API routes, no database — still satisfies G4. |
+| Q7 | Next.js static export vs. SSR? | **Production build (`next build && next start -p 3006`).** | `output: 'export'` eliminates hydration and SSR behavior — the very things that justify Next.js's inclusion. The production build exercises real SSR + hydration. No API routes, no database — still satisfies G4. |
 | Q8 | Lit Shadow DOM element identification? | **Dual placement — structural elements in light DOM (identifiable by semantic HTML), interactive elements inside shadow root (identifiable by semantic HTML, ARIA, and CSS classes).** | See §6.5. Putting everything on the host skips shadow DOM testing. Putting everything inside breaks the shared contract for structural selectors. The split gives the test framework both scenarios. |
 
 ---

@@ -93,4 +93,27 @@ test.describe("Table — data, headers, sorting", () => {
     const sorted = [...categories].sort();
     expect(categories).toEqual(sorted);
   });
+
+  test("sort by name third click returns to ascending", async ({ page }) => {
+    const home = homePage(page);
+    // P3-151: verify third click restores ascending order
+    await home.productTable.sort("name"); // ascending
+    await home.productTable.sort("name"); // descending
+    await home.productTable.sort("name"); // ascending again
+    const rows = await home.productTable.rows();
+    expect(rows[0].Name).toBe("Bluetooth Keyboard");
+    expect(rows[rows.length - 1].Name).toBe("Wireless Mouse");
+  });
+
+  test("sort via keyboard by pressing Enter on column header", async ({ page }) => {
+    const home = homePage(page);
+    // P3-175: verify keyboard-triggered sort works
+    const tableLocator = await home.productTable.locator();
+    const nameHeader = tableLocator.locator("th", { hasText: "Name" });
+    await nameHeader.focus();
+    await nameHeader.press("Enter");
+    const rows = await home.productTable.rows();
+    expect(rows[0].Name).toBe("Bluetooth Keyboard");
+    expect(rows[rows.length - 1].Name).toBe("Wireless Mouse");
+  });
 });

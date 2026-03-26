@@ -63,6 +63,8 @@ test.describe("By — identification strategies", () => {
     const by = By.any(By.css(".a"), By.css(".b"));
     const loc = await by.resolve(page);
     expect(loc).toBeDefined();
+    // Locator exists but may match zero elements — verify it doesn't throw
+    expect(await loc.count()).toBeGreaterThanOrEqual(0);
   });
 
   test("By.first resolves in strict priority order", async ({ page }) => {

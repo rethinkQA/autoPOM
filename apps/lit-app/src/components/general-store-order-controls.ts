@@ -26,7 +26,7 @@ export class GeneralStoreOrderControls extends LitElement {
 
   private _onShippingChange(e: Event): void {
     this.dispatchEvent(new CustomEvent('shipping-change', {
-      detail: (e.target as any).value, bubbles: true, composed: true,
+      detail: (e.target as HTMLInputElement).value, bubbles: true, composed: true,
     }));
   }
 

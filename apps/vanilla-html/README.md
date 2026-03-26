@@ -50,6 +50,7 @@ vanilla-html/
 ├── index.html      ← single page, all structure
 ├── style.css       ← all styles
 ├── app.js          ← all behavior (no modules, single file)
+├── shared.js       ← auto-generated IIFE bundle from shared/data.ts + shared/logic.ts
 ├── package.json    ← start script only
 └── README.md       ← this file
 ```

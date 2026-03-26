@@ -7,6 +7,7 @@ Runtime crawler that discovers **groups and containers** on a live page and emit
 - **Groups, not elements.** The framework's `group.write()` auto-detects element types at runtime via the handler registry. The crawler only finds the named regions of the page.
 - **4 special wrappers.** Only `table()`, `dialog()`, `toast()`, and `datePicker()` need explicit detection because they have interaction semantics that `group()` can't express.
 - **User-driven multi-pass.** The crawler doesn't automate interactions. Put the page in a desired state (open a dialog, reveal a section), then re-run. The manifest is append-only.
+- **Record mode.** A human-guided recording mode (`record` subcommand) captures conditionally-existing DOM (dialogs, toasts, overlays) by injecting a MutationObserver and letting the user interact naturally in a headed browser. Uses a diff-based harvest approach for Shadow DOM compatibility. See Phase 14 in [ROADMAP.md](../../docs/ROADMAP.md).
 - **Shadow DOM piercing.** The crawler traverses Shadow DOM boundaries, making it work with web component frameworks (Lit/Shoelace).
 
 ## Installation
@@ -29,6 +30,13 @@ npx pw-crawl http://localhost:3001 -o manifest.json --pass 2
 
 # Limit crawl to a section
 npx pw-crawl http://localhost:3001 --scope ".main-content"
+
+# Record mode: human-guided session captures conditional DOM
+# Opens headed browser, injects observer, user interacts naturally
+npx pw-crawl record http://localhost:3001 -o manifest.json
+
+# Record with scope
+npx pw-crawl record http://localhost:3001 --scope ".main-content" -o manifest.json
 
 # Diff current DOM against existing manifest (CI drift detection)
 npx pw-crawl http://localhost:3001 --diff manifest.json
@@ -70,7 +78,7 @@ npx pw-crawl generate manifest.json --framework-import ../../src/index.js -o pag
 
 ```typescript
 import { chromium } from "playwright";
-import { crawlPage, diffPage } from "@playwright-elements/crawler";
+import { crawlPage, diffPage, recordPage } from "@playwright-elements/crawler";
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -82,6 +90,13 @@ console.log(JSON.stringify(manifest, null, 2));
 
 // Multi-pass merge
 const pass2 = await crawlPage(page, { pass: 2 }, manifest);
+
+// Record mode: capture groups that appear after user interaction
+const recorded = await recordPage(page, async (p) => {
+  // Interact with the page to reveal conditional DOM
+  await p.getByText("Bluetooth Keyboard").click(); // opens dialog
+  await p.getByRole("button", { name: "Add to Cart" }).first().click(); // triggers toast
+});
 
 // Diff against existing manifest
 const diff = await diffPage(page, manifest);
@@ -115,6 +130,16 @@ await browser.close();
       "wrapperType": "table",
       "discoveredIn": "pass-1",
       "visibility": "static",
+      "lastSeen": "2026-03-16T..."
+    },
+    {
+      "label": "Product Details",
+      "selector": "dialog[aria-label=\"Product Details\"]",
+      "groupType": "dialog",
+      "wrapperType": "dialog",
+      "discoveredIn": "record",
+      "visibility": "exploration",
+      "triggeredBy": "click → Bluetooth Keyboard",
       "lastSeen": "2026-03-16T..."
     }
   ],
@@ -193,12 +218,12 @@ The manifest uses **append-only** merging across multiple crawler passes:
 | Framework | Notes |
 |-----------|-------|
 | **Vanilla HTML** | All groups discoverable in pass 1, including `<dialog>` and toast |
-| **React (MUI)** | Dialog portaled to `<body>` — needs pass 2 after opening |
-| **Vue (Vuetify)** | Dialog/toast use overlay teleport — needs pass 2 |
-| **Angular (Material)** | Dialog/toast in CDK overlay — needs pass 2 |
-| **Svelte** | Dialog/toast conditionally rendered — needs pass 2 |
+| **React (MUI)** | Dialog portaled to `<body>` — needs pass 2 or `record` after opening |
+| **Vue (Vuetify)** | Dialog/toast use overlay teleport — needs pass 2 or `record` |
+| **Angular (Material)** | Dialog/toast in CDK overlay — needs pass 2 or `record` |
+| **Svelte** | Dialog/toast conditionally rendered — needs pass 2 or `record` |
 | **Next.js** | Same as React (MUI) |
-| **Lit (Shoelace)** | All content in Shadow DOM (pierced automatically); dialog conditionally rendered |
+| **Lit (Shoelace)** | All content in Shadow DOM (pierced automatically); dialog — needs pass 2 or `record` |
 
 ## Test Suite
 
@@ -213,18 +238,20 @@ npx playwright test --project=vanilla
 npx playwright test
 ```
 
-**Current: 626 passed, 18 skipped** (67 unit + 559 integration; skips are framework-appropriate dialog/toast expectations)
+**Current: 410 passed** (81 unit + 329 integration)
 
 ## Architecture
 
 ```
 tools/crawler/
-├── bin/pw-crawl.ts           # CLI entry point (crawl + generate subcommands)
+├── bin/pw-crawl.ts           # CLI entry point (crawl + generate + record subcommands)
 ├── src/
 │   ├── index.ts              # Public API exports
 │   ├── types.ts              # Manifest types & schema
 │   ├── discover.ts           # Group discovery (core algorithm)
 │   ├── crawler.ts            # High-level crawl orchestration
+│   ├── recorder.ts           # Record mode — MutationObserver + diff-based harvest
+│   ├── record-api.ts         # Convenience API for programmatic recording
 │   ├── merge.ts              # Manifest merge & diff logic
 │   ├── network.ts            # API dependency observation
 │   ├── emitter.ts            # Page object emitter (manifest → TypeScript)
@@ -235,9 +262,13 @@ tools/crawler/
 │   ├── crawl.spec.ts         # Group discovery integration tests
 │   ├── cross-app.spec.ts     # Cross-framework validation
 │   ├── diff.spec.ts          # Manifest diff tests
+│   ├── drift-check.spec.ts   # Drift detection tests
+│   ├── validation.spec.ts    # Manifest validation tests
 │   ├── merge.spec.ts         # Merge logic unit tests
-│   ├── emitter.spec.ts       # Emitter + template detection unit tests
-│   └── naming.spec.ts        # Naming / route inference unit tests
+│   ├── unit/
+│   │   ├── emitter.spec.ts   # Emitter + template detection unit tests
+│   │   ├── merge.spec.ts     # Merge logic unit tests
+│   │   └── naming.spec.ts    # Naming / route inference unit tests
 ├── playwright.config.ts
 ├── playwright.unit.config.ts
 ├── package.json

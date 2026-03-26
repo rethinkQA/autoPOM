@@ -7,6 +7,7 @@
 
 import { ElementNotFoundError, AmbiguousMatchError } from "../errors.js";
 import type { GroupElement, GroupMethodDeps, BuildGroupFn } from "./group-types.js";
+import type { ActionOptions } from "../handler-types.js";
 
 /**
  * Create the `find` method for a GroupElement.
@@ -18,8 +19,9 @@ import type { GroupElement, GroupMethodDeps, BuildGroupFn } from "./group-types.
 export function createGroupFind(
   deps: GroupMethodDeps,
   buildGroup: BuildGroupFn,
-): (text: string) => Promise<GroupElement> {
-  return async function find(text: string): Promise<GroupElement> {
+): (text: string, options?: ActionOptions) => Promise<GroupElement> {
+  return async function find(text: string, options?: ActionOptions): Promise<GroupElement> {
+    const timeout = options?.timeout;
     const container = await deps.loc();
     const filtered = container.filter({
       has: container.page().getByText(text, { exact: true }),

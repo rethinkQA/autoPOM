@@ -1,0 +1,121 @@
+# Cross-browser testing — Firefox & WebKit
+#
+# Runs weekly to catch rendering differences across browsers.
+# Also triggers on PRs that modify framework source or tests.
+# Can also be triggered manually via workflow_dispatch.
+
+name: Cross-Browser Tests
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+  pull_request:
+    branches: [main]
+    paths:
+      - "framework/src/**"
+      - "framework/tests/**"
+  workflow_dispatch:
+
+concurrency:
+  group: cross-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-cross-browser:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install root + workspace deps
+        run: npm ci
+
+      - name: Install app deps
+        run: npm run install:all
+
+      - name: Cache app node_modules
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            apps/react-app/node_modules
+            apps/vue-app/node_modules
+            apps/angular-app/node_modules
+            apps/svelte-app/node_modules
+            apps/nextjs-app/node_modules
+            apps/lit-app/node_modules
+            apps/vanilla-html/node_modules
+          key: app-deps-${{ runner.os }}-${{ hashFiles('apps/*/package-lock.json') }}
+          restore-keys: |
+            app-deps-${{ runner.os }}-
+
+      - name: Generate vanilla shared bundle
+        run: npm run generate-shared
+
+      - name: Type-check framework
+        run: cd framework && npx tsc --noEmit -p tsconfig.check.json
+
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(cd framework && npx playwright --version | tr ' ' '-')" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}-${{ runner.os }}
+
+      - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: cd framework && npx playwright install --with-deps chromium "${{ matrix.browser }}"
+
+      - name: Install Playwright deps (cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: cd framework && npx playwright install-deps chromium "${{ matrix.browser }}"
+
+      - name: Start all app servers
+        run: |
+          npm run start:all &
+          echo $! > /tmp/app-servers-crossbrowser.pid
+        env:
+          CI: true
+
+      - name: Wait for servers
+        run: npm run healthcheck
+
+      - name: Run integration tests (${{ matrix.browser }})
+        run: cd framework && BROWSERS="${{ matrix.browser }}" npx playwright test
+
+      - name: Stop app servers
+        if: always()
+        run: |
+          if [ -f /tmp/app-servers-crossbrowser.pid ]; then
+            PID=$(cat /tmp/app-servers-crossbrowser.pid)
+            if [[ "$PID" =~ ^[0-9]+$ ]]; then
+              kill "$PID" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cross-browser-${{ matrix.browser }}-results
+          path: |
+            framework/test-results/
+            framework/playwright-report/
+          retention-days: 7

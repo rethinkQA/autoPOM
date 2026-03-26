@@ -1,9 +1,8 @@
 {
   "name": "@playwright-elements/core",
   "version": "0.1.0",
-  "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "description": "Label-first, auto-detecting element interaction library for Playwright",
   "license": "MIT",
@@ -11,46 +10,53 @@
   "files": [
     "dist/src/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js",
-      "types": "./dist/src/index.d.ts"
+      "default": "./dist/src/index.js"
     },
     "./test-fixture": {
+      "types": "./dist/src/test-fixture.d.ts",
       "import": "./dist/src/test-fixture.js",
-      "types": "./dist/src/test-fixture.d.ts"
+      "default": "./dist/src/test-fixture.js"
     },
     "./extend": {
+      "types": "./dist/src/extend.d.ts",
       "import": "./dist/src/extend.js",
-      "types": "./dist/src/extend.d.ts"
+      "default": "./dist/src/extend.js"
     },
     "./internals": {
+      "types": "./dist/src/internals.d.ts",
       "import": "./dist/src/internals.js",
-      "types": "./dist/src/internals.d.ts"
+      "default": "./dist/src/internals.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepublishOnly": "rm -rf dist && tsc -p tsconfig.build.json",
     "test": "playwright test --project=vanilla",
     "test:unit": "playwright test --config playwright.unit.config.ts",
     "test:all": "playwright test",
+    "test:cross-browser": "BROWSERS=firefox,webkit playwright test",
     "test:headed": "playwright test --project=vanilla --headed",
     "test:ui": "playwright test --ui",
     "docs": "typedoc",
     "docs:open": "typedoc && open docs/api/index.html"
   },
   "devDependencies": {
-    "@playwright/test": "~1.50.0",
-    "@types/node": "^25.3.3",
-    "typedoc": "^0.28.17",
-    "typescript": "~5.7.0"
+    "@playwright/test": "~1.58.0",
+    "@types/node": "~20.19.0",
+    "typedoc": "~0.28.17",
+    "typescript": "~5.9.3"
   },
   "peerDependencies": {
-    "@playwright/test": ">=1.40.0"
+    "@playwright/test": ">=1.58.0 <2.0.0"
   },
   "keywords": [
     "playwright",

@@ -20,15 +20,29 @@ CRAWLER_DIR="$(dirname "$SCRIPT_DIR")"
 MANIFESTS_DIR="$CRAWLER_DIR/manifests"
 BIN="$CRAWLER_DIR/bin/pw-crawl.ts"
 
-APPS=(
-  "vanilla:3001"
-  "react:3002"
-  "vue:3003"
-  "angular:3004"
-  "svelte:3005"
-  "nextjs:3006"
-  "lit:3007"
-)
+# Dynamically read the app list from the shared source of truth (P2-82).
+# Uses a Node one-liner to avoid hardcoding app names/ports here.
+SHARED_APPS_TS="$CRAWLER_DIR/../../shared/apps.ts"
+if [[ ! -f "$SHARED_APPS_TS" ]]; then
+  echo "Error: shared/apps.ts not found at $SHARED_APPS_TS"
+  exit 1
+fi
+# Read apps into array (compatible with Bash 3.x on macOS)
+APPS=()
+while IFS= read -r line; do
+  APPS+=("$line")
+done < <(node -e "
+  const fs = require('fs');
+  const src = fs.readFileSync('$SHARED_APPS_TS', 'utf8');
+  const re = /name:\\s*\"(\\w+)\",\\s*port:\\s*(\\d+)/g;
+  let m; while ((m = re.exec(src)) !== null) console.log(m[1] + ':' + m[2]);
+")
+
+# P3-140: Verify curl is available before using it
+if ! command -v curl &>/dev/null; then
+  echo "Error: curl is not available. Install curl or use a different base image."
+  exit 1
+fi
 
 PASSED=0
 FAILED=0

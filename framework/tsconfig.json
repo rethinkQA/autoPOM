@@ -11,15 +11,11 @@
     "rootDir": ".",
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "paths": {
-      "@src/*": ["./src/*"]
-    }
+    "sourceMap": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": [
     "node_modules",
-    "dist",
-    "tests/functional-swap.spec.ts"
+    "dist"
   ]
 }

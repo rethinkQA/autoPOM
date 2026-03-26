@@ -1,5 +1,6 @@
 import { test, expect } from "../src/test-fixture.js";
 import { homePage } from "./pages/home.js";
+import { PRODUCTS } from "@playwright-elements/shared/data";
 
 test.describe("Table — findRow scoped access", () => {
   test.beforeEach(async ({ page }) => {
@@ -8,10 +9,12 @@ test.describe("Table — findRow scoped access", () => {
 
   test("findRow by name and read cell values", async ({ page }) => {
     const home = homePage(page);
-    const row = await home.productTable.findRow({ name: "Wireless Mouse" });
-    expect(await row.get("Price")).toBe("$29.99");
-    expect(await row.get("Category")).toBe("Electronics");
-    expect(await row.get("Stock")).toBe("Yes");
+    // P3-203: use shared data source instead of hardcoded product names
+    const mouse = PRODUCTS.find((p) => p.name === "Wireless Mouse")!;
+    const row = await home.productTable.findRow({ name: mouse.name });
+    expect(await row.get("Price")).toBe(`$${mouse.price.toFixed(2)}`);
+    expect(await row.get("Category")).toBe(mouse.category);
+    expect(await row.get("Stock")).toBe(mouse.inStock ? "Yes" : "No");
   });
 
   test("findRow by name and click Add to Cart in row", async ({ page }) => {
@@ -55,8 +58,10 @@ test.describe("Table — findRow scoped access", () => {
 
   test("findRow on out-of-stock product", async ({ page }) => {
     const home = homePage(page);
-    const row = await home.productTable.findRow({ name: "USB-C Hub" });
-    expect(await row.get("Stock")).toBe("No");
-    expect(await row.get("Price")).toBe("$39.99");
+    // P3-203: derive expected values from shared data
+    const hub = PRODUCTS.find((p) => p.name === "USB-C Hub")!;
+    const row = await home.productTable.findRow({ name: hub.name });
+    expect(await row.get("Stock")).toBe(hub.inStock ? "Yes" : "No");
+    expect(await row.get("Price")).toBe(`$${hub.price.toFixed(2)}`);
   });
 });

@@ -7,8 +7,8 @@ A minimal "GeneralStore" storefront built with **Lit 3** web components. This ap
 | Item | Version |
 |------|---------|
 | Lit | ~3.2.1 |
-| Vite | ~6.0.0 |
-| TypeScript | ~5.6.0 |
+| Vite | ~7.3.1 |
+| TypeScript | ~5.9.3 |
 | Node.js | 20 LTS (see root `.nvmrc`) |
 
 ## Quick Start

@@ -8,6 +8,7 @@ build/
 .angular/
 .svelte-kit/
 .vite/
+*.tsbuildinfo
 
 # IDE / Editor
 .vscode/

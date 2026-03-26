@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+  import { PRODUCTS, CATEGORIES, SHIPPING, type Product, type ShippingKey } from '@shared/data';
   import {
     filterAndSortProducts, toggleSort, cartMessage,
     formatDate as sharedFormatDate, type SortKey,
@@ -20,7 +20,7 @@
 
   // ===== Interactive state =====
   let quantity = $state(1);
-  let shipping = $state('standard');
+  let shipping: ShippingKey = $state('standard');
   let deliveryDate = $state<Date | null>(null);
   let actionOutput = $state('');
   let validationMsg = $state('');

@@ -36,9 +36,23 @@ export function createBatchWrite(
 
     // Phase 2: Validate types and write sequentially (writes may have
     // ordering dependencies or shared DOM side-effects).
+    // Re-detect the handler before each write because a prior write may
+    // have changed the element's type (e.g. toggling a checkbox that
+    // swaps a text input to a select). Re-using the Phase 1 handler
+    // would invoke the wrong set() function (P1-75).
     for (let i = 0; i < entries.length; i++) {
       const [label, value] = entries[i];
-      const { el, handler } = resolved[i];
+      const { el } = resolved[i];
+      let { handler } = resolved[i];
+      // Re-detect if the context supports it (auto-detected handlers only)
+      if ("type" in handler && deps.ctx.handlers.detectHandler) {
+        try {
+          const fresh = await deps.ctx.handlers.detectHandler(el);
+          handler = fresh;
+        } catch {
+          // Detection failed — fall back to Phase 1 handler.
+        }
+      }
       validateValueType(label, value, handler);
       await handler.set(el, value, { timeout });
     }
@@ -78,7 +92,7 @@ export function createBatchRead(
       // actual returned value matches — catches buggy get() impls
       // before they corrupt the FieldValues dictionary.
       if (handler.valueKind) {
-        validateReturnedValue(labels[i], value, handler.valueKind, handler);
+        validateReturnedValue(labels[i], value, handler.valueKind, handler, "readAll");
       }
 
       result[labels[i]] = value;

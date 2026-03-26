@@ -32,13 +32,13 @@ export class GeneralStoreFilterBar extends LitElement {
 
   private _onCategoryChange(e: Event): void {
     this.dispatchEvent(new CustomEvent('category-change', {
-      detail: (e.target as any).value, bubbles: true, composed: true,
+      detail: (e.target as HTMLSelectElement).value, bubbles: true, composed: true,
     }));
   }
 
   private _onStockToggle(e: Event): void {
     this.dispatchEvent(new CustomEvent('stock-toggle', {
-      detail: (e.target as any).checked, bubbles: true, composed: true,
+      detail: (e.target as HTMLInputElement).checked, bubbles: true, composed: true,
     }));
   }
 
@@ -58,7 +58,9 @@ export class GeneralStoreFilterBar extends LitElement {
         </div>
 
         <div class="filter-group">
+          <label for="category-select">Category</label>
           <sl-select
+            id="category-select"
             label="Category"
             .value=${this.category}
             @sl-change=${this._onCategoryChange}

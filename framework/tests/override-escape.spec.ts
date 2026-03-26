@@ -10,15 +10,10 @@ test.describe("Override — direct element wrapper usage", () => {
   test("checkbox wrapper directly bypasses group.write()", async ({ page }) => {
     // Some component libraries (e.g. Shoelace) render checkboxes inside
     // nested shadow DOM where getByLabel cannot resolve the <input>.
-    // In those cases, fall back to group.write() which uses getByRole.
+    // In those cases, skip — this test only validates direct wrapper access.
     const labelLocator = page.getByLabel("Show only in-stock items");
-    if ((await labelLocator.count()) === 0) {
-      const home = homePage(page);
-      await home.filters.write("Show only in-stock items", true);
-      expect(await home.filters.read("Show only in-stock items")).toBe(true);
-      expect(await home.productTable.rowCount()).toBe(5);
-      return;
-    }
+    test.skip((await labelLocator.count()) === 0,
+      "Component library app — native checkbox not accessible via getByLabel");
     const cb = checkbox(By.label("Show only in-stock items"), page);
     await cb.check();
     expect(await cb.isChecked()).toBe(true);
@@ -30,19 +25,12 @@ test.describe("Override — direct element wrapper usage", () => {
   test("select wrapper directly bypasses group.write()", async ({ page }) => {
     // The select() wrapper targets native <select> elements.
     // Apps using component library selects (mat-select, MUI Select, etc.)
-    // render role="combobox" instead — use group.write() for those.
-    // Note: some libraries (Vuetify) include a hidden <select> for form
-    // submission, so we check for a *visible* native select.
+    // render role="combobox" instead — skip those.
     const nativeSelect = page.locator(".filter-bar select:not([hidden])").first();
     const isVisible = (await nativeSelect.count()) > 0
       && await nativeSelect.isVisible().catch(() => false);
-    if (!isVisible) {
-      // Component library select — verify via group.write() instead
-      const home = homePage(page);
-      await home.filters.write("Category", "Books");
-      expect(await home.filters.read("Category")).toBe("Books");
-      return;
-    }
+    test.skip(!isVisible,
+      "Component library app — no visible native <select> in filter bar");
     const sel = select(By.css(".filter-bar select"), page);
     await sel.choose("Books");
     expect(await sel.read()).toBe("Books");

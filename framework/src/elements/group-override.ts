@@ -14,6 +14,17 @@ import type { GroupElement, GroupMethodDeps, BuildGroupFn } from "./group-types.
  * Returns an immutable builder: resolving the handler string (if any),
  * creating a new overrides Map, and returning a fresh GroupElement
  * so shared state is never mutated.
+ *
+ * **Important:** The returned GroupElement is a *new* instance —
+ * callers MUST use the return value. Calling `group.overrideHandler()`
+ * without capturing the result is a no-op.
+ *
+ * ```ts
+ * // ✅ Correct — captures the new group
+ * const g2 = group.overrideHandler("Email", "input");
+ * // ❌ Bug — discarded return value, original group unchanged
+ * group.overrideHandler("Email", "input");
+ * ```
  */
 export function createGroupOverride(
   deps: GroupMethodDeps,

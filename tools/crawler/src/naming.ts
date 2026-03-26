@@ -16,6 +16,8 @@ const RESERVED_WORDS = new Set([
   "private", "protected", "public", "return", "static", "super",
   "switch", "this", "throw", "true", "try", "typeof", "undefined",
   "var", "void", "while", "with", "yield",
+  // Modern keywords that cause confusion as property names
+  "await", "async", "of", "from",
   // Common Playwright/framework names we don't want to shadow
   "page", "test", "expect",
 ]);
@@ -27,7 +29,7 @@ const RESERVED_WORDS = new Set([
  *   "Shipping Method"     → "shippingMethod"
  *   "product-modal"       → "productModal"
  *   "toast-notification"  → "toastNotification"
- *   "GeneralStore Vanilla HTML" → "generalstoreVanillaHtml"
+ *   "GeneralStore Vanilla HTML" → "generalStoreVanillaHtml"
  *   "nav"                 → "nav"
  *   "main"                → "mainContent" (reserved word gets suffix)
  *   "footer"              → "footer"
@@ -39,8 +41,11 @@ export function labelToPropertyName(label: string): string {
     return "unnamed";
   }
 
-  // Strip non-ASCII characters (©, —, ⇅, emoji, etc.) that can't appear in JS identifiers
-  const ascii = label.replace(/[^\x20-\x7E]/g, " ");
+  // Normalize Unicode: decompose accented characters (NFD), strip combining
+  // marks to produce ASCII-safe equivalents (e.g. é→e, ü→u), then remove
+  // remaining non-printable-ASCII characters (CJK, emoji, symbols, etc.).
+  const normalized = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const ascii = normalized.replace(/[^\x20-\x7E]/g, " ");
 
   // If stripping left nothing meaningful, fall back to "unnamed"
   if (!ascii.trim()) {
@@ -50,7 +55,7 @@ export function labelToPropertyName(label: string): string {
   // Split on whitespace, hyphens, underscores, dots, and camelCase boundaries
   const words = ascii
     .replace(/([a-z])([A-Z])/g, "$1 $2") // camelCase split
-    .split(/[\s\-_.,;:!?'"()\[\]{}\/\\]+/)
+    .split(/[\s\-_.,;:!?'"()[\]{}/\\]+/)
     .filter((w) => w.length > 0);
 
   if (words.length === 0) {
@@ -81,20 +86,20 @@ export function labelToPropertyName(label: string): string {
 
 /**
  * Deduplicate property names by appending numeric suffixes.
- * Returns a Map from original label → unique property name.
+ * Returns an array of unique property names indexed by position.
  */
 export function deduplicateNames(
   labels: string[],
   overrides?: Record<string, string>,
-): Map<string, string> {
-  const result = new Map<string, string>();
+): string[] {
+  const result: string[] = [];
   const usedNames = new Set<string>();
 
   for (const label of labels) {
     // Check for override first
     if (overrides?.[label]) {
       const name = overrides[label];
-      result.set(label, name);
+      result.push(name);
       usedNames.add(name);
       continue;
     }
@@ -110,7 +115,7 @@ export function deduplicateNames(
       name = `${name}${suffix}`;
     }
 
-    result.set(label, name);
+    result.push(name);
     usedNames.add(name);
   }
 
@@ -153,7 +158,7 @@ export function inferRouteName(url: string): string {
 
     // If it looks like a detail page (last segment is numeric or UUID)
     const lastSegment = segments[segments.length - 1];
-    if (/^[0-9]+$/.test(lastSegment) || /^[0-9a-f-]{36}$/.test(lastSegment)) {
+    if (/^[0-9]+$/.test(lastSegment) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lastSegment)) {
       segments[segments.length - 1] = "detail";
     }
 

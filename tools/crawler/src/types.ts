@@ -28,10 +28,10 @@ export type GroupType =
   | "generic";
 
 /** The wrapper type for special elements that need typed factories. */
-export type WrapperType = "group" | "table" | "dialog" | "toast";
+export type WrapperType = "group" | "table" | "dialog" | "toast" | "datePicker";
 
 /** Visibility classification of a group. */
-export type Visibility = "static" | "dynamic";
+export type Visibility = "static" | "dynamic" | "exploration";
 
 // ── Discovered group entry ──────────────────────────────────
 
@@ -59,6 +59,9 @@ export interface ManifestGroup {
 
   /** Optional notes (e.g., "needs-adapter" for date pickers). */
   notes?: string;
+
+  /** Description of the user action that triggered this group's appearance (record mode only). */
+  triggeredBy?: string;
 }
 
 // ── API dependency ──────────────────────────────────────────
@@ -114,6 +117,19 @@ export interface CrawlOptions {
   observeNetwork?: boolean;
 }
 
+// ── Record options ──────────────────────────────────────────
+
+export interface RecordOptions {
+  /** Limit recording to elements within this CSS selector. */
+  scope?: string;
+
+  /** An existing manifest to merge recorded groups into. */
+  existing?: CrawlerManifest | null;
+
+  // Note: network observation is only available via `crawlPage()` (CrawlOptions.observeNetwork).
+  // Removed the unused `observeNetwork` field that was declared but never wired up in `recordPage()`.
+}
+
 // ── Diff result ─────────────────────────────────────────────
 
 export interface ManifestDiff {
@@ -123,8 +139,8 @@ export interface ManifestDiff {
   /** Groups in the manifest but not found in the current DOM. */
   removed: ManifestGroup[];
 
-  /** Groups that exist in both but with updated labels or attributes. */
-  changed: Array<{ selector: string; before: ManifestGroup; after: ManifestGroup }>;
+  /** Groups that exist in both but with updated selectors or attributes. */
+  changed: Array<{ mergeKey: string; before: ManifestGroup; after: ManifestGroup }>;
 
   /** True if the manifest matches the current DOM exactly. */
   unchanged: boolean;

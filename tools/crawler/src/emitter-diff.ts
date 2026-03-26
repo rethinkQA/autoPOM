@@ -21,17 +21,54 @@ export function extractProperties(source: string): Map<string, string> {
   const props = new Map<string, string>();
 
   // Match property declarations: `propName: factory(...)` or `propName: factory(...),`
-  const propRegex = /^\s+(\w+):\s*(.+?),?\s*(?:\/\/.*)?$/gm;
+  // Uses a parenthesis-balancing approach to handle multiline factory calls.
+  const lineRegex = /^\s+(\w+):\s*/gm;
 
   let match: RegExpExecArray | null;
-  while ((match = propRegex.exec(source)) !== null) {
+  while ((match = lineRegex.exec(source)) !== null) {
     const name = match[1];
-    const expr = match[2].trim().replace(/,$/, "");
 
-    // Skip spread patterns and comments
+    // Skip spread patterns and keywords
     if (name === "return" || name === "const") continue;
 
-    props.set(name, expr);
+    // Extract the expression value starting after the colon, balancing parentheses.
+    // P2-162: Track string-literal state to skip parens inside "..." or '...'
+    const exprStart = match.index + match[0].length;
+    let depth = 0;
+    let inString: string | null = null; // tracks quote character (' or ")
+    let i = exprStart;
+    for (; i < source.length; i++) {
+      const ch = source[i];
+
+      // Handle string literals — skip paren counting inside strings
+      if (inString) {
+        if (ch === "\\" && i + 1 < source.length) {
+          i++; // skip escaped character
+          continue;
+        }
+        if (ch === inString) {
+          inString = null;
+        }
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = ch;
+        continue;
+      }
+
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth < 0) break; // unbalanced — stop
+      }
+      // When we're at depth 0 and hit a comma or newline, we're done
+      if (depth === 0 && (ch === "," || ch === "\n")) break;
+    }
+    const rawExpr = source.slice(exprStart, i).trim().replace(/,$/, "").replace(/\s*\/\/.*$/, "").trim();
+    if (rawExpr) {
+      props.set(name, rawExpr);
+    }
   }
 
   return props;

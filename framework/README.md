@@ -26,16 +26,62 @@ test("fill a form by label", async ({ page }) => {
 
 ### Running the validation suite
 
-The repo ships 7 test-fixture apps (vanilla HTML, React + MUI, Vue + Vuetify, Angular + Angular Material, Svelte + Bits UI, Next.js + MUI, Lit + Shoelace) and 1143 tests.
+The repo ships 7 test-fixture apps (vanilla HTML, React + MUI, Vue + Vuetify, Angular + Angular Material, Svelte + Bits UI, Next.js + MUI, Lit + Shoelace) and 1,306 framework-only tests (crawler tests are separate — see root ROADMAP.md for full count).
 
 ```bash
 npm install
-npx playwright test                       # all 7 apps (924 integration tests)
+npx playwright test                       # all 7 apps (1,043 integration tests = 149 × 7)
 npx playwright test --project=vanilla     # single app
-npx playwright test --config=playwright.unit.config.ts   # 219 unit tests
+npx playwright test --config=playwright.unit.config.ts   # 263 unit tests
 ```
 
 Playwright auto-starts each app's dev server via the multi-project `webServer` config.
+
+---
+
+## Getting Started with Your App
+
+Point the framework at your own app in three steps:
+
+**1. Install**
+
+```bash
+npm install @playwright-elements/core @playwright/test
+```
+
+**2. Configure `playwright.config.ts`**
+
+```ts
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./tests",
+  use: { baseURL: "http://localhost:3000" },
+  webServer: {
+    command: "npm run dev",
+    url: "http://localhost:3000",
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+**3. Write your first test**
+
+```ts
+// tests/my-app.spec.ts
+import { test, expect } from "@playwright-elements/core/test-fixture";
+import { By, group } from "@playwright-elements/core";
+
+test("fill and read a form by label", async ({ page }) => {
+  await page.goto("/");
+  const app = group(By.css("body"), page);
+
+  await app.write("Email", "user@example.com");
+  expect(await app.read("Email")).toBe("user@example.com");
+});
+```
+
+Run with `npx playwright test`. The framework auto-detects element types (text input, select, checkbox, radio, etc.) from the DOM — no selectors needed beyond labels.
 
 ---
 
@@ -191,6 +237,13 @@ Key design details:
 - **Nested-action guard:** Inner actions (e.g. a `write` that triggers a `click` internally) skip middleware to prevent double logging/retries. Uses `AsyncLocalStorage` so concurrent `Promise.all` actions each get their own scope.
 - **`forceMiddleware: true`:** Escape hatch on `ActionContext` to force middleware even for nested actions (useful for cross-element coordination).
 - **`context.page`:** `ActionContext` exposes a `page?: () => Promise<Page>` provider, auto-derived from the element's locator. Middleware can use it to access page-level APIs (e.g. network events).
+
+> **When to use `forceMiddleware`:** The nested-action guard is per-async-chain, not per-element. If a middleware-wrapped action on element A triggers an action on element B (e.g. clicking a button then reading a toast), B's action will also skip middleware because it's in the same async chain. To ensure middleware fires on B, create the element with `forceMiddleware: true` in the `WrapElementMeta`:
+>
+> ```ts
+> const t = toast(By.css(".toast"), page, { forceMiddleware: true });
+> await t.read(); // middleware fires even if called from within another action
+> ```
 
 #### Built-in: `networkSettleMiddleware`
 
@@ -372,7 +425,7 @@ framework/
 │   ├── table-rows.spec.ts            (7 tests)
 │   ├── functional-swap.spec.ts       (16 tests)
 │   │
-│   └── unit/                         (15 files, 219 tests)
+│   └── unit/                         (18 files, 259 tests)
 │       ├── click-in-container.spec.ts
 │       ├── coercion.spec.ts
 │       ├── context.spec.ts
@@ -419,20 +472,20 @@ The generated docs cover all four export paths:
 
 ## Test Coverage
 
-1143 tests across 31 spec files (16 integration × 7 apps + 15 unit), all passing:
+1,306 tests across 37 spec files (18 integration × 7 apps + 19 unit), all passing:
 
 ### Cross-App Compatibility
 
 | App | Port | Technology + Component Library | Tests | Status |
 |-----|------|-------------------------------|-------|--------|
-| vanilla-html | 3001 | Plain HTML/JS (baseline — no library) | 132 | ✅ |
-| react-app | 3002 | React + MUI `@mui/material` ^7.3.9 + react-datepicker | 132 | ✅ |
-| vue-app | 3003 | Vue + Vuetify ^4.0.2 + @vuepic/vue-datepicker | 132 | ✅ |
-| angular-app | 3004 | Angular + Angular Material ^19.2.19 (mat-datepicker, MatDialog, MatSnackBar) | 132 | ✅ |
-| svelte-app | 3005 | Svelte 5 + Bits UI ^2.16.3 + flatpickr | 132 | ✅ |
-| nextjs-app | 3006 | Next.js + MUI `@mui/material` ^7.3.9 + react-datepicker + react-hot-toast | 132 | ✅ |
-| lit-app | 3007 | Lit + Shoelace ^2.20.1 (shadow DOM) + native date input | 132 | ✅ |
-| **Total** | | **6 component libraries + vanilla baseline** | **924** | **✅** |
+| vanilla-html | 3001 | Plain HTML/JS (baseline — no library) | 149 | ✅ |
+| react-app | 3002 | React + MUI `@mui/material` ^7.3.9 + react-datepicker | 149 | ✅ |
+| vue-app | 3003 | Vue + Vuetify ^4.0.2 + @vuepic/vue-datepicker | 149 | ✅ |
+| angular-app | 3004 | Angular + Angular Material ^19.2.19 (mat-datepicker, MatDialog, MatSnackBar) | 149 | ✅ |
+| svelte-app | 3005 | Svelte 5 + Bits UI ^2.16.3 + flatpickr | 149 | ✅ |
+| nextjs-app | 3006 | Next.js + MUI `@mui/material` ^7.3.9 + react-datepicker + custom toast | 149 | ✅ |
+| lit-app | 3007 | Lit + Shoelace ^2.20.1 (shadow DOM) + native date input | 149 | ✅ |
+| **Total** | | **6 component libraries + vanilla baseline** | **1,043** | **✅** |
 
 Each app uses its framework's idiomatic component library, producing fundamentally different DOM structures (shadow DOM, portaled dropdowns, ARIA widgets, virtual tables). The framework handles all of them with generic ARIA/role-based detection — library-specific logic is isolated in adapters (`DatePickerAdapter`, `SelectAdapter`, checkbox `force: true` fallback).
 
@@ -441,7 +494,7 @@ Key adapter components:
 - **`DatePickerAdapter`** (`src/elements/`) — Technology-specific date picker adapters in `src/adapters/`.
 - **Checkbox/Radio** — Try-then-fallback pattern: normal interaction first, `force: true` only on failure (handles both MUI hidden inputs and Shoelace shadow DOM).
 
-### Integration tests (132 tests per app, 16 files)
+### Integration tests (149 tests per app, 18 files)
 
 | Spec | Tests | Covers |
 |------|-------|--------|
@@ -453,7 +506,7 @@ Key adapter components:
 | group-find | 3 | find() scoping, ElementNotFoundError, AmbiguousMatchError |
 | group-order-controls | 20 | Radiogroup auto-detection, stepper (incl. min/max clamping), date picker (incl. clear), group.click(), find() scoping |
 | navigation | 8 | Page routing, about text, nav links, footer, browser back/forward |
-| network-settle | 7 | Network settle middleware: delayed responses, concurrent calls, timeout, ignored URLs, callbacks, action scoping |
+| network-settle | 9 | Network settle middleware: delayed responses, concurrent calls, timeout, ignored URLs, callbacks, action scoping, real fetch/HTTP requests |
 | override-escape | 6 | Direct Playwright access via locator(), raw CSS selectors, withTimeout() |
 | override-handler | 4 | overrideHandler() with string type, object literal, immutability, invalid type |
 | read-typed | 4 | readTyped() for string, boolean, select, kind mismatch error |
@@ -461,8 +514,10 @@ Key adapter components:
 | table-row-refresh | 3 | Row refresh after sort, filter, row-gone error |
 | table-rows | 7 | Row-level scoping, dialog trigger from table, content matching |
 | functional-swap | 16 | Generated-vs-hand-written page objects, write/read/click via crawler manifests |
+| aria-validation | 8 | ARIA attributes: aria-live on toast, dialog role/title, table role, accessible names, radio group role, checkbox aria-checked |
+| keyboard-navigation | 7 | Tab/Shift+Tab order, arrow keys in radio group, Enter activates button, dialog focus trap, Escape closes dialog, Space toggles checkbox |
 
-### Unit tests (219 tests, 15 files)
+### Unit tests (263 tests, 19 files)
 
 | Spec | Covers |
 |------|--------|
@@ -471,16 +526,20 @@ Key adapter components:
 | context | FrameworkContext creation, isolation, reset |
 | create-handler | createHandler / getDefaultHandlerByType |
 | date-picker-adapter | DatePickerAdapter contract |
+| dom-helpers | cssEscape, DOM utility functions |
 | element-classifier | classifyElement: tag/role/attr matching, requireChild, priority, fallback |
 | errors | All 4 error classes: context, messages, inheritance |
 | handlers | Handler detection, registration, role fallbacks |
 | label-resolution | normalizeRadioLabel, resolveInputLabel, readCheckedRadioLabel, resolveLabeled |
 | logger | LoggerConfig, configureLogger |
 | middleware | MiddlewarePipeline, useMiddleware, nested-action guard, forceMiddleware |
+| playwright-error-patterns | Error classification against current Playwright error messages |
+| playwright-errors | isDetachedError, isTimeoutError, and other Playwright error guards |
 | resolve-retry | ResolveRetryConfig, configureResolveRetry |
 | retry | retryUntil, RetryResult discriminated union |
 | select-adapter | SelectAdapter contract, nativeSelectAdapter, comboboxSet editable/non-editable detection |
 | strict-context | setStrictContextMode, checkMutationScope, resetWarningState |
+| wrap-element | ACTIONS symbol, forceMiddleware, validation, Symbol.toStringTag |
 
 ---
 

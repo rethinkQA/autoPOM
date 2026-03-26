@@ -1,8 +1,9 @@
+/* global Shared */
 // ===== SHARED DATA & LOGIC =====
 // Imported from the canonical shared/ TypeScript sources via generated shared.js.
 // Do NOT duplicate data or logic here — use Shared.* (e.g. Shared.PRODUCTS).
 // To regenerate: node scripts/generate-vanilla-shared.mjs
-const { PRODUCTS, CATEGORIES, SHIPPING, filterProducts, sortProducts, filterAndSortProducts, toggleSort, cartMessage, formatDate, TOAST_DURATION_MS } = Shared;
+const { PRODUCTS, SHIPPING, filterAndSortProducts, toggleSort, cartMessage, formatDate, TOAST_DURATION_MS } = Shared;
 
 // ===== STATE =====
 let sortKey = null;

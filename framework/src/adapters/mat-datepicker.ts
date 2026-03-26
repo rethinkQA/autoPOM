@@ -13,10 +13,23 @@ import type { Locator } from "@playwright/test";
 import type { DatePickerAdapter } from "../elements/datePicker.js";
 import type { ActionOptions } from "../handler-types.js";
 import { DIALOG_CLOSE_TIMEOUT_MS } from "../timeouts.js";
+import { cssEscape } from "../dom-helpers.js";
 import { isRetryableInteractionError } from "../playwright-errors.js";
 
 function parseDate(dateStr: string) {
   const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(
+      `Invalid date string "${dateStr}": expected format YYYY-MM-DD with month 1–12 and day 1–31.`,
+    );
+  }
+  // Validate the date actually exists (e.g. reject Feb 31)
+  const date = new Date(year, month - 1, day);
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error(
+      `Invalid date "${dateStr}": ${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} does not exist.`,
+    );
+  }
   return { year, month, day };
 }
 
@@ -24,6 +37,21 @@ function shortMonthUpper(month: number, locale: string): string {
   return new Date(2000, month - 1, 1)
     .toLocaleString(locale, { month: "short" })
     .toUpperCase(); // "FEB", "MAR", etc.
+}
+
+/**
+ * Build a map of locale-aware uppercase short month names to 1-based month indices.
+ * Example (en-US): `{ "JAN": 1, "FEB": 2, … }`
+ */
+function buildMonthMap(locale: string): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (let m = 0; m < 12; m++) {
+    const name = new Date(2000, m, 1)
+      .toLocaleString(locale, { month: "short" })
+      .toUpperCase();
+    map[name] = m + 1;
+  }
+  return map;
 }
 
 function buildAriaLabel(year: number, month: number, day: number, locale: string): string {
@@ -41,6 +69,8 @@ function buildAriaLabel(year: number, month: number, day: number, locale: string
  * @param locale - Locale for month name matching and aria-label generation (default: `"en-US"`).
  */
 export function createMatDatePickerAdapter(locale = "en-US"): DatePickerAdapter {
+  const monthMap = buildMonthMap(locale);
+
   return {
   async select(el: Locator, dateStr: string, options?: ActionOptions) {
     const { year, month, day } = parseDate(dateStr);
@@ -71,8 +101,7 @@ export function createMatDatePickerAdapter(locale = "en-US"): DatePickerAdapter 
       // Parse displayed month/year to determine direction
       const match = headerText.match(/([A-Z]{3})\s+(\d{4})/);
       if (match) {
-        const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-        const dispM = months.indexOf(match[1]) + 1;
+        const dispM = monthMap[match[1]] ?? 0;
         const dispY = Number(match[2]);
         const current = dispY * 12 + dispM;
         const target = year * 12 + month;
@@ -86,9 +115,18 @@ export function createMatDatePickerAdapter(locale = "en-US"): DatePickerAdapter 
       await page.waitForTimeout(50);
     }
 
+    // Throw if navigation failed — prevents selecting a day in the wrong month.
+    const finalPeriod = overlay.locator(".mat-calendar-period-button");
+    const finalText = (await finalPeriod.textContent({ timeout }))?.trim() ?? "";
+    if (!finalText.includes(targetMonth) || !finalText.includes(String(year))) {
+      throw new Error(
+        `mat-datepicker: failed to navigate to ${targetMonth} ${year} after ${maxAttempts} attempts (stuck on "${finalText}")`,
+      );
+    }
+
     // Click the target day cell by its aria-label
     const ariaLabel = buildAriaLabel(year, month, day, locale);
-    const dayCell = overlay.locator(`button.mat-calendar-body-cell[aria-label="${ariaLabel}"]`);
+    const dayCell = overlay.locator(`button.mat-calendar-body-cell[aria-label="${cssEscape(ariaLabel)}"]`);
     await dayCell.click({ timeout });
 
     // Wait for the calendar overlay to close (CDK animations).

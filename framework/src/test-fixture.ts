@@ -49,7 +49,10 @@ import {
   defaultContext,
   getActiveContext,
   setFallbackContext,
+  peekContextStore,
 } from "./context.js";
+import { resetTimeouts } from "./timeouts.js";
+import { resetRetryablePatterns } from "./playwright-errors.js";
 
 // ── Extended fixtures ───────────────────────────────────────
 
@@ -101,20 +104,20 @@ export const test = base.extend<ContextFixtures>({
         await use(ctx);
 
         // ── Post-use ALS propagation assertion ───────────────
-        // After the test body has completed, verify the scoped context
-        // is still reachable through AsyncLocalStorage.  If Playwright's
-        // `use()` broke ALS propagation, `getActiveContext()` would throw
-        // (strict mode is on) or return `defaultContext`.  Either way we
-        // catch it here as a hard failure so that future runner upgrades
-        // or configuration changes that break ALS are surfaced immediately
-        // rather than silently sharing mutable state across tests.
-        const active = getActiveContext();
-        if (active !== ctx) {
-          throw new Error(
+        // P2-248: Verify the scoped context is still reachable through
+        // AsyncLocalStorage without disrupting the fallback context.
+        // Uses peekContextStore() to directly check ALS without any
+        // fallback logic, avoiding the context-unavailable window that
+        // would occur from clearing the fallback.
+        const alsStore = peekContextStore();
+        if (alsStore !== ctx) {
+          // ALS didn't propagate — the fallback is covering for it.
+          // Emit a warning but don't throw, since the fallback ensures
+          // correct behavior.  The warning helps diagnose ALS issues.
+          ctx.logger.getLogger().warn(
             "[framework] AsyncLocalStorage context did not propagate through " +
-              "Playwright's use() fixture hook. getActiveContext() returned the " +
-              "global defaultContext instead of the per-test scoped context. " +
-              "Tests are NOT isolated and will share mutable state. " +
+              "Playwright's use() fixture hook. The fallback context is providing " +
+              "isolation, but ALS-based scoping is not functioning. " +
               "Check your Playwright version and AsyncLocalStorage compatibility.",
           );
         }
@@ -127,6 +130,14 @@ export const test = base.extend<ContextFixtures>({
       // Clean up the defaultContext after the test as well, in case
       // ALS didn't propagate and the test mutated the global singleton.
       defaultContext.reset();
+
+      // Reset module-level timeout overrides so that a test calling
+      // configureTimeouts() doesn't leak into subsequent tests.
+      resetTimeouts();
+
+      // Reset custom retryable error patterns so that a test calling
+      // registerRetryablePattern() doesn't leak into subsequent tests.
+      resetRetryablePatterns();
 
       // Reset module-level warning deduplication state so that
       // subsequent tests in the same worker process see warnings

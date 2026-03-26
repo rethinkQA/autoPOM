@@ -67,4 +67,22 @@ test.describe("createHandler", () => {
     const base = getDefaultHandlerByType("checkbox");
     expect(base.valueKind).toBe("boolean");
   });
+
+  test("returned handler is frozen (matching registerHandler depth)", () => {
+    const handler = createHandler({
+      extends: "checkbox",
+      type: "frozen-checkbox",
+    });
+
+    // The handler object itself is frozen
+    expect(Object.isFrozen(handler)).toBe(true);
+
+    // The detect array is frozen
+    expect(Object.isFrozen(handler.detect)).toBe(true);
+
+    // Each detect rule is frozen
+    for (const rule of handler.detect) {
+      expect(Object.isFrozen(rule)).toBe(true);
+    }
+  });
 });

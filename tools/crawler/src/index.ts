@@ -15,11 +15,16 @@ export { discoverGroups, discoverToasts, GROUP_SELECTOR } from "./discover.js";
 
 // ── Manifest operations ─────────────────────────────────────
 
-export { mergeManifest, diffManifest } from "./merge.js";
+export { mergeManifest, diffManifest, mergeKey } from "./merge.js";
 
 // ── Network observation ─────────────────────────────────────
 
 export { observeNetwork, NetworkObserver } from "./network.js";
+
+// ── DOM Flight Recorder (Phase 14) ─────────────────────────
+
+export { DomRecorder } from "./recorder.js";
+export { recordPage } from "./record-api.js";
 
 // ── Page Object Emitter (Phase 12) ─────────────────────────
 
@@ -47,6 +52,7 @@ export type {
   Visibility,
   ApiDependency,
   ApiTiming,
+  RecordOptions,
 } from "./types.js";
 
 export type {

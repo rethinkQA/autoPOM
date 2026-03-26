@@ -6,6 +6,13 @@ test.describe("group.find() — container narrowing", () => {
     await page.goto("/");
   });
 
+  test.afterEach(async ({ page }) => {
+    // Clean up any injected elements to prevent cross-test interference
+    await page.evaluate(() => {
+      document.querySelectorAll(".filter-group [data-injected]").forEach((el) => el.remove());
+    });
+  });
+
   test("find() narrows to the container matching the given text", async ({ page }) => {
     // The page has three .filter-group divs, each containing a different label.
     // Use find() to narrow to the one containing "Category".
@@ -32,6 +39,7 @@ test.describe("group.find() — container narrowing", () => {
       await groups.nth(i).evaluate((fg) => {
         const span = document.createElement("span");
         span.textContent = "Shared Label";
+        span.setAttribute("data-injected", "true");
         fg.appendChild(span);
       });
     }

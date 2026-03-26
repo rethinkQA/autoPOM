@@ -7,10 +7,10 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { emitPageObject, emitMultiRoute, emitTemplate, computeShape, detectTemplates } from "../src/emitter.js";
-import { diffPageObjects, formatEmitterDiff, extractProperties } from "../src/emitter-diff.js";
-import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
-import type { RouteManifest } from "../src/emitter-types.js";
+import { emitPageObject, emitMultiRoute, emitTemplate, computeShape, detectTemplates } from "../../src/emitter.js";
+import { diffPageObjects, formatEmitterDiff, extractProperties } from "../../src/emitter-diff.js";
+import type { CrawlerManifest, ManifestGroup } from "../../src/types.js";
+import type { RouteManifest } from "../../src/emitter-types.js";
 
 // ── Helpers ─────────────────────────────────────────────────
 

@@ -70,7 +70,7 @@ function buildGroupElement(
       const { el, handler } = await resolveSingle(container, label, ctx, handlerOverrides, timeout);
       const value = await handler.get(el, { timeout });
       if (handler.valueKind) {
-        validateReturnedValue(label, value, handler.valueKind, handler);
+        validateReturnedValue(label, value, handler.valueKind, handler, "read");
       }
       return value;
     },
@@ -96,7 +96,7 @@ function buildGroupElement(
         );
       }
 
-      validateReturnedValue(label, value, kind, handler);
+      validateReturnedValue(label, value, kind, handler, "readTyped");
       return value as ValueKindMap[K];
     },
 

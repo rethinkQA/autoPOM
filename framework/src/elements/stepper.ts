@@ -58,9 +58,7 @@ export function stepper(by: By, scope: Scope, options?: StepperOptions): Stepper
   // `this` to avoid reliance on the fn.apply(wrapped, args) binding
   // inside wrapElement. This makes destructuring safe:
   //   const { set } = el;  // works in strict mode
-  let wrapped: StepperElement;
-
-  wrapped = wrapElement("stepper", {
+  const wrapped: StepperElement = wrapElement("stepper", {
     ...base,
     async increment(opts?: ActionOptions) {
       await (await incrementBtn()).click({ timeout: t(opts) });
@@ -70,6 +68,9 @@ export function stepper(by: By, scope: Scope, options?: StepperOptions): Stepper
     },
     async read(opts?: ActionOptions) {
       const value = await (await input()).inputValue({ timeout: t(opts) });
+      if (value.trim() === "") {
+        throw new Error("stepper.read(): input is empty — no value to read");
+      }
       const n = Number(value);
       if (Number.isNaN(n)) {
         throw new Error(`stepper.read(): input value "${value}" is not a valid number`);
@@ -90,9 +91,24 @@ export function stepper(by: By, scope: Scope, options?: StepperOptions): Stepper
           (node) => (node as HTMLInputElement).readOnly || node.hasAttribute("readonly"),
         );
 
-        if (!isReadonly) {
+        if (isReadonly) {
+          // P3-130: Detect readonly upfront and provide a clear message
+          // instead of falling through to click strategy with a confusing error.
+          ctx.logger.getLogger().warn(
+            `stepper.set(): input is readonly — "fill" strategy cannot write to it. ` +
+            `Falling through to "click" strategy (increment/decrement buttons).`,
+          );
+        } else {
           // Non-readonly: Playwright's fill() handles framework bindings correctly.
           await el.fill(String(target), { timeout: t(opts) });
+          // Post-fill verification: ensure the input accepted the value.
+          const actual = await wrapped.read(opts);
+          if (actual !== target) {
+            throw new Error(
+              `stepper.set(): fill strategy wrote ${target} but input reads ${actual} ` +
+              `— the input may have min/max constraints or value was clamped`,
+            );
+          }
           return;
         }
 
@@ -106,7 +122,35 @@ export function stepper(by: By, scope: Scope, options?: StepperOptions): Stepper
       // destructured methods (const { set } = el) work in strict mode.
       const current = await wrapped.read(opts);
       const diff = target - current;
-      const clicks = Math.abs(diff);
+
+      // Read the step attribute from the DOM element to handle non-unit steps
+      // (e.g., step="0.5" or step="5"). Falls back to 1 if absent or invalid.
+      const stepAttr = await (await input()).evaluate(
+        (node) => (node as HTMLInputElement).step,
+      );
+      const step = Number(stepAttr) || 1;
+
+      // P2-274: Check upfront if the target is reachable with the current step size.
+      // Use integer arithmetic to avoid floating-point precision issues (P2-218).
+      const precision = Math.max(
+        (String(step).split(".")[1] || "").length,
+        (String(diff).split(".")[1] || "").length,
+      );
+      const scale = Math.pow(10, precision);
+      const scaledDiff = Math.round(Math.abs(diff) * scale);
+      const scaledStep = Math.round(step * scale);
+      if (scaledDiff % scaledStep !== 0) {
+        throw new Error(
+          `stepper.set(): target value ${target} is not reachable from ${current} ` +
+          `with step=${step} — the difference (${Math.abs(diff)}) is not a multiple of the step size. ` +
+          `Consider using strategy: "fill" for arbitrary values.`,
+        );
+      }
+
+      // P2-218: Use integer arithmetic for click count to avoid
+      // floating-point precision loss (e.g. 0.3 / 0.1 = 2.999...).
+      const clicks = scaledDiff / scaledStep;
+
       if (diff > 0) {
         for (let i = 0; i < clicks; i++) await wrapped.increment(opts);
       } else if (diff < 0) {
@@ -115,16 +159,16 @@ export function stepper(by: By, scope: Scope, options?: StepperOptions): Stepper
 
       // Post-loop verification: ensure the stepper actually reached the
       // target value.  Clicks can silently no-op at min/max bounds, with
-      // non-unit step sizes, or under UI lag.
-      if (clicks > 0) {
-        const actual = await wrapped.read(opts);
-        if (actual !== target) {
-          throw new Error(
-            `stepper.set(): expected value ${target} but stepper reads ${actual} ` +
-            `after ${clicks} ${diff > 0 ? "increment" : "decrement"} click(s) — ` +
-            `possible min/max bound reached or non-unit step size`,
-          );
-        }
+      // non-unit step sizes, or under UI lag.  Also catches the case where
+      // Math.round produces 0 clicks but the value doesn't match (Issue #67).
+      const actual = await wrapped.read(opts);
+      if (actual !== target) {
+        throw new Error(
+          `stepper.set(): expected value ${target} but stepper reads ${actual} ` +
+          `after ${clicks} ${diff > 0 ? "increment" : "decrement"} click(s) ` +
+          `(step=${step}) — target ${target} may not be reachable from ${current} with step=${step}, ` +
+          `or a min/max bound was reached; consider strategy: "fill"`,
+        );
       }
     },
     async isMinDisabled(opts?: ActionOptions) {

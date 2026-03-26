@@ -3,7 +3,6 @@ import { select } from "../../src/elements/select.js";
 import { By } from "../../src/by.js";
 import type { SelectAdapter } from "../../src/elements/select-adapter.js";
 import { nativeSelectAdapter } from "../../src/elements/select-adapter.js";
-import { genericNonEditableSelectAdapter } from "../../src/adapters/generic-select-adapter.js";
 
 /**
  * Unit tests for SelectAdapter injection into the select() element.

@@ -26,7 +26,7 @@ export interface ActionOptions {
  * sub-type so that call sites that deal with radio/checkbox labels
  * remain semantically distinct from generic element operations.
  */
-export interface LabelActionOptions extends ActionOptions {}
+export type LabelActionOptions = ActionOptions;
 
 // ── Value kind ─────────────────────────────────────────────
 
@@ -55,8 +55,11 @@ export type ValueKindMap = {
  * These rules are **serialised** and sent into `evaluate()` for
  * in-browser matching. They must contain only plain data —
  * no functions, Locators, or other non-serialisable values.
+ *
+ * At least one primary criterion (`tags`, `roles`, or `attr`) is
+ * required at the type level — an empty `{}` is a compile-time error.
  */
-export interface DetectRule {
+interface DetectRuleBase {
   /** Match by tagName (lowercased). */
   tags?: string[];
   /** For `<input>` elements, match by `type` attribute. */
@@ -68,6 +71,13 @@ export interface DetectRule {
   /** [name, value] — node must have this attribute set to this value. */
   attr?: [string, string];
 }
+
+/**
+ * A {@link DetectRuleBase} that requires at least one primary criterion.
+ * This prevents `{}` from being a valid `DetectRule` at compile time.
+ */
+export type DetectRule = DetectRuleBase &
+  ({ tags: string[] } | { roles: string[] } | { attr: [string, string] });
 
 /**
  * Serialisable identity + detection rules for a handler.
@@ -154,9 +164,9 @@ export interface ElementHandler extends HandlerDetection, HandlerActions {}
  *
  * - `"first"` — inserts at index 0 (highest priority).
  * - `"last"`  — inserts just **before** the final catch-all
- *   `generic-input` handler, so the fallback always remains last.
- *   This means `"last"` is effectively "last among custom handlers",
- *   not the absolute end of the array.
+ *   `input` handler (the catch-all fallback), so the fallback always
+ *   remains last.  This means `"last"` is effectively "last among
+ *   custom handlers", not the absolute end of the array.
  * - `{ before: type }` / `{ after: type }` — relative to the named handler.
  */
 export type HandlerPosition =

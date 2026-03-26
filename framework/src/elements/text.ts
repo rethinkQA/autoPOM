@@ -18,8 +18,11 @@ export interface TextElement extends BaseElement<TextElement> {
 
 /**
  * Create a text element wrapper.
- *
- * @param by    - Locator strategy (e.g. `By.css("[data-testid='action-output']")`).
+ * * **Note:** `text()` reads `textContent` directly and does not use the
+ * handler registry. Custom handler registrations for text elements are
+ * not consulted. This is intentional — text elements are read-only and
+ * do not need the detection/set/get pipeline.
+ * * @param by    - Locator strategy (e.g. `By.css("[data-testid='action-output']")`).
  * @param scope - Page or parent locator to search within.
  */
 export function text(by: By, scope: Scope, options?: ElementOptions): TextElement {

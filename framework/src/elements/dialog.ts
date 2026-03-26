@@ -86,9 +86,10 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
       if (count === 0) return false;
 
       // Native <dialog> uses the `open` attribute (set by showModal() or <dialog open>).
-      const tag = await el.evaluate((node) => node.tagName.toLowerCase());
+      const tag = await el.evaluate((node) => node.tagName.toLowerCase()).catch(() => null);
+      if (tag === null) return false; // Element detached between count() and evaluate()
       if (tag === "dialog") {
-        const open = await el.getAttribute("open", { timeout: timeout });
+        const open = await el.getAttribute("open", { timeout: timeout }).catch(() => null);
         return open !== null;
       }
 
@@ -120,7 +121,7 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
       };
 
       // Perform the close action, then wait for the dialog to actually close.
-      const performClose = async (action: () => Promise<void>) => {
+      const performClose = async (action: () => Promise<void>, strategyName: string) => {
         await action();
         // Wait for the dialog to be removed from DOM or become hidden.
         // This handles animation delays (e.g. Angular CDK, CSS transitions).
@@ -130,7 +131,7 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
           // Callers can check isOpen() to detect the still-open dialog.
           ctx.logger.getLogger().warn(
             `dialog.close(): dialog did not become hidden within ${closeTimeout}ms ` +
-            `after close action — it may still be open`,
+            `after close action (strategy: ${strategyName}) — it may still be open`,
           );
         });
       };
@@ -139,7 +140,7 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
       const ariaCloseDialog = el.getByRole("button", { name: /close\s*dialog/i });
       const ariaMatch = await pickLastOrOnly(ariaCloseDialog);
       if (ariaMatch) {
-        await performClose(() => ariaMatch.click({ timeout }));
+        await performClose(() => ariaMatch.click({ timeout }), 'aria-label "close dialog"');
         return;
       }
 
@@ -147,7 +148,7 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
       const closeBtn = el.getByRole("button", { name: /^close$/i });
       const closeMatch = await pickLastOrOnly(closeBtn);
       if (closeMatch) {
-        await performClose(() => closeMatch.click({ timeout }));
+        await performClose(() => closeMatch.click({ timeout }), 'button name "close"');
         return;
       }
 
@@ -155,12 +156,12 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
       const cssFallback = el.locator(closeSelectors.join(", "));
       const cssMatch = await pickLastOrOnly(cssFallback);
       if (cssMatch) {
-        await performClose(() => cssMatch.click({ timeout }));
+        await performClose(() => cssMatch.click({ timeout }), 'CSS fallback selector');
         return;
       }
 
       // Strategy 4: Escape fallback — works for native showModal() and many framework dialogs
-      await performClose(() => el.press("Escape", { timeout }));
+      await performClose(() => el.press("Escape", { timeout }), 'Escape key');
     },
 
     async title(opts?: ActionOptions) {
@@ -193,6 +194,10 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
         }
         if (parts.length > 0) return parts.join(" ");
       }
+      ctx.logger.getLogger().warn(
+        `dialog.title(): no title source found (tried: heading role, h1-h6, aria-labelledby). ` +
+        `The dialog may be missing a heading or aria-labelledby attribute.`,
+      );
       return "";
     },
 
@@ -202,22 +207,23 @@ export function dialog(by: By, scope: Scope, options?: DialogOptions): DialogEle
       // Strategy 1: Dedicated body/content container (configurable selector list)
       const bodyContainer = el.locator(bodySelectors.join(", "));
       if ((await bodyContainer.count()) > 0) {
-        // Return the text content of <p> elements within the body container,
-        // excluding headings and buttons to get just the body text.
-        const paragraphs = bodyContainer.first().locator("p");
-        if ((await paragraphs.count()) > 0) {
-          const texts = await paragraphs.allTextContents();
-          return texts.map((s) => s.trim()).join("\n");
-        }
-        return ((await bodyContainer.first().textContent({ timeout: timeout })) ?? "").trim();
+        // P2-299: Wait for body container to be visible before reading.
+        await bodyContainer.first().waitFor({ state: "visible", timeout }).catch(() => {});
+        // P2-182/P2-183: Use innerText of the body container to capture
+        // all visible content (paragraphs, lists, divs, etc.) instead of
+        // only <p> elements. innerText respects visibility and layout.
+        return ((await bodyContainer.first().innerText({ timeout: timeout })) ?? "").trim();
       }
-      // Strategy 2: All <p> elements directly in the dialog (skip heading/button)
-      const paragraphs = el.locator("p");
-      if ((await paragraphs.count()) > 0) {
-        const texts = await paragraphs.allTextContents();
-        return texts.map((s) => s.trim()).join("\n");
+      // Strategy 2: Read dialog's innerText minus the title/header text.
+      // P2-183: This handles dialogs without a dedicated body container
+      // that may use non-paragraph content (divs, spans, lists, etc.).
+      const dialogText = ((await el.innerText({ timeout: timeout })) ?? "").trim();
+      // Subtract the title text to return just the body content.
+      const titleText = ((await el.getByRole("heading").first().textContent({ timeout: timeout }).catch(() => "")) ?? "").trim();
+      if (titleText && dialogText.startsWith(titleText)) {
+        return dialogText.slice(titleText.length).trim();
       }
-      return "";
+      return dialogText;
     },
   }, ctx, ["isOpen", "close", "title", "body"], meta);
 }

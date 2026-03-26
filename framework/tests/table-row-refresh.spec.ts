@@ -19,6 +19,8 @@ test.describe("Table — tableRow.refresh()", () => {
 
     // Refresh the row — should re-run the criteria and re-locate it
     const refreshed = await row.refresh();
+    // Verify identity: same unique product name confirms correct row
+    expect(await refreshed.get("Name")).toBe("Wireless Mouse");
     expect(await refreshed.get("Price")).toBe("$29.99");
     expect(await refreshed.get("Category")).toBe("Electronics");
     expect(await refreshed.get("Stock")).toBe("Yes");

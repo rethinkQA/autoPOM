@@ -77,11 +77,11 @@
   <fieldset class="control-group">
     <legend>Quantity</legend>
     <div class="stepper">
-      <button aria-label="Decrease quantity"
+      <button aria-label="Decrease quantity" aria-controls="quantity-input"
               [disabled]="quantity <= 1" (click)="decrement()">−</button>
       <input type="number" id="quantity-input"
              [value]="quantity" min="1" max="99" readonly aria-label="Quantity" />
-      <button aria-label="Increase quantity"
+      <button aria-label="Increase quantity" aria-controls="quantity-input"
               [disabled]="quantity >= 99" (click)="increment()">+</button>
     </div>
   </fieldset>

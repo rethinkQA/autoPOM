@@ -17,6 +17,8 @@ test.describe("Button, Output, and Toast", () => {
   test("add to cart with quantity shows correct count", async ({ page }) => {
     const home = homePage(page);
     await home.quantity.set(3);
+    // Verify the quantity was actually set before clicking
+    expect(await home.quantity.read()).toBe("3");
     await home.addToCart.click();
     expect(await home.actionOutput.read()).toContain("3x");
   });
@@ -56,7 +58,14 @@ test.describe("Button, Output, and Toast", () => {
     const home = homePage(page);
     await home.addToCart.click();
     await home.toast.waitForVisible();
-    await home.toast.waitForHidden();
+    const start = Date.now();
+    // P3-176: Verify toast is still visible after 1s (lower bound)
+    await page.waitForTimeout(1000);
+    expect(await home.toast.isVisible()).toBe(true);
+    await home.toast.waitForHidden({ timeout: 6000 });
+    const elapsed = Date.now() - start;
     expect(await home.toast.isVisible()).toBe(false);
+    // Toast should auto-dismiss within ~3s (allow up to 4.5s for CI slack)
+    expect(elapsed).toBeLessThan(4500);
   });
 });

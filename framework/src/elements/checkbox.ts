@@ -35,9 +35,7 @@ export function checkbox(by: By, scope: Scope, options?: ElementOptions): Checkb
   // Build the element object. Uses `wrapped` (closure variable)
   // instead of `this` so that destructured methods work in strict mode:
   //   const { read } = el;  // safe
-  let wrapped: CheckboxElement;
-
-  wrapped = wrapElement("checkbox", {
+  const wrapped: CheckboxElement = wrapElement("checkbox", {
     ...base,
     async check(opts?: ActionOptions) {
       const handler = requireHandler(ctx, "checkbox");

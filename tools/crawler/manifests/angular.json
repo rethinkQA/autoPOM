@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "url": "http://localhost:3004/#/",
+  "timestamp": "2026-03-19T15:09:50.486Z",
+  "scope": null,
+  "passCount": 1,
+  "groups": [
+    {
+      "label": "GeneralStore Angular",
+      "selector": "header",
+      "groupType": "header",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    },
+    {
+      "label": "Home",
+      "selector": "nav",
+      "groupType": "nav",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    },
+    {
+      "label": "Popular Items",
+      "selector": "main",
+      "groupType": "main",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    },
+    {
+      "label": "Name",
+      "selector": "table.mat-mdc-table",
+      "groupType": "generic",
+      "wrapperType": "table",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    },
+    {
+      "label": "Quantity",
+      "selector": "fieldset:has(> legend)[aria-label=\"Quantity\"]",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    },
+    {
+      "label": "Shipping Method",
+      "selector": "fieldset:has(> legend)[aria-label=\"Shipping Method\"]",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    },
+    {
+      "label": "Delivery Date",
+      "selector": "fieldset:has(> legend)[aria-label=\"Delivery Date\"]",
+      "groupType": "fieldset",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z",
+      "notes": "needs-adapter"
+    },
+    {
+      "label": "© 2026 GeneralStore — Angular Test Target",
+      "selector": "footer",
+      "groupType": "footer",
+      "wrapperType": "group",
+      "discoveredIn": "pass-1",
+      "visibility": "static",
+      "lastSeen": "2026-03-19T15:09:50.460Z"
+    }
+  ]
+}

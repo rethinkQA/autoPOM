@@ -1,5 +1,11 @@
 /* To learn more about Typescript configuration file: https://www.typescriptlang.org/docs/handbook/tsconfig-json.html. */
 /* To learn more about Angular compiler options: https://angular.dev/reference/configs/angular-compiler-options. */
+/*
+ * ⚠ TypeScript version constraint (P2-13):
+ * Angular 19.2 enforces TypeScript <5.9. This app is pinned at ~5.8.3 while
+ * all other packages use ~5.9.3. Shared code (shared/data.ts, shared/logic.ts)
+ * must avoid TS 5.9+ syntax features. Upgrade to Angular 20 to lift this cap.
+ */
 {
   "compileOnSave": false,
   "compilerOptions": {

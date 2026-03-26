@@ -67,6 +67,9 @@ export class By {
    */
   private static async buildOrChain(bys: By[], scope: Scope): Promise<Locator> {
     const allLocators = await Promise.all(bys.map((b) => By._getRawResolve(b)(scope)));
+    if (allLocators.length === 0) {
+      throw new Error("buildOrChain requires at least one By strategy, but received an empty array.");
+    }
     let locator = allLocators[0];
     for (let i = 1; i < allLocators.length; i++) {
       locator = locator.or(allLocators[i]);
@@ -123,7 +126,7 @@ export class By {
 
   /** Match by associated <label> text. */
   static label(text: string): By {
-    if (!text) throw new Error("By.label(): text must be a non-empty string");
+    if (!text?.trim()) throw new Error("By.label(): text must be a non-empty string");
     return By._simple(
       `By.label(${JSON.stringify(text)})`,
       (scope) => scope.getByLabel(text),
@@ -152,7 +155,12 @@ export class By {
 
   /** Match by visible text content. */
   static text(text: string | RegExp): By {
-    if (typeof text === "string" && !text) throw new Error("By.text(): text must be a non-empty string");
+    if (typeof text === "string" && !text.trim()) throw new Error("By.text(): text must be a non-empty string");
+    if (text instanceof RegExp) {
+      try { new RegExp(text.source, text.flags); } catch (e) {
+        throw new Error(`By.text(): invalid RegExp: ${(e as Error).message}`);
+      }
+    }
     const desc = text instanceof RegExp
       ? `By.text(${text})`
       : `By.text(${JSON.stringify(text)})`;
@@ -191,13 +199,24 @@ export class By {
    * first match in **DOM order** (not array order). Use this when any
    * match is acceptable regardless of which By produced it.
    *
+   * **Important:** "first" here means *closest to the top of the DOM
+   * tree*, NOT the first entry in the `bys` array. If `bys[1]` matches
+   * an element that appears before `bys[0]`'s match in the DOM,
+   * `By.any()` returns `bys[1]`'s element.
+   *
    * When exactly one By matches, this correctly acts as a fallback
    * chain. When multiple Bys match different elements, the element
    * closest to the top of the DOM wins — and a console warning is
    * emitted so ambiguity is surfaced.
    *
-   * For strict **priority ordering** (array
-   * position beats DOM order), use `By.first()` instead.
+   * For strict **priority ordering** where array position determines
+   * which match wins (regardless of DOM position), use
+   * {@link By.first | `By.first()`} instead.
+   *
+   * ```ts
+   * // DOM order wins — if both match, the element nearest <body> is used
+   * const by = By.any(By.label("Email"), By.css("#email"));
+   * ```
    */
   static any(...bys: [By, ...By[]]): By {
 
@@ -207,12 +226,15 @@ export class By {
       desc,
       async (scope, logger) => {
         const combined = await By.buildOrChain(bys, scope);
-        const count = await combined.count();
-        if (count > 1) {
-          logger?.debug(
-            `[By.any] Ambiguous match: ${count} elements matched the OR-chain. ` +
-            `Returning the first in DOM order. Consider using By.first() for strict priority ordering.`,
-          );
+        // P3-183: Only pay count() overhead when debug logging is enabled.
+        if (logger?.debugEnabled) {
+          const count = await combined.count();
+          if (count > 1) {
+            logger.debug(
+              `[By.any] Ambiguous match: ${count} elements matched the OR-chain. ` +
+              `Returning the first in DOM order. Consider using By.first() for strict priority ordering.`,
+            );
+          }
         }
         return combined.first();
       },
@@ -222,14 +244,25 @@ export class By {
   /**
    * Priority fallback chain — tries each By in **array order**,
    * returning the first whose locator matches at least one element.
+   * Array position determines priority, NOT DOM position.
+   *
+   * **Important:** Unlike {@link By.any | `By.any()`} (which returns
+   * the first match in DOM order), `By.first()` respects the order
+   * you pass the strategies in. `By.first(by1, by2)` always prefers
+   * `by1` if it matches anything, even if `by2` matches an element
+   * that appears earlier in the DOM.
+   *
+   * **Performance note:** All strategies are resolved in parallel to
+   * minimise wall-clock time, so every strategy incurs a resolve +
+   * count round-trip even when an earlier one matches. For chains of
+   * 2–3 strategies the overhead is negligible; for longer chains
+   * consider whether sequential resolution (or a single `By.any()`)
+   * would be more efficient.
    *
    * Returns a composable `By` instance like every other factory.
    *
-   * All typed element wrappers call `resolve()` and preserve strict
-   * priority ordering, so `button(By.first(by1, by2), page)`
-   * gets correct priority ordering out of the box.
-   *
    * ```ts
+   * // Array order wins — by1 is always preferred when it matches
    * const by = By.first(by1, by2, by3);
    * button(by, page);                        // composable — strict priority
    * const loc = await by.resolve(page);      // also strict priority

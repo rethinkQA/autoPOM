@@ -69,7 +69,16 @@ export function select(by: By, scope: Scope, options?: SelectOptions): SelectEle
       }
       // Fallback: native <option> elements
       const el = (await loc()).locator("option");
-      await el.first().waitFor({ state: "attached", timeout: t(opts) });
+      const count = await el.count();
+      if (count === 0) return [];
+      try {
+        await el.first().waitFor({ state: "attached", timeout: t(opts) });
+      } catch {
+        throw new Error(
+          "select.options(): no native <option> elements found. " +
+          "If using a component library select (MUI, Shoelace, Vuetify), provide a SelectAdapter.",
+        );
+      }
       return (await el.allTextContents()).map((s) => s.trim());
     },
   }, ctx, ["choose", "read", "options"], meta);

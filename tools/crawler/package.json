@@ -1,9 +1,12 @@
 {
   "name": "@playwright-elements/crawler",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "description": "Runtime crawler that discovers groups and containers on a live page and emits a JSON manifest",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
   "type": "module",
   "bin": {
     "pw-crawl": "./dist/bin/pw-crawl.js"
@@ -21,7 +24,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:unit": "playwright test --config=playwright.unit.config.ts",
@@ -31,13 +34,14 @@
     "check-drift": "./scripts/check-drift.sh"
   },
   "dependencies": {
-    "playwright": "~1.50.0"
+    "playwright": "~1.58.0"
   },
   "devDependencies": {
-    "@playwright/test": "~1.50.0",
-    "@types/node": "^25.3.3",
-    "tsx": "^4.21.0",
-    "typescript": "~5.7.0"
+    "@playwright/test": "~1.58.0",
+    "@types/node": "~20.19.0",
+    "esbuild": "~0.27.4",
+    "tsx": "~4.21.0",
+    "typescript": "~5.9.3"
   },
   "keywords": [
     "playwright",

@@ -130,6 +130,9 @@ export function wrapElement<T extends Record<string, unknown>>(
   actions?: readonly (keyof T & string)[],
   meta?: WrapElementMeta,
 ): T {
+  if (!elementType?.trim()) {
+    throw new RangeError("wrapElement: elementType must be a non-empty string");
+  }
   // Attach ACTIONS metadata when the caller supplies an explicit allowlist.
   if (actions) {
     Object.defineProperty(element, ACTIONS, {
@@ -187,6 +190,17 @@ export function wrapElement<T extends Record<string, unknown>>(
   // copies every enumerable own property, and `defineProperty`
   // overwrites only the action methods that need middleware wrapping.
   const wrapped: Record<string | symbol, unknown> = { ...element };
+
+  // P3-235: Copy the ACTIONS symbol explicitly — spread only copies
+  // enumerable own properties and ACTIONS is non-enumerable.
+  if (actionSet) {
+    Object.defineProperty(wrapped, ACTIONS, {
+      value: actionSet,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
 
   for (const key of Object.keys(element)) {
     const value = (element as Record<string, unknown>)[key];
@@ -249,6 +263,17 @@ export function wrapElement<T extends Record<string, unknown>>(
   // invariant.  All element factories define every property upfront, so
   // this is safe for built-in elements.  Extension authors who build
   // custom elements must also define everything before calling wrapElement.
+  //
+  // **Custom handler state:** Because the returned element is frozen,
+  // custom handlers that need to store per-element state should use a
+  // WeakMap keyed by the element's underlying Locator:
+  //
+  //   const handlerState = new WeakMap<Locator, MyState>();
+  //   // in set(): handlerState.set(el.locator, { ... });
+  //   // in get(): handlerState.get(el.locator);
+  //
+  // Attempting to assign properties on a frozen element will silently
+  // fail in sloppy mode or throw TypeError in strict mode.
   Object.freeze(wrapped);
 
   return wrapped as T;

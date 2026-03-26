@@ -7,9 +7,10 @@ export default defineConfig({
   },
   server: {
     port: 3007,
+    strictPort: true,
     fs: { allow: ['.', '../../shared'] },
   },
   build: {
-    target: 'es2021',
+    target: 'es2022',
   },
 });

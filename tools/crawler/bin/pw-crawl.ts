@@ -26,8 +26,40 @@ import { crawlPage, diffPage } from "../src/crawler.js";
 import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName } from "../src/naming.js";
+import { DomRecorder } from "../src/recorder.js";
+import { mergeManifest } from "../src/merge.js";
 import type { CrawlerManifest } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
+
+// ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
+
+/** Parse JSON with a user-friendly error message including file path. */
+function safeJsonParse<T = unknown>(raw: string, filePath: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    console.error(`Error: Invalid JSON in ${filePath}: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+/** P2-285: Lightweight manifest schema validation. */
+function validateManifest(data: unknown, filePath: string): CrawlerManifest {
+  if (!data || typeof data !== "object") {
+    console.error(`Error: ${filePath} is not a valid manifest object`);
+    process.exit(1);
+  }
+  const obj = data as Record<string, unknown>;
+  if (!Array.isArray(obj.groups)) {
+    console.error(`Error: ${filePath} is missing required "groups" array`);
+    process.exit(1);
+  }
+  if (typeof obj.url !== "string") {
+    console.error(`Error: ${filePath} is missing required "url" string`);
+    process.exit(1);
+  }
+  return data as CrawlerManifest;
+}
 
 // ── Argument parsing ────────────────────────────────────────
 
@@ -53,7 +85,25 @@ interface GenerateArgs {
   help: boolean;
 }
 
-type CliArgs = CrawlArgs | GenerateArgs;
+interface RecordArgs {
+  mode: "record";
+  url: string;
+  output?: string;
+  scope?: string;
+  help: boolean;
+}
+
+type CliArgs = CrawlArgs | GenerateArgs | RecordArgs;
+
+/** Validate that argv[index] exists and is not another flag. */
+function requireValue(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (value === undefined || value.startsWith("-")) {
+    console.error(`Error: ${flag} requires a value`);
+    process.exit(1);
+  }
+  return value;
+}
 
 function parseCrawlArgs(argv: string[]): CrawlArgs {
   const args: CrawlArgs = {
@@ -72,20 +122,20 @@ function parseCrawlArgs(argv: string[]): CrawlArgs {
     switch (arg) {
       case "-o":
       case "--output":
-        args.output = argv[++i];
+        args.output = requireValue(argv, ++i, arg);
         break;
       case "--pass":
-        args.pass = parseInt(argv[++i], 10);
+        args.pass = parseInt(requireValue(argv, ++i, arg), 10);
         if (isNaN(args.pass) || args.pass < 1) {
           console.error("Error: --pass must be a positive integer");
           process.exit(1);
         }
         break;
       case "--scope":
-        args.scope = argv[++i];
+        args.scope = requireValue(argv, ++i, arg);
         break;
       case "--diff":
-        args.diff = argv[++i];
+        args.diff = requireValue(argv, ++i, arg);
         break;
       case "--observe-network":
         args.observeNetwork = true;
@@ -126,16 +176,16 @@ function parseGenerateArgs(argv: string[]): GenerateArgs {
     switch (arg) {
       case "-o":
       case "--output":
-        args.output = argv[++i];
+        args.output = requireValue(argv, ++i, arg);
         break;
       case "--check":
-        args.check = argv[++i];
+        args.check = requireValue(argv, ++i, arg);
         break;
       case "--config":
-        args.configFile = argv[++i];
+        args.configFile = requireValue(argv, ++i, arg);
         break;
       case "--framework-import":
-        args.frameworkImport = argv[++i];
+        args.frameworkImport = requireValue(argv, ++i, arg);
         break;
       case "-h":
       case "--help":
@@ -157,11 +207,52 @@ function parseGenerateArgs(argv: string[]): GenerateArgs {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  // Check if first positional arg is "generate"
+  // Check if first positional arg is "generate" or "record"
   if (argv[0] === "generate") {
     return parseGenerateArgs(argv.slice(1));
   }
+  if (argv[0] === "record") {
+    return parseRecordArgs(argv.slice(1));
+  }
   return parseCrawlArgs(argv);
+}
+
+function parseRecordArgs(argv: string[]): RecordArgs {
+  const args: RecordArgs = {
+    mode: "record",
+    url: "",
+    help: false,
+  };
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case "-o":
+      case "--output":
+        args.output = requireValue(argv, ++i, arg);
+        break;
+      case "--scope":
+        args.scope = requireValue(argv, ++i, arg);
+        break;
+      case "-h":
+      case "--help":
+        args.help = true;
+        break;
+      default:
+        if (!arg.startsWith("-") && !args.url) {
+          args.url = arg;
+        } else if (arg.startsWith("-")) {
+          console.error(`Unknown option: ${arg}`);
+          process.exit(1);
+        }
+        break;
+    }
+    i++;
+  }
+
+  return args;
 }
 
 function printHelp(): void {
@@ -170,6 +261,7 @@ pw-crawl — Runtime page crawler and page object generator for @playwright-elem
 
 Usage:
   pw-crawl <url> [options]                         Crawl a page
+  pw-crawl record <url> [options]                  Record mode (interactive)
   pw-crawl generate <manifests...> [options]       Generate page objects
 
 ── Crawl Mode ──────────────────────────────────────────────────
@@ -184,6 +276,19 @@ Options:
   --diff <file>            Compare current DOM against existing manifest
   --observe-network        Capture API dependencies during crawl
   --headed                 Run browser in headed mode (visible)
+
+── Record Mode (Interactive) ───────────────────────────────────
+
+  Opens a headed browser with a DOM flight recorder injected.
+  Interact with the page to trigger dialogs, toasts, and dynamic
+  elements. Press Ctrl+C to harvest all discovered groups.
+
+Arguments:
+  <url>                    URL of the page to record (required)
+
+Options:
+  -o, --output <file>      Write/merge manifest to file (default: stdout)
+  --scope <selector>       Limit recording to a section of the page
 
 ── Generate Mode ───────────────────────────────────────────────
 
@@ -205,6 +310,9 @@ Options:
   # Crawl
   pw-crawl http://localhost:3001 -o manifest.json
   pw-crawl http://localhost:3001 --diff manifest.json
+
+  # Record (interactive — discover dialogs, toasts, etc.)
+  pw-crawl record http://localhost:3001 -o manifest.json
 
   # Generate (single manifest)
   pw-crawl generate manifest.json -o pages/
@@ -241,7 +349,7 @@ async function runGenerate(args: GenerateArgs): Promise<void> {
       process.exit(1);
     }
     const raw = await readFile(configPath, "utf-8");
-    config = JSON.parse(raw);
+    config = safeJsonParse<EmitterConfig>(raw, configPath);
   }
 
   const frameworkImport = args.frameworkImport ?? config.frameworkImport ?? "@playwright-elements/core";
@@ -255,7 +363,7 @@ async function runGenerate(args: GenerateArgs): Promise<void> {
       process.exit(1);
     }
     const raw = await readFile(fullPath, "utf-8");
-    const manifest: CrawlerManifest = JSON.parse(raw);
+    const manifest = validateManifest(safeJsonParse(raw, fullPath), fullPath);
 
     // Infer route name from filename or manifest URL
     const rawFromFilename = basename(manifestPath, ".json").replace(/-manifest$/, "");
@@ -349,6 +457,79 @@ async function runGenerate(args: GenerateArgs): Promise<void> {
   }
 }
 
+// ── Record mode ─────────────────────────────────────────────
+
+async function runRecord(args: RecordArgs): Promise<void> {
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (!args.url) {
+    console.error("Error: URL is required. Use --help for usage information.");
+    process.exit(1);
+  }
+
+  // Load existing manifest if -o file already exists (for merge)
+  let existing: CrawlerManifest | null = null;
+  if (args.output) {
+    const outputPath = resolve(args.output);
+    if (existsSync(outputPath)) {
+      const raw = await readFile(outputPath, "utf-8");
+      existing = safeJsonParse<CrawlerManifest>(raw, outputPath);
+      console.error(`  ℹ Loaded existing manifest (${existing!.groups.length} groups)`);
+    }
+  }
+
+  // Record mode always runs headed so the user can interact
+  const browser = await chromium.launch({ headless: false });
+
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    await page.goto(args.url, { waitUntil: "domcontentloaded" });
+
+    const recorder = new DomRecorder(page);
+    await recorder.start();
+
+    console.error("  ● Recording — interact with the page to trigger dynamic elements.");
+    console.error("  ● Press Ctrl+C when done to harvest and save.\n");
+
+    // Wait until the user sends SIGINT (Ctrl+C)
+    await new Promise<void>((resolve) => {
+      const handler = () => {
+        process.off("SIGINT", handler);
+        resolve();
+      };
+      process.on("SIGINT", handler);
+    });
+
+    console.error("\n  ⏳ Harvesting recorded elements…");
+
+    const groups = await recorder.harvest();
+    await recorder.stop();
+
+    console.error(`  ✓ Recorded ${groups.length} new group(s)`);
+
+    // Merge into existing manifest or create new one
+    const manifest = mergeManifest(existing, groups, args.url, (existing?.passCount ?? 0) + 1, args.scope ?? null);
+
+    const json = JSON.stringify(manifest, null, 2);
+
+    if (args.output) {
+      const outputPath = resolve(args.output);
+      await writeFile(outputPath, json + "\n", "utf-8");
+      console.error(`  ✓ Manifest written to ${outputPath}`);
+      console.error(`  Total groups: ${manifest.groups.length}`);
+    } else {
+      console.log(json);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -356,6 +537,10 @@ async function main(): Promise<void> {
 
   if (args.mode === "generate") {
     return runGenerate(args);
+  }
+
+  if (args.mode === "record") {
+    return runRecord(args);
   }
 
   // ── Crawl mode (existing behavior) ─────────────────────
@@ -383,7 +568,7 @@ async function main(): Promise<void> {
         process.exit(1);
       }
       const existingRaw = await readFile(diffPath, "utf-8");
-      const existing: CrawlerManifest = JSON.parse(existingRaw);
+      const existing = validateManifest(safeJsonParse(existingRaw, diffPath), diffPath);
 
       await page.goto(args.url, { waitUntil: "domcontentloaded" });
       const diff = await diffPage(page, existing, { scope: args.scope });
@@ -412,7 +597,7 @@ async function main(): Promise<void> {
       if (diff.changed.length > 0) {
         console.log(`\n  Changed (${diff.changed.length}):`);
         for (const c of diff.changed) {
-          console.log(`    ~ "${c.before.label}" → "${c.after.label}" (${c.selector})`);
+          console.log(`    ~ "${c.before.label}" → "${c.after.label}" (${c.mergeKey})`);
         }
       }
 
@@ -427,7 +612,7 @@ async function main(): Promise<void> {
       const outputPath = resolve(args.output);
       if (existsSync(outputPath)) {
         const raw = await readFile(outputPath, "utf-8");
-        existing = JSON.parse(raw);
+        existing = safeJsonParse<CrawlerManifest>(raw, outputPath);
       }
     }
 

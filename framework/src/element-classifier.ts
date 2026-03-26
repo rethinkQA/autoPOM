@@ -26,6 +26,19 @@ export type SerializedEntry = { idx: number; detect: DetectRule[] };
  * Classify a DOM element by running the full detection ruleset and
  * returning the matching handler.
  *
+ * **Detection order (P2-180):**
+ *
+ * Handlers are evaluated in **registration order** (index in the handler
+ * array). The **lowest-index** handler whose detect rules match wins.
+ * Built-in handlers are registered in the order defined in
+ * `DEFAULT_HANDLERS` in `default-handlers.ts`. Custom handlers added via
+ * `registerHandler(handler, "first")` are prepended (winning over built-ins),
+ * while `registerHandler(handler, "last")` appends before the fallback.
+ *
+ * When multiple handlers could match the same element, the one registered
+ * earlier (lower index) takes priority. There is no separate "priority"
+ * field — ordering alone determines precedence.
+ *
  * **Phase 1** — a single `evaluate()` round-trip checks tag, role,
  * attr, and inputType.  Rules that also require a child selector
  * are collected as candidates rather than checked via `querySelector`
@@ -37,7 +50,7 @@ export type SerializedEntry = { idx: number; detect: DetectRule[] };
  *
  * ---
  *
- * **Shoelace / Web Component Shadow DOM Risk (Issue 116, Phase 9.5.3):**
+ * **Shoelace / Web Component Shadow DOM (Issue 116, Phase 9.5.3):**
  *
  * Shoelace components nest multiple shadow roots (e.g.
  * `<sl-select>` → shadow → `<sl-popup>` → shadow → `<sl-option>`).
@@ -46,16 +59,19 @@ export type SerializedEntry = { idx: number; detect: DetectRule[] };
  * boundaries.  Phase 2's Playwright `locator().count()` **does** pierce
  * one level of shadow DOM, but may not reach deeply nested children.
  *
- * **Expected fix path for Phase 10.6 (Shoelace / Lit migration):**
- * - Add tag-name-based detect rules (e.g. `{ tags: ["sl-select"] }`)
- *   that match Shoelace custom elements without relying on
- *   `requireChild` at all.
- * - Register these via `createHandler({ extends: "select", ... })` with
- *   Shoelace-specific detect rules and a custom `SelectAdapter`.
- * - If deeply nested `requireChild` detection is needed, consider a
- *   recursive shadow DOM query helper in a future phase.
+ * **Mitigation (P1-18):** Shoelace custom elements (`sl-select`, etc.)
+ * are detected via tag-name-based detect rules in `default-handlers.ts`
+ * that do not rely on `requireChild` at all.  This sidesteps the
+ * multi-level shadow DOM limitation for known web component libraries.
+ * If deeply nested `requireChild` detection is needed for unknown
+ * components, a recursive shadow DOM query helper can be added.
  *
- * See also: ROADMAP.md Phase 10.6 checklist.
+ * **Limitation for unknown component libraries:** If your web component
+ * library nests multiple shadow roots (3+ levels), `requireChild`-based
+ * detection will not work.  Instead, register a custom handler with
+ * tag-name-based detect rules (e.g. `{ tags: ["my-custom-select"] }`)
+ * that bypass `requireChild` entirely.  See the handler authoring guide
+ * in `extend.ts` and `registerHandler()` for examples.
  *
  * ---
  *
@@ -99,10 +115,11 @@ export async function classifyElement(
           let primary = false;
 
           if (rule.tags?.includes(tag)) {
-            if (rule.inputTypes && !rule.inputTypes.includes(inputType)) {
-              continue;
+            if (!rule.inputTypes || rule.inputTypes.includes(inputType)) {
+              primary = true;
             }
-            primary = true;
+            // P3-309: When inputTypes doesn't match, don't continue to next
+            // rule — fall through to check roles/attr branches instead.
           }
 
           if (!primary && rule.roles && role && rule.roles.includes(role)) {
@@ -146,15 +163,42 @@ export async function classifyElement(
   // which pierce Shadow DOM unlike querySelector inside evaluate().
   // Candidates are already filtered to only those with lower idx than
   // the best direct match, so the first verified candidate wins overall.
+  // NOTE: locator().count() uses Playwright's global timeout (default 30s).
+  // This is acceptable because count() returns immediately for attached
+  // elements; the timeout only applies if the page is navigating.
   for (const candidate of result.candidates) {
-    const count = await el.locator(candidate.requireChild).count();
-    if (count > 0) return handlers[candidate.idx];
+    try {
+      const count = await el.locator(candidate.requireChild).count();
+      if (count > 0) return handlers[candidate.idx];
+    } catch (err) {
+      const handlerType = handlers[candidate.idx]?.type ?? `index ${candidate.idx}`;
+      throw new Error(
+        `classifyElement: invalid requireChild CSS selector "${candidate.requireChild}" ` +
+        `in handler "${handlerType}". Ensure the selector is valid CSS. Original error: ${err}`,
+        { cause: err },
+      );
+    }
   }
 
   // Fall back to direct match if no requireChild candidate verified
   if (result.idx >= 0) return handlers[result.idx];
 
   const desc = `<${result.tag}${result.role ? ` role="${result.role}"` : ""}>`;
+
+  // Build debugging information listing the rules that were evaluated.
+  const checkedRules = serialized.map(({ idx, detect }) => {
+    const handler = handlers[idx];
+    const ruleSummaries = detect.map((r) => {
+      const parts: string[] = [];
+      if (r.tags) parts.push(`tags=[${r.tags.join(",")}]`);
+      if (r.inputTypes) parts.push(`inputTypes=[${r.inputTypes.join(",")}]`);
+      if (r.roles) parts.push(`roles=[${r.roles.join(",")}]`);
+      if (r.attr) parts.push(`attr=[${r.attr[0]}=${r.attr[1]}]`);
+      if (r.requireChild) parts.push(`requireChild="${r.requireChild}"`);
+      return parts.join(", ");
+    });
+    return `  "${handler.type}": [${ruleSummaries.join("; ")}]`;
+  });
 
   if (options?.fallback) {
     logger.debug(
@@ -165,9 +209,15 @@ export async function classifyElement(
     return fallback;
   }
 
+  const roleClause = result.role ? `, roles: ["${result.role}"]` : "";
+  const roleDesc = result.role || "(none)";
+
   throw new NoHandlerMatchError(
-    `[classifyElement] No handler matched ${desc}. ` +
-    `Register a custom handler for this element or pass { fallback: true } to detectHandler.`,
+    "[classifyElement] No handler matched " + desc + ".\n" +
+    "Element: tag=\"" + result.tag + "\", role=\"" + roleDesc + "\".\n" +
+    "Checked " + serialized.length + " handler detection rules:\n" + checkedRules.join("\n") + "\n" +
+    "To handle this element, register a custom handler:\n" +
+    `  registerHandler({ type: "my-${result.tag}", detect: [{ tags: ["${result.tag}"]${roleClause} }], set: mySetFn, get: myGetFn })`,
     { tag: result.tag, role: result.role || undefined },
   );
 }

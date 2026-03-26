@@ -150,8 +150,9 @@ test.describe("Order Controls — radio, stepper, date picker", () => {
   });
 
   test("clear date picker resets output", async ({ page }, testInfo) => {
-    // vue-datepicker and flatpickr maintain internal state; clearing via fill/keyboard
-    // does not propagate — these libraries require their own clear mechanisms.
+    // [P1-13] Known limitation: vue-datepicker and flatpickr maintain internal state;
+    // clearing via fill/keyboard does not propagate — these libraries require their
+    // own clear mechanisms (e.g., a clear button or programmatic API).
     const project = testInfo.project.name;
     test.skip(project === "vue" || project === "svelte",
       "Library date picker does not support clearing via fill/keyboard");
@@ -172,5 +173,8 @@ test.describe("Order Controls — radio, stepper, date picker", () => {
     // Verify the date display resets (empty, placeholder, or original state)
     const dateText = await home.dateDisplay.read();
     expect(dateText).not.toBe("March 15, 2026");
+    // Also verify the field is actually empty or shows a placeholder — not a different date
+    const looksLikeDate = /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}$/.test(dateText);
+    expect(looksLikeDate).toBe(false);
   });
 });

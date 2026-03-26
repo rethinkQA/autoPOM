@@ -84,11 +84,9 @@ test.describe("retryUntil", () => {
 
   test("respects progressive interval schedule", async () => {
     const timestamps: number[] = [];
-    let attempts = 0;
     await expect(
       retryUntil(async () => {
         timestamps.push(Date.now());
-        attempts++;
         return { ok: false, retryable: true, error: new Error("retry") };
       }, { timeout: 500, intervals: [50, 100, 200] }),
     ).rejects.toThrow();

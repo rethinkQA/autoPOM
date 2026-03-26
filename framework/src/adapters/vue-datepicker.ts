@@ -19,21 +19,35 @@ import type { ActionOptions } from "../handler-types.js";
 
 function parseDate(dateStr: string) {
   const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(
+      `Invalid date string "${dateStr}": expected format YYYY-MM-DD with month 1–12 and day 1–31.`,
+    );
+  }
+  // Validate the date actually exists (e.g. reject Feb 31)
+  const date = new Date(year, month - 1, day);
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error(
+      `Invalid date "${dateStr}": ${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} does not exist.`,
+    );
+  }
   return { year, month, day };
 }
 
 /**
- * Build a map of localized short month names to 1-based month indices.
- *
- * Example (en-US): `{ "Jan": 1, "Feb": 2, … }`
+ * Build a map of localized short month names to 1-based month indices
+ * inside the browser context, ensuring the month strings match what
+ * the date picker actually renders (P2-173).
  */
-function buildMonthMap(locale: string): Record<string, number> {
-  const map: Record<string, number> = {};
-  for (let m = 0; m < 12; m++) {
-    const name = new Date(2000, m, 1).toLocaleString(locale, { month: "short" });
-    map[name] = m + 1;
-  }
-  return map;
+async function buildMonthMapInBrowser(page: import("@playwright/test").Page, locale: string): Promise<Record<string, number>> {
+  return page.evaluate((loc) => {
+    const map: Record<string, number> = {};
+    for (let m = 0; m < 12; m++) {
+      const name = new Date(2000, m, 1).toLocaleString(loc, { month: "short" });
+      map[name] = m + 1;
+    }
+    return map;
+  }, locale);
 }
 
 function shortMonthName(month: number, locale: string): string {
@@ -46,13 +60,21 @@ function shortMonthName(month: number, locale: string): string {
  * @param locale - Locale for month name parsing (default: `"en-US"`).
  */
 export function createVueDatePickerAdapter(locale = "en-US"): DatePickerAdapter {
-  const monthMap = buildMonthMap(locale);
+  // P2-173: Month map is built lazily in the browser context on first use
+  // to ensure month strings match what the date picker renders.
+  let cachedMonthMap: Record<string, number> | null = null;
 
   return {
     async select(el: Locator, dateStr: string, options?: ActionOptions) {
       const { year, month, day } = parseDate(dateStr);
       const timeout = options?.timeout;
       const page = el.page();
+
+      // Build month map in browser context on first use (P2-173)
+      if (!cachedMonthMap) {
+        cachedMonthMap = await buildMonthMapInBrowser(page, locale);
+      }
+      const monthMap = cachedMonthMap;
 
       // Click the input to open the calendar popup
       await el.click({ timeout });
@@ -79,7 +101,7 @@ export function createVueDatePickerAdapter(locale = "en-US"): DatePickerAdapter 
         if (dispMonthIndex === 0 || isNaN(dispYearNum)) {
           // Cannot parse — fall back to clicking next
           await menu.locator('[aria-label="Next month"]').click({ timeout });
-          await page.waitForTimeout(100);
+          await menu.locator('[data-dp-element="overlay-month"]').waitFor({ state: "attached", timeout });
           continue;
         }
 
@@ -89,7 +111,18 @@ export function createVueDatePickerAdapter(locale = "en-US"): DatePickerAdapter 
           ? menu.locator('[aria-label="Previous month"]')
           : menu.locator('[aria-label="Next month"]');
         await arrow.click({ timeout });
-        await page.waitForTimeout(100);
+        await menu.locator('[data-dp-element="overlay-month"]').waitFor({ state: "attached", timeout });
+      }
+
+      // Throw if navigation failed — prevents selecting a day in the wrong month.
+      {
+        const finalMonth = (await menu.locator('[data-dp-element="overlay-month"]').textContent({ timeout }))?.trim();
+        const finalYear = (await menu.locator('[data-dp-element="overlay-year"]').textContent({ timeout }))?.trim();
+        if (finalMonth !== targetShort || finalYear !== String(year)) {
+          throw new Error(
+            `vue-datepicker: failed to navigate to ${targetShort} ${year} after ${maxAttempts} attempts (stuck on "${finalMonth} ${finalYear}")`,
+          );
+        }
       }
 
       // Click the target day cell
@@ -97,6 +130,9 @@ export function createVueDatePickerAdapter(locale = "en-US"): DatePickerAdapter 
         `.dp__calendar_item .dp__cell_inner:not(.dp__cell_offset)`
       ).filter({ hasText: new RegExp(`^${day}$`) });
       await dayCell.first().click({ timeout });
+
+      // Wait for the calendar popup to close after day selection (P2-185).
+      await menu.waitFor({ state: "hidden", timeout }).catch(() => {});
     },
 
     async read(el: Locator, options?: ActionOptions) {

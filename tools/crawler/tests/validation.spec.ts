@@ -17,16 +17,19 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { crawlPage } from "../src/crawler.js";
+import { recordPage } from "../src/record-api.js";
 import { emitPageObject } from "../src/emitter.js";
 import { extractProperties, diffPageObjects } from "../src/emitter-diff.js";
 import type { CrawlerManifest, ManifestGroup, WrapperType } from "../src/types.js";
 
 // ── Paths to hand-written page objects ──────────────────────
 
+// Paths to hand-written page objects
 const HAND_WRITTEN_HOME = resolve(
   import.meta.dirname,
   "../../../framework/tests/pages/home.ts",
 );
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for about-page validation
 const HAND_WRITTEN_ABOUT = resolve(
   import.meta.dirname,
   "../../../framework/tests/pages/about.ts",
@@ -46,7 +49,8 @@ function findGroupByLabel(manifest: CrawlerManifest, pattern: RegExp): ManifestG
  * Extract the factory names used in a hand-written page object.
  * Returns the set of factory calls like "group(", "table(", "dialog(", "toast(".
  */
-function extractFactories(source: string): Set<string> {
+ 
+function _extractFactories(source: string): Set<string> {
   const factories = new Set<string>();
   const regex = /\b(group|table|dialog|toast|radio|stepper|datePicker|button|text)\s*\(/g;
   let match: RegExpExecArray | null;
@@ -106,47 +110,82 @@ test.describe("Phase 13.0: Structural Comparison — Home Page", () => {
     }
   });
 
-  test("manifest contains dialog wrapper (vanilla only — others need pass 2)", async ({ page }, testInfo) => {
-    // Dialog is always in DOM for vanilla; portaled for other frameworks
-    if (testInfo.project.name !== "vanilla") {
-      test.skip();
-      return;
-    }
+  test("manifest contains dialog wrapper", async ({ page }, testInfo) => {
+    // [P1-13] Non-vanilla apps need recorder to discover portaled dialogs.
+    const project = testInfo.project.name;
     await page.goto("/");
-    const manifest = await crawlPage(page);
-    const dialogs = groupsByWrapper(manifest, "dialog");
-    expect(dialogs.length).toBeGreaterThanOrEqual(1);
+
+    if (project === "vanilla") {
+      const manifest = await crawlPage(page);
+      const dialogs = groupsByWrapper(manifest, "dialog");
+      expect(dialogs.length).toBeGreaterThanOrEqual(1);
+    } else {
+      const base = await crawlPage(page);
+      const manifest = await recordPage(page, async (p) => {
+        await p.locator("table >> text=Wireless Mouse").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+      const dialogs = groupsByWrapper(manifest, "dialog");
+      expect(dialogs.length).toBeGreaterThanOrEqual(1);
+    }
   });
 
-  test("manifest contains toast wrapper (vanilla only — others conditionally render)", async ({ page }, testInfo) => {
-    if (testInfo.project.name !== "vanilla") {
-      test.skip();
-      return;
-    }
+  test("manifest contains toast wrapper", async ({ page }, testInfo) => {
+    // [P1-13] Non-vanilla apps need recorder to discover conditionally rendered toasts.
+    const project = testInfo.project.name;
     await page.goto("/");
-    const manifest = await crawlPage(page);
-    const toasts = groupsByWrapper(manifest, "toast");
-    expect(toasts.length).toBeGreaterThanOrEqual(1);
+
+    if (project === "vanilla") {
+      const manifest = await crawlPage(page);
+      const toasts = groupsByWrapper(manifest, "toast");
+      expect(toasts.length).toBeGreaterThanOrEqual(1);
+    } else {
+      const base = await crawlPage(page);
+      const manifest = await recordPage(page, async (p) => {
+        await p.locator("button >> text=Add to Cart").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+      const toasts = groupsByWrapper(manifest, "toast");
+      expect(toasts.length).toBeGreaterThanOrEqual(1);
+    }
   });
 
-  test("emitter output generates dialog() factory for vanilla", async ({ page }, testInfo) => {
-    if (testInfo.project.name !== "vanilla") {
-      test.skip();
-      return;
-    }
+  test("emitter output generates dialog() factory", async ({ page }, testInfo) => {
+    // [P1-13] Non-vanilla apps use recorder to discover portaled dialogs.
+    const project = testInfo.project.name;
     await page.goto("/");
-    const manifest = await crawlPage(page);
+    let manifest;
+
+    if (project === "vanilla") {
+      manifest = await crawlPage(page);
+    } else {
+      const base = await crawlPage(page);
+      manifest = await recordPage(page, async (p) => {
+        await p.locator("table >> text=Wireless Mouse").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+    }
+
     const generated = emitPageObject(manifest, { routeName: "home" });
     expect(generated).toContain("dialog(");
   });
 
-  test("emitter output generates toast() factory for vanilla", async ({ page }, testInfo) => {
-    if (testInfo.project.name !== "vanilla") {
-      test.skip();
-      return;
-    }
+  test("emitter output generates toast() factory", async ({ page }, testInfo) => {
+    // [P1-13] Non-vanilla apps use recorder to discover conditionally rendered toasts.
+    const project = testInfo.project.name;
     await page.goto("/");
-    const manifest = await crawlPage(page);
+    let manifest;
+
+    if (project === "vanilla") {
+      manifest = await crawlPage(page);
+    } else {
+      const base = await crawlPage(page);
+      manifest = await recordPage(page, async (p) => {
+        await p.locator("button >> text=Add to Cart").first().click();
+        await p.waitForTimeout(500);
+      }, { existing: base });
+    }
+
     const generated = emitPageObject(manifest, { routeName: "home" });
     expect(generated).toContain("toast(");
   });

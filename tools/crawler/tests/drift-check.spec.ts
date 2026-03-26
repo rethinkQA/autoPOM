@@ -17,7 +17,6 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { crawlPage, diffPage } from "../src/crawler.js";
-import { diffManifest } from "../src/merge.js";
 import { emitPageObject } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import type { CrawlerManifest } from "../src/types.js";
@@ -42,18 +41,17 @@ async function loadBaseline(projectName: string): Promise<CrawlerManifest | null
 test.describe("Phase 13.2: Drift Detection — Manifest", () => {
   test("no manifest drift on home page", async ({ page }, testInfo) => {
     const baseline = await loadBaseline(testInfo.project.name);
-    if (!baseline) {
-      test.skip();
-      return;
-    }
+    expect(baseline,
+      `No baseline manifest for ${testInfo.project.name}. Run: npm run save-baselines`,
+    ).not.toBeNull();
 
     await page.goto("/");
-    const diff = await diffPage(page, baseline);
+    const diff = await diffPage(page, baseline!);
 
     if (!diff.unchanged) {
       const addedLabels = diff.added.map((g) => g.label).join(", ");
       const removedLabels = diff.removed.map((g) => g.label).join(", ");
-      const changedLabels = diff.changed.map((c) => c.selector).join(", ");
+      const changedLabels = diff.changed.map((c) => c.mergeKey).join(", ");
 
       const report = [
         `Manifest drift detected for ${testInfo.project.name}:`,
@@ -74,16 +72,15 @@ test.describe("Phase 13.2: Drift Detection — Manifest", () => {
 test.describe("Phase 13.2: Drift Detection — Generated Page Objects", () => {
   test("generated page object has not drifted", async ({ page }, testInfo) => {
     const baseline = await loadBaseline(testInfo.project.name);
-    if (!baseline) {
-      test.skip();
-      return;
-    }
+    expect(baseline,
+      `No baseline manifest for ${testInfo.project.name}. Run: npm run save-baselines`,
+    ).not.toBeNull();
 
     await page.goto("/");
     const currentManifest = await crawlPage(page);
 
     // Generate page objects from both baseline and current manifests
-    const baselinePageObject = emitPageObject(baseline, {
+    const baselinePageObject = emitPageObject(baseline!, {
       routeName: "home",
       generatedMarkers: false,
     });

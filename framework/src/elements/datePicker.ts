@@ -15,6 +15,16 @@ export interface DatePickerAdapter {
   select(el: Locator, dateStr: string, options?: ActionOptions): Promise<void>;
   /** Read the currently selected date value from the picker. */
   read(el: Locator, options?: ActionOptions): Promise<string>;
+  /**
+   * Clear the date picker's current value.
+   *
+   * Optional — if not implemented, `datePicker.clear()` falls back to
+   * `fill("") + keyboard Backspace`.  Libraries like flatpickr and
+   * vue-datepicker maintain internal state that doesn't respond to
+   * `fill("")`; implement this method to dispatch to the library's
+   * own clear mechanism (e.g. flatpickr's `.clear()` API or v-model reset).
+   */
+  clear?(el: Locator, options?: ActionOptions): Promise<void>;
 }
 
 /** Default adapter for native <input type="date"> — fills the value directly. */
@@ -30,6 +40,13 @@ export const nativeDatePickerAdapter: DatePickerAdapter = {
 export interface DatePickerElement extends BaseElement<DatePickerElement> {
   select(dateStr: string, options?: ActionOptions): Promise<void>;
   read(options?: ActionOptions): Promise<string>;
+  /**
+   * Clear the date picker value.
+   *
+   * Dispatches to the adapter's `clear()` if implemented; otherwise
+   * falls back to `fill("") + keyboard Backspace`.
+   */
+  clear(options?: ActionOptions): Promise<void>;
 }
 
 export interface DatePickerOptions extends ElementOptions {
@@ -64,5 +81,25 @@ export function datePicker(
     async read(opts?: ActionOptions) {
       return adapter.read(await loc(), { timeout: t(opts) });
     },
-  }, ctx, ["select", "read"], meta);
+    async clear(opts?: ActionOptions) {
+      const el = await loc();
+      const timeout = t(opts);
+      if (adapter.clear) {
+        await adapter.clear(el, { timeout });
+      } else {
+        // Generic fallback: fill("") + keyboard clear
+        await el.fill("", { timeout });
+        // P3-239: Wait one event-loop turn for framework state to
+        // process the fill before checking the value.
+        await el.evaluate(() => new Promise<void>(r => requestAnimationFrame(() => r())));
+        const currentVal = await el.inputValue({ timeout }).catch(() => "");
+        if (currentVal !== "") {
+          await el.click({ clickCount: 3, timeout });
+          await el.press("Backspace", { timeout });
+          // Dismiss any popup opened by triple-click (P2-171).
+          await el.press("Escape", { timeout }).catch(() => {});
+        }
+      }
+    },
+  }, ctx, ["select", "read", "clear"], meta);
 }

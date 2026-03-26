@@ -41,6 +41,11 @@ export type RetryResult<T> =
  *
  * If the callback keeps returning retryable failures past the timeout
  * budget, the **last** error is re-thrown to the caller.
+ *
+ * **Edge case — `timeout: 0`:** The first attempt always executes
+ * regardless of the timeout value. With `timeout: 0` the deadline is
+ * "now", so after the first failure the loop exits immediately. This
+ * effectively means "one attempt, no retry."
  */
 export async function retryUntil<T>(
   fn: () => Promise<RetryResult<T>>,
@@ -51,7 +56,7 @@ export async function retryUntil<T>(
   let attempt = 0;
   let lastError: unknown;
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     let nonRetryableError: unknown = undefined;
     let hasNonRetryable = false;
@@ -90,7 +95,7 @@ export async function retryUntil<T>(
   }
 
   // Budget exhausted — propagate the last error.
-  throw lastError;
+  throw lastError ?? new Error("retryUntil: timeout exceeded with no error captured");
 }
 
 function sleep(ms: number): Promise<void> {

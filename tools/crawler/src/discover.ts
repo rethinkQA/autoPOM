@@ -55,6 +55,20 @@ const GROUP_SELECTOR = [
 
 // ── Label extraction ────────────────────────────────────────
 
+/** Which label resolution strategy was used (P2-161). */
+type LabelSource =
+  | "aria-label"
+  | "aria-labelledby"
+  | "legend"
+  | "summary"
+  | "heading"
+  | "deep-heading"
+  | "title"
+  | "ancestor-aria-label"
+  | "text-content"
+  | "id"
+  | "tag";
+
 interface RawGroupData {
   /** Unique index for stable ordering. */
   index: number;
@@ -88,6 +102,8 @@ interface RawGroupData {
   isVisible: boolean;
   /** A generated unique CSS selector for this element. */
   selector: string;
+  /** Whether the element contains an <input type="date"> or known date-picker component. */
+  containsDateInput: boolean;
 }
 
 /**
@@ -196,12 +212,16 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
           textNode = walker.nextNode();
         }
 
-        // Resolve aria-labelledby
-        const ariaLabelledBy = el.getAttribute("aria-labelledby");
-        let resolvedLabelledBy: string | null = null;
-        if (ariaLabelledBy) {
-          const refEl = document.getElementById(ariaLabelledBy);
-          resolvedLabelledBy = refEl?.textContent?.trim() ?? ariaLabelledBy;
+// Resolve aria-labelledby (may contain multiple space-separated IDs)
+            const ariaLabelledBy = el.getAttribute("aria-labelledby");
+            let resolvedLabelledBy: string | null = null;
+            if (ariaLabelledBy) {
+              const ids = ariaLabelledBy.trim().split(/\s+/);
+              const resolved = ids
+                .map(function(id) { return document.getElementById(id)?.textContent?.trim(); })
+                .filter(Boolean)
+                .join(" ");
+              resolvedLabelledBy = resolved || null;
         }
 
         // Visibility check
@@ -210,6 +230,7 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
         const isVisible =
           style.display !== "none" &&
           style.visibility !== "hidden" &&
+          style.opacity !== "0" &&
           !htmlEl.hidden &&
           (rect.width > 0 || rect.height > 0);
 
@@ -251,6 +272,13 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
           className: typeof className === "string" ? className : "",
           isVisible,
           selector,
+          containsDateInput: !!(
+            el.querySelector('input[type="date"]') ||
+            el.querySelector('input[type="datetime-local"]') ||
+            el.querySelector('[data-datepicker], [data-calendar], vue-date-picker') ||
+            // P3-204: additional date-picker library selectors
+            el.querySelector('.react-datepicker, .flatpickr-input, .mat-datepicker-input, [class*="datepicker"], [class*="date-picker"]')
+          ),
         });
       });
 
@@ -268,7 +296,7 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
  * rather than a human-authored one.
  */
 function isFrameworkId(id: string): boolean {
-  return /^[:_]r[_\d]|^_ng|^data-v-|^__vue|^\$|^:[a-z0-9]+:$|^svelte-[a-z0-9]+$/i.test(id);
+  return /^[:_]r[_\d]|^_ng|^data-v-|^__vue|^\$|^:[a-z0-9]+:$|^svelte-[a-z0-9]+$|^__next|^qwik-|^astro-/i.test(id);
 }
 
 /**
@@ -286,18 +314,18 @@ function isFrameworkId(id: string): boolean {
  * 10. id attribute (if it looks human-authored)
  * 11. Fallback: tag name
  */
-function resolveLabel(raw: RawGroupData): string {
-  if (raw.ariaLabel) return raw.ariaLabel;
-  if (raw.ariaLabelledBy && !isFrameworkId(raw.ariaLabelledBy)) return raw.ariaLabelledBy;
-  if (raw.legendText) return raw.legendText;
-  if (raw.summaryText) return raw.summaryText;
-  if (raw.headingText) return raw.headingText;
-  if (raw.deepHeadingText) return raw.deepHeadingText;
-  if (raw.titleAttr) return raw.titleAttr;
-  if (raw.nearestAncestorLabel) return raw.nearestAncestorLabel;
-  if (raw.firstTextContent) return raw.firstTextContent;
-  if (raw.id && !isFrameworkId(raw.id)) return raw.id;
-  return raw.tagName;
+function resolveLabel(raw: RawGroupData): { label: string; source: LabelSource } {
+  if (raw.ariaLabel) return { label: raw.ariaLabel, source: "aria-label" };
+  if (raw.ariaLabelledBy && !isFrameworkId(raw.ariaLabelledBy)) return { label: raw.ariaLabelledBy, source: "aria-labelledby" };
+  if (raw.legendText) return { label: raw.legendText, source: "legend" };
+  if (raw.summaryText) return { label: raw.summaryText, source: "summary" };
+  if (raw.headingText) return { label: raw.headingText, source: "heading" };
+  if (raw.deepHeadingText) return { label: raw.deepHeadingText, source: "deep-heading" };
+  if (raw.titleAttr) return { label: raw.titleAttr, source: "title" };
+  if (raw.nearestAncestorLabel) return { label: raw.nearestAncestorLabel, source: "ancestor-aria-label" };
+  if (raw.firstTextContent) return { label: raw.firstTextContent, source: "text-content" };
+  if (raw.id && !isFrameworkId(raw.id)) return { label: raw.id, source: "id" };
+  return { label: raw.tagName, source: "tag" };
 }
 
 // ── Type classification ─────────────────────────────────────
@@ -347,9 +375,22 @@ function classifyWrapperType(raw: RawGroupData): WrapperType {
 
 /**
  * Check if a group is likely a date picker container.
- * Uses label text heuristics since there is no universal DOM signal.
+ *
+ * Requires BOTH a structural DOM signal (contains a date input or date-picker
+ * component) AND a label-text heuristic, unless the element definitively
+ * contains an `<input type="date">` (which alone is sufficient).
+ * This avoids false positives on fieldsets that merely contain the word "date"
+ * or "delivery" in their label.
  */
 function isDatePickerCandidate(label: string, raw: RawGroupData): boolean {
+  // Only flag fieldset/form groups, not tables or dialogs
+  if (raw.tagName !== "fieldset" && raw.role !== "group") return false;
+
+  // Strong DOM signal — definitive regardless of label
+  if (raw.containsDateInput) return true;
+
+  // Label-only heuristic: require at least two pattern matches to reduce
+  // false positives (e.g. a "delivery" fieldset that isn't a date picker)
   const lower = label.toLowerCase();
   const datePatterns = [
     /\bdate\b/,
@@ -359,9 +400,8 @@ function isDatePickerCandidate(label: string, raw: RawGroupData): boolean {
     /\bdate.*pick/,
     /\bschedul/,
   ];
-  // Only flag fieldset/form groups, not tables or dialogs
-  if (raw.tagName !== "fieldset" && raw.role !== "group") return false;
-  return datePatterns.some((p) => p.test(lower));
+  const matchCount = datePatterns.filter((p) => p.test(lower)).length;
+  return matchCount >= 2;
 }
 
 // ── Selector refinement ─────────────────────────────────────
@@ -380,31 +420,67 @@ function disambiguateSelectors(groups: ManifestGroup[]): ManifestGroup[] {
     selectorCounts.set(g.selector, (selectorCounts.get(g.selector) ?? 0) + 1);
   }
 
-  // Disambiguate
-  return groups.map((g) => {
+  // First pass: attempt label-based disambiguation
+  const result = groups.map((g) => {
     const count = selectorCounts.get(g.selector) ?? 1;
     if (count <= 1) return g;
 
     const idx = (selectorIndices.get(g.selector) ?? 0) + 1;
     selectorIndices.set(g.selector, idx);
 
-    // Try to make selector unique using label.
-    // Prefer standard CSS selectors — avoid Playwright-specific pseudo-classes
-    // like :text-is() or :has-text() since the manifest should be portable.
-    // The label is already stored in ManifestGroup.label for the emitter to use.
-    if (g.label && g.label !== g.selector.replace(/^[a-z]+/, "")) {
-      const escapedLabel = g.label.replace(/"/g, '\\"');
-      const baseTag = g.selector.split(/[.#\[]/)[0] || "*";
+    // P2-161: only use [aria-label="..."] if label actually came from aria-label
+    const labelSource = (g as any)._labelSource as LabelSource | undefined;
+    if (g.label && labelSource === "aria-label") {
+      const baseTag = g.selector.split(/[.#[]/)[0] || "*";
+      // P2-217: use CSS.escape-style quoting — replace backslash and double quotes properly
+      const escapedLabel = g.label.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       return {
         ...g,
         selector: `${baseTag}[aria-label="${escapedLabel}"]`,
       };
     }
 
-    // Fallback: nth-of-type
+    // For legend-sourced labels on fieldsets, use By.label pattern for emitter (P2-212)
+    if (g.label && labelSource === "legend" && g.selector.startsWith("fieldset")) {
+      const escapedLabel = g.label.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return {
+        ...g,
+        selector: `fieldset[aria-label="${escapedLabel}"]`,
+      };
+    }
+
+    // For title-sourced labels, use [title="..."]
+    if (g.label && labelSource === "title") {
+      const baseTag = g.selector.split(/[.#[]/)[0] || "*";
+      const escapedLabel = g.label.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return {
+        ...g,
+        selector: `${baseTag}[title="${escapedLabel}"]`,
+      };
+    }
+
+    // P2-276: use document-level index instead of :nth-of-type (which requires siblings)
     return {
       ...g,
-      selector: `${g.selector}:nth-of-type(${idx})`,
+      selector: `${g.selector} >> nth=${idx - 1}`,
+    };
+  });
+
+  // P2-224: second pass — detect remaining duplicates after label-based disambiguation
+  // and fall back to positional indexing
+  const finalCounts = new Map<string, number>();
+  for (const g of result) {
+    finalCounts.set(g.selector, (finalCounts.get(g.selector) ?? 0) + 1);
+  }
+  const finalIndices = new Map<string, number>();
+  return result.map((g) => {
+    const count = finalCounts.get(g.selector) ?? 1;
+    if (count <= 1) return g;
+    const idx = (finalIndices.get(g.selector) ?? 0) + 1;
+    finalIndices.set(g.selector, idx);
+    return {
+      ...g,
+      selector: `${g.selector} >> nth=${idx - 1}`,
     };
   });
 }
@@ -428,7 +504,7 @@ export async function discoverGroups(
   const rawGroups = await extractRawGroups(page, options?.scope);
 
   const groups: ManifestGroup[] = rawGroups.map((raw) => {
-    const label = resolveLabel(raw);
+    const { label, source: labelSource } = resolveLabel(raw);
     const entry: ManifestGroup = {
       label,
       selector: raw.selector,
@@ -443,7 +519,12 @@ export async function discoverGroups(
     // DOM signal for date pickers — the engineer fills in the adapter manually)
     if (isDatePickerCandidate(label, raw)) {
       entry.notes = "needs-adapter";
+      // P2-213: classify as datePicker wrapper type
+      entry.wrapperType = "datePicker";
     }
+
+    // P2-161: track label source for disambiguation
+    (entry as any)._labelSource = labelSource;
 
     return entry;
   });
@@ -466,25 +547,44 @@ export async function discoverToasts(
   const toasts = await page.evaluate(
     ({ scope }: { scope: string | undefined }) => {
       /**
-       * Recursively collect all elements matching `selector` from
+       * Iteratively collect all elements matching `selector` from
        * a root node, piercing any shadow roots encountered.
+       * Single-pass traversal (P2-130 fix).
+       *
+       * NOTE: This is intentionally duplicated from extractRawGroups —
+       * each page.evaluate() runs in an isolated browser context that
+       * cannot share closures with Node.js code.
        */
       function querySelectorAllDeep(root: ParentNode, selector: string): Element[] {
         const results: Element[] = [];
-        for (const el of root.querySelectorAll(selector)) {
-          results.push(el);
-        }
-        for (const el of root.querySelectorAll("*")) {
-          if (el.shadowRoot) {
-            results.push(...querySelectorAllDeep(el.shadowRoot, selector));
+        const queue: ParentNode[] = [root];
+
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+
+          for (const el of current.querySelectorAll("*")) {
+            if (el.matches(selector)) {
+              results.push(el);
+            }
+            if (el.shadowRoot) {
+              queue.push(el.shadowRoot);
+            }
           }
         }
+
         return results;
       }
 
-      const container = scope
-        ? document.querySelector(scope) ?? document.body
-        : document.body;
+      // P2-302: warn instead of silently falling back to document.body
+      let container: ParentNode = document.body;
+      if (scope) {
+        const scoped = document.querySelector(scope);
+        if (!scoped) {
+          console.warn(`[pw-crawl] scope selector "${scope}" matched nothing — returning empty results`);
+          return [];
+        }
+        container = scoped;
+      }
 
       const liveRegions = querySelectorAllDeep(
         container,
@@ -501,17 +601,27 @@ export async function discoverToasts(
         const htmlEl = el as HTMLElement;
         const tag = el.tagName.toLowerCase();
 
-        // Skip live regions that are part of form controls (inline feedback)
-        // We only want standalone toast/notification elements
+        // Filter for toast/notification live regions.
+        // Include: known toast roles, common toast class patterns, and
+        // elements whose tag or attributes suggest notification intent.
         const role = el.getAttribute("role");
-        if (
+        const isToastRole =
           role === "status" ||
           role === "alert" ||
-          tag === "output" ||
+          role === "log" ||
+          tag === "output";
+        const isToastClass =
           htmlEl.classList.contains("toast") ||
           htmlEl.classList.contains("notification") ||
-          htmlEl.dataset.testid?.includes("toast")
-        ) {
+          htmlEl.classList.contains("snackbar") ||
+          htmlEl.classList.contains("flash") ||
+          htmlEl.classList.contains("flash-message") ||
+          htmlEl.classList.contains("alert");
+        // Exclude known non-toast live regions (form validation, loading spinners)
+        const isFormControl =
+          htmlEl.closest("fieldset, form, [role=\"group\"], [role=\"radiogroup\"]") !== null &&
+          !isToastClass;
+        if ((isToastRole || isToastClass) && !isFormControl) {
           const id = el.getAttribute("id");
           const ariaLabel = el.getAttribute("aria-label");
           const className = el.className;
@@ -549,7 +659,8 @@ export async function discoverToasts(
     { scope: options?.scope },
   );
 
-  return toasts.map((t) => ({
+  // P2-193: Apply disambiguation to toast results (same as discoverGroups)
+  return disambiguateSelectors(toasts.map((t) => ({
     label: t.label,
     selector: t.selector,
     groupType: "generic" as const,
@@ -557,7 +668,7 @@ export async function discoverToasts(
     discoveredIn: pass,
     visibility: (t.isVisible ? "static" : "dynamic") as Visibility,
     lastSeen: now,
-  }));
+  })));
 }
 
 export { GROUP_SELECTOR };

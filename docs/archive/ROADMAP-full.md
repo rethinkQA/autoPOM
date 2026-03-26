@@ -1,5 +1,7 @@
 # Implementation Roadmap
 
+> **⚠️ HISTORICAL** — Test counts and phase details in this file reflect the state at time of writing, not current totals. See [ROADMAP.md](../ROADMAP.md) for up-to-date information.
+
 > **Ref:** [docs/REQUIREMENTS.md](../docs/REQUIREMENTS.md)
 > **Created:** 2026-02-16
 > **Last updated:** 2026-03-18

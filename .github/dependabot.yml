@@ -1,0 +1,177 @@
+version: 2
+
+updates:
+  # Root package.json (devDependencies: ESLint, Prettier, etc.)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 10
+    groups:
+      dev-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  # Framework + Crawler Playwright sync (P2-289: single entry prevents version skew)
+  - package-ecosystem: npm
+    directories:
+      - /framework
+      - /tools/crawler
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 10
+    groups:
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Shared data/logic package
+  - package-ecosystem: npm
+    directory: /shared
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  # App: React
+  - package-ecosystem: npm
+    directory: /apps/react-app
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      mui:
+        patterns:
+          - "@mui/*"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # App: Vue
+  - package-ecosystem: npm
+    directory: /apps/vue-app
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      vuetify:
+        patterns:
+          - "vuetify"
+          - "@vuetify/*"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # App: Angular
+  - package-ecosystem: npm
+    directory: /apps/angular-app
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      angular:
+        patterns:
+          - "@angular/*"
+          - "@angular-devkit/*"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # App: Svelte
+  - package-ecosystem: npm
+    directory: /apps/svelte-app
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      svelte:
+        patterns:
+          - "svelte"
+          - "@sveltejs/*"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # App: Next.js
+  - package-ecosystem: npm
+    directory: /apps/nextjs-app
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      nextjs:
+        patterns:
+          - "next"
+          - "@next/*"
+      mui:
+        patterns:
+          - "@mui/*"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # App: Lit
+  - package-ecosystem: npm
+    directory: /apps/lit-app
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      lit:
+        patterns:
+          - "lit"
+          - "@lit/*"
+      minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # App: Vanilla HTML
+  - package-ecosystem: npm
+    directory: /apps/vanilla-html
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      minor-patch:
+        update-types:
+          - minor
+          - patch

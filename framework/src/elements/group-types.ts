@@ -87,7 +87,7 @@ export interface GroupElement extends BaseElement<GroupElement> {
    * Returns a new GroupElement scoped to the matched container.
    * Throws if 0 or >1 containers match.
    */
-  find(text: string): Promise<GroupElement>;
+  find(text: string, options?: ActionOptions): Promise<GroupElement>;
 
   /**
    * Click a button or link within this container by its visible text.

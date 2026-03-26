@@ -21,17 +21,20 @@ import { fileURLToPath } from "url";
 import { crawlPage } from "../src/crawler.js";
 
 const __filename = fileURLToPath(import.meta.url);
+ 
 const __dirname = path.dirname(__filename);
 
-const APPS = [
-  { name: "vanilla",  port: 3001 },
-  { name: "react",    port: 3002 },
-  { name: "vue",      port: 3003 },
-  { name: "angular",  port: 3004 },
-  { name: "svelte",   port: 3005 },
-  { name: "nextjs",   port: 3006 },
-  { name: "lit",      port: 3007 },
-] as const;
+// Import the shared app definitions — single source of truth (P2-82).
+// Use readFileSync + esbuild transform to avoid rootDir/extension constraints.
+import { readFileSync } from "fs";
+import { transform } from "esbuild";
+
+const sharedAppsPath = path.resolve(__dirname, "../../../shared/apps.ts");
+const tsCode = readFileSync(sharedAppsPath, "utf8");
+const { code: jsCode } = await transform(tsCode, { loader: "ts", format: "esm" });
+const dataUri = `data:text/javascript;base64,${Buffer.from(jsCode).toString("base64")}`;
+const { APP_DEFINITIONS } = await import(dataUri);
+const APPS = APP_DEFINITIONS as ReadonlyArray<{ name: string; port: number }>;
 
 // Project root is two levels up from dist/scripts/ or one level up from scripts/
 // Use process.cwd() since we always run from the crawler package root.
@@ -51,13 +54,16 @@ async function main() {
 
     try {
       const page = await browser.newPage();
-      await page.goto(url, { timeout: 10_000, waitUntil: "domcontentloaded" });
-      const manifest = await crawlPage(page);
-      await page.close();
-
-      await fs.writeFile(outFile, JSON.stringify(manifest, null, 2) + "\n");
-      console.log(`✓ ${app.name} → ${outFile} (${manifest.groups.length} groups)`);
-      saved++;
+      try {
+        await page.goto(url, { timeout: 10_000, waitUntil: "domcontentloaded" });
+        const manifest = await crawlPage(page);
+        await fs.writeFile(outFile, JSON.stringify(manifest, null, 2) + "\n");
+        console.log(`✓ ${app.name} → ${outFile} (${manifest.groups.length} groups)`);
+        saved++;
+      } finally {
+        // P2-305: ensure page is closed even if crawlPage() or goto() throws
+        await page.close();
+      }
     } catch (err) {
       console.error(`✗ ${app.name} — ${err instanceof Error ? err.message : err}`);
       failed++;

@@ -1,11 +1,12 @@
 /** Label resolution and normalisation helpers for form controls. */
 import type { Locator } from "@playwright/test";
 import type { ActionOptions, ElementHandler } from "./handler-types.js";
-import { ElementNotFoundError } from "./errors.js";
+import { AmbiguousMatchError, ElementNotFoundError } from "./errors.js";
 import type { IFrameworkContext } from "./types.js";
 import { retryUntil, type RetryResult } from "./retry.js";
 import { isDetachedError } from "./playwright-errors.js";
 import { cssEscape } from "./dom-helpers.js";
+import { getActiveContext } from "./context.js";
 
 /**
  * Normalize a radio/checkbox label by extracting just the option name.
@@ -27,13 +28,17 @@ import { cssEscape } from "./dom-helpers.js";
  * to provide a clean label that bypasses normalization, or match on the
  * truncated prefix.
  *
+ * P2-220: Uses **greedy** match `(.+)` to keep everything before the
+ * *last* em/en dash, preserving multi-segment content like
+ * `"Standard — 5-7 days — $4.99"` → `"Standard — 5-7 days"`.
+ *
  * @param raw   The raw label text to normalize.
  * @returns     The normalized label — either the full trimmed text or
- *              the portion before the first em/en dash separator.
+ *              the portion before the last em/en dash separator.
  */
 export function normalizeRadioLabel(raw: string): string {
   const trimmed = raw.trim();
-  const match = trimmed.match(/^(.+?)\s*[—–]\s/);
+  const match = trimmed.match(/^(.+)\s*[—–]\s/);
   return match ? match[1].trim() : trimmed;
 }
 
@@ -53,7 +58,7 @@ export async function resolveInputLabel(
 
   const id = await input.getAttribute("id", { timeout: t });
   if (id) {
-    const forLabel = container.locator(`label[for="${cssEscape(id)}"]`);
+    const forLabel = container.locator(`label[for="${cssEscape(id).replace(/"/g, '\\"')}"]`);
     if ((await forLabel.count()) > 0) {
       const text = (await forLabel.textContent({ timeout: t })) ?? "";
       return normalizeRadioLabel(text);
@@ -73,11 +78,29 @@ export async function resolveInputLabel(
     return normalizeRadioLabel(text);
   }
 
+  // All label strategies failed — emit a warning so the root cause of
+  // downstream "element not found" errors is visible.
+  const tag = await input.evaluate((el) => el.tagName.toLowerCase()).catch(() => "unknown");
+  const msg =
+    `[framework] resolveInputLabel: Element <${tag}> has no resolvable label ` +
+    `(tried: aria-label, label[for], wrapping <label>, text content). ` +
+    `Add an aria-label or associated <label> to make it identifiable.`;
+  try {
+    getActiveContext().logger.getLogger().warn(msg);
+  } catch {
+    console.warn(msg);
+  }
+
   return "";
 }
 
-/** Read the label text of the currently checked radio within a container. */
-export async function readCheckedRadioLabel(container: Locator, options?: ActionOptions): Promise<string> {
+/** Read the label text of the currently checked radio within a container.
+ *
+ * P2-170: Returns `null` when no radio is selected (no checked input found),
+ * and `""` when a checked radio has no resolvable label. This eliminates
+ * the ambiguous empty-string sentinel.
+ */
+export async function readCheckedRadioLabel(container: Locator, options?: ActionOptions): Promise<string | null> {
   // Try native radio inputs first
   const nativeChecked = container.locator("input[type='radio']:checked");
   if ((await nativeChecked.count()) > 0) {
@@ -88,7 +111,8 @@ export async function readCheckedRadioLabel(container: Locator, options?: Action
   if ((await ariaChecked.count()) > 0) {
     return resolveInputLabel(ariaChecked.first(), container, options);
   }
-  return "";
+  // P2-170: Return null for "no radio selected" (distinct from "" = unlabeled checked)
+  return null;
 }
 
 // ── Discriminated-union result for a single resolution attempt ───────
@@ -117,7 +141,13 @@ async function resolveAttempt(
   label: string,
   fwCtx: IFrameworkContext,
 ): Promise<ResolveAttemptResult> {
-  const result = await resolveOnce(container, label, fwCtx);
+  let result: { el: Locator } | null;
+  try {
+    result = await resolveOnce(container, label, fwCtx);
+  } catch (err: unknown) {
+    // AmbiguousMatchError (and any other non-transient) — surface immediately.
+    return { kind: "fail", error: err };
+  }
 
   if (!result) {
     const roles = fwCtx.handlers.getRoleFallbacks();
@@ -143,6 +173,12 @@ async function resolveAttempt(
     // finding the element and detectHandler() inspecting it — retryable.
     if (isDetachedError(err)) {
       return { kind: "retry", error: err instanceof Error ? err : new Error(String(err)) };
+    }
+    // P3-236: Attach resolution strategy context to handler detection errors
+    // so that debugging reveals *how* the element was found, not just that
+    // handler detection failed.
+    if (err instanceof Error) {
+      err.message = `${err.message} (element was resolved via label "${label}")`;
     }
     // Everything else (NoHandlerMatchError, TypeError, etc.) is fatal.
     return { kind: "fail", error: err };
@@ -234,32 +270,54 @@ async function resolveOnce(
     `[resolveOnce] Resolving label "${label}" — trying getByLabel, then roles [${roles.join(", ")}].`,
   );
 
-  // Build all candidate locators: label-association first, then each
-  // role in priority order.
+  // ── Phase 0: exact label match (preferred) ──────────────────────
+  // Exact matching avoids substring ambiguity — e.g. "Category" must
+  // not match "Sort by Category" (Shoelace <th> aria-label vs
+  // <sl-select> label).  If an exact match is found we return it
+  // immediately without probing role fallbacks.
+  const byLabelExact = container.getByLabel(label, { exact: true });
+  const exactLabelCount = await byLabelExact.count();
+
+  if (exactLabelCount > 0) {
+    if (exactLabelCount > 1) {
+      const msg = `Ambiguous label "${label}": ${exactLabelCount} elements matched via getByLabel (exact).`;
+      logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
+      throw new AmbiguousMatchError(
+        `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
+        { query: label, matchCount: exactLabelCount, strategy: "getByLabel(exact)" },
+      );
+    }
+    logger.debug(
+      `[resolveOnce] Matched label "${label}" via getByLabel exact (count=${exactLabelCount}).`,
+    );
+    return { el: byLabelExact.first() };
+  }
+
+  // ── Phase 1 + 2: substring label + role fallbacks (parallel) ────
+  // Handles abbreviated labels like "Express" matching "Express — $9.99".
   const byLabel = container.getByLabel(label);
   const roleLocators = roles.map(role =>
     container.getByRole(role, { name: label }),
   );
 
-  // Fire every count() in a single parallel batch — one wall-clock
-  // round-trip instead of O(N) sequential ones.
   const [labelCount, ...roleCounts] = await Promise.all([
     byLabel.count(),
     ...roleLocators.map(loc => loc.count()),
   ]);
 
-  // Phase 1: standard <label> association
+  // Phase 1: substring <label> association
   if (labelCount > 0) {
     if (labelCount > 1) {
-      logger.warn(
-        `[group] Ambiguous label "${label}": ${labelCount} elements matched via getByLabel. Using first match.`,
+      const msg = `Ambiguous label "${label}": ${labelCount} elements matched via getByLabel.`;
+      logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
+      throw new AmbiguousMatchError(
+        `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
+        { query: label, matchCount: labelCount, strategy: "getByLabel" },
       );
     }
     logger.debug(
       `[resolveOnce] Matched label "${label}" via getByLabel (count=${labelCount}).`,
     );
-    // Always use .first() for consistent locator string representations
-    // in error messages, regardless of whether count is 1 or >1.
     return { el: byLabel.first() };
   }
 
@@ -267,14 +325,16 @@ async function resolveOnce(
   for (let i = 0; i < roles.length; i++) {
     if (roleCounts[i] > 0) {
       if (roleCounts[i] > 1) {
-        logger.warn(
-          `[group] Ambiguous label "${label}": ${roleCounts[i]} elements matched via getByRole("${roles[i]}"). Using first match.`,
+        const msg = `Ambiguous label "${label}": ${roleCounts[i]} elements matched via getByRole("${roles[i]}").`;
+        logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
+        throw new AmbiguousMatchError(
+          `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
+          { query: label, matchCount: roleCounts[i], strategy: `getByRole("${roles[i]}")` },
         );
       }
       logger.debug(
         `[resolveOnce] Matched label "${label}" via getByRole("${roles[i]}") (count=${roleCounts[i]}).`,
       );
-      // Always use .first() for consistent locator descriptions.
       return { el: roleLocators[i].first() };
     }
   }

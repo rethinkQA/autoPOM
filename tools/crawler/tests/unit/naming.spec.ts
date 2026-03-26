@@ -5,7 +5,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { labelToPropertyName, deduplicateNames, inferRouteName } from "../src/naming.js";
+import { labelToPropertyName, deduplicateNames, inferRouteName } from "../../src/naming.js";
 
 // ── labelToPropertyName ─────────────────────────────────────
 
@@ -78,26 +78,23 @@ test.describe("labelToPropertyName", () => {
 test.describe("deduplicateNames", () => {
   test("generates unique names for labels", () => {
     const result = deduplicateNames(["Nav", "Header", "Footer"]);
-    expect(result.get("Nav")).toBe("nav");
-    expect(result.get("Header")).toBe("header");
-    expect(result.get("Footer")).toBe("footer");
+    expect(result[0]).toBe("nav");
+    expect(result[1]).toBe("header");
+    expect(result[2]).toBe("footer");
   });
 
   test("appends numeric suffix for duplicate labels", () => {
-    // When the same label appears multiple times, Map keeps the last assignment.
-    // The dedup logic still runs for each entry (nav, nav2, nav3) but the Map
-    // stores only one value per key. Use distinct labels for a meaningful test.
     const result = deduplicateNames(["Nav", "nav-item", "Nav Item"]);
-    // "Nav" and "Nav Item" both become "nav", second one gets suffix
-    expect(result.get("Nav")).toBe("nav");
-    expect(result.get("nav-item")).toBe("navItem");
-    expect(result.get("Nav Item")).toBe("navItem2");
+    // "Nav" and "Nav Item" both produce "nav" via camelCase; second gets suffix
+    expect(result[0]).toBe("nav");
+    expect(result[1]).toBe("navItem");
+    expect(result[2]).toBe("navItem2");
   });
 
   test("deduplicates different labels that produce same camelCase", () => {
     const result = deduplicateNames(["my-item", "my item"]);
-    expect(result.get("my-item")).toBe("myItem");
-    expect(result.get("my item")).toBe("myItem2");
+    expect(result[0]).toBe("myItem");
+    expect(result[1]).toBe("myItem2");
   });
 
   test("respects overrides", () => {
@@ -105,8 +102,8 @@ test.describe("deduplicateNames", () => {
       ["product-modal", "toast-notification"],
       { "product-modal": "modal", "toast-notification": "toastMsg" },
     );
-    expect(result.get("product-modal")).toBe("modal");
-    expect(result.get("toast-notification")).toBe("toastMsg");
+    expect(result[0]).toBe("modal");
+    expect(result[1]).toBe("toastMsg");
   });
 });
 

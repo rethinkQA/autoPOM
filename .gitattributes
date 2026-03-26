@@ -1,0 +1,10 @@
+# P3-83: Enforce LF line endings for all text files to prevent
+# CRLF-related script failures from Windows contributors.
+* text=auto eol=lf
+
+# Explicitly mark binary files
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

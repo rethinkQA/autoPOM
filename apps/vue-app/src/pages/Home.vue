@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { VueDatePicker } from '@vuepic/vue-datepicker';
 import '@vuepic/vue-datepicker/dist/main.css';
 import { useToast } from '../composables/useToast';
-import { PRODUCTS, CATEGORIES, SHIPPING, type Product } from '@shared/data';
+import { PRODUCTS, CATEGORIES, SHIPPING, type Product, type ShippingKey } from '@shared/data';
 import {
   filterProducts, cartMessage,
   formatDate as sharedFormatDate,
@@ -16,7 +16,7 @@ const inStockOnly = ref(false);
 
 // ===== Interactive state =====
 const quantity = ref(1);
-const shipping = ref('standard');
+const shipping = ref<ShippingKey>('standard');
 const deliveryDate = ref<Date | null>(null);
 const actionOutput = ref('');
 const validationMsg = ref('');
