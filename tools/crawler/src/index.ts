@@ -39,7 +39,7 @@ export {
 
 export { diffPageObjects, formatEmitterDiff } from "./emitter-diff.js";
 
-export { labelToPropertyName, deduplicateNames, inferRouteName } from "./naming.js";
+export { labelToPropertyName, deduplicateNames, inferRouteName, safePathname } from "./naming.js";
 
 // ── Types ───────────────────────────────────────────────────
 

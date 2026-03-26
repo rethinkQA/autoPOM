@@ -18,12 +18,11 @@
 import type { Page } from "playwright";
 import type { ManifestGroup } from "./types.js";
 import { discoverGroups, discoverToasts, GROUP_SELECTOR } from "./discover.js";
+import { safePathname } from "./naming.js";
 
 /** Groups discovered on a single page URL. */
 export interface PageRecording {
-  /** The full URL of the page. */
-  url: string;
-  /** The URL pathname (used as the bucketing key). */
+  /** The URL pathname (no origin or query params). */
   pathname: string;
   /** Groups discovered on this page. */
   groups: ManifestGroup[];
@@ -257,9 +256,7 @@ export class DomRecorder {
   // ── Per-page storage ──────────────────────────────────────
   /** Completed page recordings (pages the user has navigated away from). */
   private completedPages: PageRecording[] = [];
-  /** The URL of the page currently being recorded. */
-  private currentUrl: string = "";
-  /** The pathname of the current page. */
+  /** The pathname of the current page (no origin or query params). */
   private currentPathname: string = "";
   /** Groups discovered on previously-visited pages (for the flat harvest() fallback). */
   private priorPageGroups: ManifestGroup[] = [];
@@ -280,9 +277,8 @@ export class DomRecorder {
     if (this.started) return;
     this.started = true;
 
-    // Track the initial page URL
-    this.currentUrl = this.page.url();
-    this.currentPathname = safePathname(this.currentUrl);
+    // Track the initial page path
+    this.currentPathname = safePathname(this.page.url());
 
     // P2-317: Inject MutationObserver FIRST so it captures any mutations
     // that occur during the snapshot.
@@ -297,9 +293,8 @@ export class DomRecorder {
       // 1. Finalize the page we're leaving — discover its groups and store them.
       await this.finalizeCurrentPage();
 
-      // 2. Update current URL to the new page.
-      this.currentUrl = this.page.url();
-      this.currentPathname = safePathname(this.currentUrl);
+      // 2. Update current path to the new page.
+      this.currentPathname = safePathname(this.page.url());
 
       // 3. Re-inject INIT_SCRIPT into the new page.
       try {
@@ -358,7 +353,6 @@ export class DomRecorder {
 
     if (groups.length > 0) {
       this.completedPages.push({
-        url: this.currentUrl,
         pathname: this.currentPathname,
         groups,
       });
@@ -445,7 +439,6 @@ export class DomRecorder {
         }
       } else {
         byPathname.set(this.currentPathname, {
-          url: this.currentUrl,
           pathname: this.currentPathname,
           groups: currentGroups,
         });
@@ -538,17 +531,6 @@ export class DomRecorder {
 }
 
 // ── Helpers ─────────────────────────────────────────────────
-
-/**
- * Extract the pathname from a URL string, falling back to "/" on parse failure.
- */
-function safePathname(url: string): string {
-  try {
-    return new URL(url).pathname;
-  } catch {
-    return "/";
-  }
-}
 
 /** Minimal tag→GroupType classification for fallback entries. */
 function classifyTagToGroupType(

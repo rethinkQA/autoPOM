@@ -39,7 +39,7 @@ test.describe("Crawler — Group Discovery", () => {
     const manifest = await crawlPage(page);
 
     // Basic structure
-    expect(manifest.url).toContain("localhost");
+    expect(manifest.url).toBe("/");
     expect(manifest.groups.length).toBeGreaterThan(0);
     expect(manifest.passCount).toBe(1);
 

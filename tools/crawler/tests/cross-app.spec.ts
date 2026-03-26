@@ -127,5 +127,6 @@ test.describe("Cross-app structure validation", () => {
 
     expect(parsed.groups.length).toBe(manifest.groups.length);
     expect(parsed.url).toBe(manifest.url);
+    expect(parsed.url).not.toContain("://");
   });
 });

@@ -10,6 +10,7 @@ import type { Page } from "playwright";
 import type { CrawlOptions, CrawlerManifest, ManifestDiff, ManifestGroup } from "./types.js";
 import { discoverGroups, discoverToasts } from "./discover.js";
 import { mergeManifest, diffManifest } from "./merge.js";
+import { safePathname } from "./naming.js";
 import { NetworkObserver } from "./network.js";
 
 /**
@@ -66,9 +67,9 @@ export async function crawlPage(
   let manifest: CrawlerManifest;
   try {
     if (existing) {
-      manifest = mergeManifest(existing, allGroups, page.url(), pass, scope);
+      manifest = mergeManifest(existing, allGroups, safePathname(page.url()), pass, scope);
     } else {
-      manifest = mergeManifest(null, allGroups, page.url(), pass, scope);
+      manifest = mergeManifest(null, allGroups, safePathname(page.url()), pass, scope);
     }
   } catch (err) {
     // P2-192/P2-263: ensure observer cleanup on merge failure

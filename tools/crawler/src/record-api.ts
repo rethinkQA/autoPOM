@@ -10,6 +10,7 @@ import type { Page } from "playwright";
 import type { CrawlerManifest, RecordOptions } from "./types.js";
 import { DomRecorder } from "./recorder.js";
 import { mergeManifest } from "./merge.js";
+import { safePathname } from "./naming.js";
 
 /**
  * Record dynamic DOM elements that appear during user interaction.
@@ -39,12 +40,12 @@ export async function recordPage(
   const groups = await recorder.harvest();
   await recorder.stop();
 
-  const url = page.url();
+  const path = safePathname(page.url());
   const pass = (options?.existing?.passCount ?? 0) + 1;
   const result = mergeManifest(
     options?.existing ?? null,
     groups,
-    url,
+    path,
     pass,
     options?.scope ?? null,
   );

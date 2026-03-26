@@ -85,7 +85,7 @@ export interface CrawlerManifest {
   /** Schema version for forward-compatible manifest evolution. */
   schemaVersion: number;
 
-  /** The URL that was crawled. */
+  /** The URL path that was crawled (no origin or query params). */
   url: string;
 
   /** ISO timestamp of the latest crawl. */

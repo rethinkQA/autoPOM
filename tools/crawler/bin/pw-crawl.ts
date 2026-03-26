@@ -539,7 +539,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
       for (const recording of pages) {
         // Derive filename from the URL pathname
-        const routeName = inferRouteName(recording.url);
+        const routeName = inferRouteName(recording.pathname);
         const fileName = `${routeName}.manifest.json`;
         const filePath = join(outputDir, fileName);
 
@@ -553,7 +553,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
         const manifest = mergeManifest(
           existing,
           recording.groups,
-          recording.url,
+          recording.pathname,
           (existing?.passCount ?? 0) + 1,
           args.scope ?? null,
         );
@@ -566,7 +566,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     } else {
       // No output flag — write all pages as a single JSON array to stdout
       const manifests = pages.map(recording =>
-        mergeManifest(null, recording.groups, recording.url, 1, args.scope ?? null),
+        mergeManifest(null, recording.groups, recording.pathname, 1, args.scope ?? null),
       );
       console.log(JSON.stringify(manifests, null, 2));
     }

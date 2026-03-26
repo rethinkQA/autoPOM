@@ -173,3 +173,15 @@ export function inferRouteName(url: string): string {
     return "page";
   }
 }
+
+/**
+ * Extract the pathname from a URL, stripping origin and query parameters.
+ * Returns "/" on parse failure.
+ */
+export function safePathname(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "/";
+  }
+}
