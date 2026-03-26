@@ -24,6 +24,7 @@ export { observeNetwork, NetworkObserver } from "./network.js";
 // ── DOM Flight Recorder (Phase 14) ─────────────────────────
 
 export { DomRecorder } from "./recorder.js";
+export type { PageRecording } from "./recorder.js";
 export { recordPage } from "./record-api.js";
 
 // ── Page Object Emitter (Phase 12) ─────────────────────────

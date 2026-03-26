@@ -27,6 +27,7 @@ import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName } from "../src/naming.js";
 import { DomRecorder } from "../src/recorder.js";
+import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
 import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
@@ -298,7 +299,7 @@ Arguments:
   <url>                    URL of the page to record (required)
 
 Options:
-  -o, --output <file>      Write/merge manifest to file (default: stdout)
+  -o, --output <dir>       Output directory for per-page manifests (default: stdout)
   --scope <selector>       Limit recording to a section of the page
   --ignore-https-errors    Skip TLS certificate validation
 
@@ -482,17 +483,6 @@ async function runRecord(args: RecordArgs): Promise<void> {
     process.exit(1);
   }
 
-  // Load existing manifest if -o file already exists (for merge)
-  let existing: CrawlerManifest | null = null;
-  if (args.output) {
-    const outputPath = resolve(args.output);
-    if (existsSync(outputPath)) {
-      const raw = await readFile(outputPath, "utf-8");
-      existing = safeJsonParse<CrawlerManifest>(raw, outputPath);
-      console.error(`  ℹ Loaded existing manifest (${existing!.groups.length} groups)`);
-    }
-  }
-
   // Record mode always runs headed so the user can interact.
   // Disable Playwright's built-in SIGINT/SIGTERM/SIGHUP handling so that
   // Ctrl+C doesn't kill the browser before we can harvest recorded data.
@@ -515,7 +505,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     await recorder.start();
 
     console.error("  ● Recording — interact with the page to trigger dynamic elements.");
-    console.error("  ● Navigate freely (login, follow links) — all pages are captured.");
+    console.error("  ● Navigate freely (login, follow links) — each page gets its own manifest.");
     console.error("  ● Press Ctrl+C when done to harvest and save.\n");
 
     // Wait until the user sends SIGINT (Ctrl+C)
@@ -529,30 +519,56 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     console.error("\n  ⏳ Harvesting recorded elements…");
 
-    let groups: ManifestGroup[] = [];
+    let pages: PageRecording[] = [];
     try {
-      groups = await recorder.harvest();
+      pages = await recorder.harvestByPage();
       await recorder.stop();
     } catch (harvestErr: unknown) {
       // Browser may be closing — fall back to accumulated data
       console.error(`  ⚠ Harvest error (using accumulated data): ${harvestErr instanceof Error ? harvestErr.message : harvestErr}`);
-      groups = recorder.getAccumulatedGroups();
+      pages = recorder.getAccumulatedPages();
     }
 
-    console.error(`  ✓ Recorded ${groups.length} new group(s)`);
-
-    // Merge into existing manifest or create new one
-    const manifest = mergeManifest(existing, groups, args.url, (existing?.passCount ?? 0) + 1, args.scope ?? null);
-
-    const json = JSON.stringify(manifest, null, 2);
+    const totalGroups = pages.reduce((n, p) => n + p.groups.length, 0);
+    console.error(`  ✓ Recorded ${totalGroups} group(s) across ${pages.length} page(s)`);
 
     if (args.output) {
-      const outputPath = resolve(args.output);
-      await writeFile(outputPath, json + "\n", "utf-8");
-      console.error(`  ✓ Manifest written to ${outputPath}`);
-      console.error(`  Total groups: ${manifest.groups.length}`);
+      // Write one manifest per page into the output directory.
+      const outputDir = resolve(args.output);
+      await mkdir(outputDir, { recursive: true });
+
+      for (const recording of pages) {
+        // Derive filename from the URL pathname
+        const routeName = inferRouteName(recording.url);
+        const fileName = `${routeName}.manifest.json`;
+        const filePath = join(outputDir, fileName);
+
+        // Load existing manifest for this page if present (for merge)
+        let existing: CrawlerManifest | null = null;
+        if (existsSync(filePath)) {
+          const raw = await readFile(filePath, "utf-8");
+          existing = safeJsonParse<CrawlerManifest>(raw, filePath);
+        }
+
+        const manifest = mergeManifest(
+          existing,
+          recording.groups,
+          recording.url,
+          (existing?.passCount ?? 0) + 1,
+          args.scope ?? null,
+        );
+
+        await writeFile(filePath, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
+        console.error(`  ✓ ${fileName} — ${recording.groups.length} group(s)`);
+      }
+
+      console.error(`\n  Manifests written to ${outputDir}/`);
     } else {
-      console.log(json);
+      // No output flag — write all pages as a single JSON array to stdout
+      const manifests = pages.map(recording =>
+        mergeManifest(null, recording.groups, recording.url, 1, args.scope ?? null),
+      );
+      console.log(JSON.stringify(manifests, null, 2));
     }
   } finally {
     await browser.close();

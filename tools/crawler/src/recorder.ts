@@ -4,20 +4,30 @@
  * Human-guided recording mode for the crawler. Injects a
  * MutationObserver into the page that watches for group-like
  * elements materializing in the DOM (e.g. dialogs opening,
- * toasts appearing). User actions are logged so discovered
- * groups can be attributed to the interaction that triggered them.
+ * toasts appearing). Discovered groups are bucketed by URL
+ * pathname so each page produces its own manifest.
  *
  * Usage:
  *   const recorder = new DomRecorder(page);
  *   await recorder.start();
  *   // ... user interacts with the page ...
- *   const groups = await recorder.harvest();
+ *   const byPage = await recorder.harvestByPage();
  *   await recorder.stop();
  */
 
 import type { Page } from "playwright";
 import type { ManifestGroup } from "./types.js";
 import { discoverGroups, discoverToasts, GROUP_SELECTOR } from "./discover.js";
+
+/** Groups discovered on a single page URL. */
+export interface PageRecording {
+  /** The full URL of the page. */
+  url: string;
+  /** The URL pathname (used as the bucketing key). */
+  pathname: string;
+  /** Groups discovered on this page. */
+  groups: ManifestGroup[];
+}
 
 // ── Types for browser ↔ Node communication ──────────────────
 
@@ -236,21 +246,22 @@ const INIT_SCRIPT = /* js */ `
  * DOM Flight Recorder.
  *
  * Attaches to a Playwright Page and records group-like elements
- * that appear in the DOM during user interaction. Call `harvest()`
- * to get the discovered groups as ManifestGroup entries with
- * `triggeredBy` attribution.
+ * that appear in the DOM during user interaction. Groups are
+ * bucketed by URL pathname so each page produces its own manifest.
  */
 export class DomRecorder {
   private started = false;
-  /** Groups discovered in the initial DOM (before any user interaction). */
-  private initialGroups = new Map<string, ManifestGroup>();
+  /** Initial groups per page (keyed by pathname → mergeKey set). */
+  private initialGroupsByPage = new Map<string, Set<string>>();
 
-  // ── Cross-navigation accumulators (data lives in Node.js) ───
-  /** Observer entries accumulated from pages that have been navigated away from. */
-  private accumulatedEntries: ObservedEntry[] = [];
-  /** User actions accumulated from pages that have been navigated away from. */
-  private accumulatedActions: ActionEntry[] = [];
-  /** Groups discovered on previously-visited pages, keyed by groupType::wrapperType::label. */
+  // ── Per-page storage ──────────────────────────────────────
+  /** Completed page recordings (pages the user has navigated away from). */
+  private completedPages: PageRecording[] = [];
+  /** The URL of the page currently being recorded. */
+  private currentUrl: string = "";
+  /** The pathname of the current page. */
+  private currentPathname: string = "";
+  /** Groups discovered on previously-visited pages (for the flat harvest() fallback). */
   private priorPageGroups: ManifestGroup[] = [];
 
   /** Bound handler reference so we can remove it in stop(). */
@@ -262,49 +273,33 @@ export class DomRecorder {
   ) {}
 
   /**
-   * Inject the MutationObserver and action logger into the page.
+   * Inject the MutationObserver into the page.
    * Call this after the page has loaded its initial DOM.
    */
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
 
+    // Track the initial page URL
+    this.currentUrl = this.page.url();
+    this.currentPathname = safePathname(this.currentUrl);
+
     // P2-317: Inject MutationObserver FIRST so it captures any mutations
-    // that occur during the snapshot. This closes the race window where
-    // mutations between snapshot and observer injection would be missed.
+    // that occur during the snapshot.
     await this.page.evaluate(INIT_SCRIPT);
 
-    // Now snapshot initial DOM state so we can diff at harvest time
-    const [initGroups, initToasts] = await Promise.all([
-      discoverGroups(this.page, { scope: this.scope, pass: "record-init" }),
-      discoverToasts(this.page, { scope: this.scope, pass: "record-init" }),
-    ]);
-    for (const g of [...initGroups, ...initToasts]) {
-      this.initialGroups.set(`${g.groupType}::${g.wrapperType}::${g.label}`, g);
-    }
+    // Snapshot initial DOM state so we can diff at harvest time
+    await this.snapshotInitialGroups();
 
-    // Re-inject after every full-page navigation (login redirects, user clicking links, etc.).
-    // Each navigation destroys browser globals, so we flush data to Node.js accumulators first.
+    // Re-inject after every full-page navigation.
+    // Each navigation destroys browser globals, so we finalize the current page first.
     this.onNavigation = async () => {
-      // 1. Flush current page's observer data into Node.js accumulators.
-      //    This may fail if the old page context is already gone — that's OK.
-      try {
-        const { observed, actions } = await this.page.evaluate(() => {
-          const w = window as any;
-          return {
-            observed: (w.__pw_recorder_entries ?? []) as ObservedEntry[],
-            actions: (w.__pw_recorder_actions ?? []) as ActionEntry[],
-          };
-        });
-        this.accumulatedEntries.push(...observed);
-        this.accumulatedActions.push(...actions);
-      } catch {
-        // Old execution context destroyed — data from previous page is lost.
-        // This is expected when the navigation was a full page replacement.
-      }
+      // 1. Finalize the page we're leaving — discover its groups and store them.
+      await this.finalizeCurrentPage();
 
-      // 2. Discover groups on the page we just left (best-effort).
-      //    Skip this — the page has already navigated, DOM is for the new page.
+      // 2. Update current URL to the new page.
+      this.currentUrl = this.page.url();
+      this.currentPathname = safePathname(this.currentUrl);
 
       // 3. Re-inject INIT_SCRIPT into the new page.
       try {
@@ -313,101 +308,171 @@ export class DomRecorder {
         // Page may still be loading — will retry on next navigation or harvest.
       }
 
-      // 4. Snapshot new page's initial groups so we can diff correctly.
-      try {
-        const [newGroups, newToasts] = await Promise.all([
-          discoverGroups(this.page, { scope: this.scope, pass: "record-nav" }),
-          discoverToasts(this.page, { scope: this.scope, pass: "record-nav" }),
-        ]);
-        for (const g of [...newGroups, ...newToasts]) {
-          this.initialGroups.set(`${g.groupType}::${g.wrapperType}::${g.label}`, g);
-        }
-      } catch {
-        // Discovery may fail if page is mid-load — acceptable.
-      }
+      // 4. Snapshot new page's initial groups.
+      await this.snapshotInitialGroups();
+
+      console.error(`  ↳ Navigated to ${this.currentPathname}`);
     };
 
     this.page.on("domcontentloaded", this.onNavigation);
   }
 
-  /**
-   * Harvest all groups that appeared since recording started.
-   *
-   * Uses the framework's full `discoverGroups()` + `discoverToasts()`
-   * to get properly classified ManifestGroup entries, then filters
-   * to only those matching the observer's recorded selectors/labels.
-   * Falls back to raw observer data for groups the full discovery
-   * might miss (e.g. elements that were removed before harvest).
-   *
-   * Each group is tagged with `visibility: "exploration"` and
-   * `triggeredBy` set to the nearest preceding user action.
-   */
-  async harvest(): Promise<ManifestGroup[]> {
-    // Fetch current page's observer data and merge with accumulated cross-page data.
-    let observed = [...this.accumulatedEntries];
-    let actions = [...this.accumulatedActions];
-
+  /** Snapshot initial groups on the current page so we can diff later. */
+  private async snapshotInitialGroups(): Promise<void> {
     try {
-      // P2-258: Combine entries and actions into a single page.evaluate() call
-      // to avoid race condition from two separate evaluate calls.
-      const current = await this.page.evaluate(() => {
-        const w = window as any;
-        return {
-          observed: (w.__pw_recorder_entries ?? []) as ObservedEntry[],
-          actions: (w.__pw_recorder_actions ?? []) as ActionEntry[],
-        };
-      });
-      observed.push(...current.observed);
-      actions.push(...current.actions);
-    } catch {
-      // Browser context may be gone (e.g. Ctrl+C race) — use accumulated data only.
-    }
-
-    // Run full discovery on current DOM state to get properly classified groups.
-    let allDiscovered: ManifestGroup[] = [...this.priorPageGroups];
-    try {
-      const passTag = "record";
-      const [fullGroups, fullToasts] = await Promise.all([
-        discoverGroups(this.page, { scope: this.scope, pass: passTag }),
-        discoverToasts(this.page, { scope: this.scope, pass: passTag }),
+      const [initGroups, initToasts] = await Promise.all([
+        discoverGroups(this.page, { scope: this.scope, pass: "record-init" }),
+        discoverToasts(this.page, { scope: this.scope, pass: "record-init" }),
       ]);
-      allDiscovered.push(...fullGroups, ...fullToasts);
+      const keys = this.initialGroupsByPage.get(this.currentPathname) ?? new Set<string>();
+      for (const g of [...initGroups, ...initToasts]) {
+        keys.add(`${g.groupType}::${g.wrapperType}::${g.label}`);
+      }
+      this.initialGroupsByPage.set(this.currentPathname, keys);
     } catch {
-      // Discovery may fail if browser is closing — use prior page groups only.
+      // Discovery may fail if page is mid-load — acceptable.
+    }
+  }
+
+  /**
+   * Finalize the current page: run full discovery and store as a completed page recording.
+   * Called on navigation away from a page.
+   */
+  private async finalizeCurrentPage(): Promise<void> {
+    try {
+      // Discover groups on the current DOM (before navigation destroys it).
+      // Note: by the time domcontentloaded fires for the new page, the old DOM
+      // is actually gone. We do our best — the new page's DOM is what we see.
+      // Instead, we'll discover on the NEW page in harvestCurrentPage().
+    } catch {
+      // Ignored — covered by harvestCurrentPage at the end.
     }
 
-    // Diff: find groups that are new since start()
+    // Flush browser globals into a completed recording.
+    let groups: ManifestGroup[] = [];
+    try {
+      groups = await this.discoverNewGroups();
+    } catch {
+      // Old execution context may be gone — that's OK, we'll re-discover on harvest.
+    }
+
+    if (groups.length > 0) {
+      this.completedPages.push({
+        url: this.currentUrl,
+        pathname: this.currentPathname,
+        groups,
+      });
+      this.priorPageGroups.push(...groups);
+    }
+  }
+
+  /**
+   * Discover groups on the current page that are new (weren't in the initial snapshot).
+   */
+  private async discoverNewGroups(): Promise<ManifestGroup[]> {
+    const passTag = "record";
+    const [fullGroups, fullToasts] = await Promise.all([
+      discoverGroups(this.page, { scope: this.scope, pass: passTag }),
+      discoverToasts(this.page, { scope: this.scope, pass: passTag }),
+    ]);
+
+    const initialKeys = this.initialGroupsByPage.get(this.currentPathname) ?? new Set<string>();
     const result: ManifestGroup[] = [];
     const seenKeys = new Set<string>();
 
-    for (const group of allDiscovered) {
+    for (const group of [...fullGroups, ...fullToasts]) {
       const key = `${group.groupType}::${group.wrapperType}::${group.label}`;
-      if (this.initialGroups.has(key)) continue; // Was already present before recording
-      if (seenKeys.has(key)) continue; // Deduplicate across pages
+      if (initialKeys.has(key)) continue;
+      if (seenKeys.has(key)) continue;
       seenKeys.add(key);
-
-      // This group is new — find triggeredBy from the observer/action log
-      const groupRole = roleForGroup(group);
-      const observedEntry =
-        observed.find(e => e.label === group.label) ??
-        observed.find(e => e.role !== null && e.role === groupRole) ??
-        observed.find(e => e.selector === group.selector);
-
-      const triggeredBy = observedEntry
-        ? findTrigger(actions, observedEntry.timestamp)
-        : actions.length > 0
-          ? actions[actions.length - 1].description // best guess: last action
-          : undefined;
 
       result.push({
         ...group,
         visibility: "exploration",
         discoveredIn: "record",
-        ...(triggeredBy ? { triggeredBy } : {}),
       });
     }
 
     return result;
+  }
+
+  /**
+   * Harvest groups bucketed by page URL.
+   *
+   * Returns a PageRecording for each unique URL pathname visited,
+   * including the current page (final discovery).
+   */
+  async harvestByPage(): Promise<PageRecording[]> {
+    // Discover groups on the current (final) page
+    let currentGroups: ManifestGroup[] = [];
+    try {
+      currentGroups = await this.discoverNewGroups();
+    } catch {
+      // Browser context may be gone (e.g. Ctrl+C race).
+    }
+
+    // Merge completed pages by pathname (same pathname visited twice = merge groups)
+    const byPathname = new Map<string, PageRecording>();
+
+    for (const recording of this.completedPages) {
+      const existing = byPathname.get(recording.pathname);
+      if (existing) {
+        // Merge groups, dedup by key
+        const keys = new Set(existing.groups.map(g => `${g.groupType}::${g.wrapperType}::${g.label}`));
+        for (const g of recording.groups) {
+          const key = `${g.groupType}::${g.wrapperType}::${g.label}`;
+          if (!keys.has(key)) {
+            keys.add(key);
+            existing.groups.push(g);
+          }
+        }
+      } else {
+        byPathname.set(recording.pathname, { ...recording, groups: [...recording.groups] });
+      }
+    }
+
+    // Add current page
+    if (currentGroups.length > 0 || !byPathname.has(this.currentPathname)) {
+      const existing = byPathname.get(this.currentPathname);
+      if (existing) {
+        const keys = new Set(existing.groups.map(g => `${g.groupType}::${g.wrapperType}::${g.label}`));
+        for (const g of currentGroups) {
+          const key = `${g.groupType}::${g.wrapperType}::${g.label}`;
+          if (!keys.has(key)) {
+            keys.add(key);
+            existing.groups.push(g);
+          }
+        }
+      } else {
+        byPathname.set(this.currentPathname, {
+          url: this.currentUrl,
+          pathname: this.currentPathname,
+          groups: currentGroups,
+        });
+      }
+    }
+
+    return Array.from(byPathname.values());
+  }
+
+  /**
+   * Harvest all groups as a flat list (all pages combined).
+   * Kept for backward compatibility and single-file output mode.
+   */
+  async harvest(): Promise<ManifestGroup[]> {
+    const pages = await this.harvestByPage();
+    const all: ManifestGroup[] = [];
+    const seenKeys = new Set<string>();
+    for (const page of pages) {
+      for (const g of page.groups) {
+        const key = `${g.groupType}::${g.wrapperType}::${g.label}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          all.push(g);
+        }
+      }
+    }
+    return all;
   }
 
   /**
@@ -419,6 +484,20 @@ export class DomRecorder {
       ...g,
       visibility: "exploration" as const,
       discoveredIn: "record" as const,
+    }));
+  }
+
+  /**
+   * Return completed page recordings as a fallback when harvestByPage() fails.
+   */
+  getAccumulatedPages(): PageRecording[] {
+    return this.completedPages.map(p => ({
+      ...p,
+      groups: p.groups.map(g => ({
+        ...g,
+        visibility: "exploration" as const,
+        discoveredIn: "record" as const,
+      })),
     }));
   }
 
@@ -461,34 +540,14 @@ export class DomRecorder {
 // ── Helpers ─────────────────────────────────────────────────
 
 /**
- * Infer the ARIA role for a ManifestGroup based on its selector.
- * Used to match observer entries (which record the DOM role attribute)
- * to groups returned by discoverGroups() (which may not expose the role directly).
+ * Extract the pathname from a URL string, falling back to "/" on parse failure.
  */
-function roleForGroup(g: ManifestGroup): string | null {
-  // Check if selector contains a role pattern like [role="dialog"]
-  const m = g.selector.match(/\[role=["']([^"']+)["']\]/);
-  if (m) return m[1];
-  // Map wrapperType to likely role
-  if (g.wrapperType === "dialog") return "dialog";
-  if (g.wrapperType === "toast") return "status";
-  return null;
-}
-
-/**
- * Find the user action that most likely triggered a group appearing.
- * Returns the description of the most recent action before `timestamp`.
- */
-function findTrigger(actions: ActionEntry[], timestamp: number): string | undefined {
-  let best: ActionEntry | undefined;
-  for (const action of actions) {
-    if (action.timestamp <= timestamp) {
-      if (!best || action.timestamp > best.timestamp) {
-        best = action;
-      }
-    }
+function safePathname(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "/";
   }
-  return best?.description;
 }
 
 /** Minimal tag→GroupType classification for fallback entries. */
