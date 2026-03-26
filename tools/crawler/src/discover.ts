@@ -544,7 +544,18 @@ export async function discoverGroups(
     return entry;
   });
 
-  return disambiguateSelectors(groups);
+  const semanticGroups = disambiguateSelectors(groups);
+
+  // Second pass: discover implicit groups (cards, visual containers, form groups)
+  // that lack semantic HTML or ARIA roles.
+  const existingSelectors = new Set(semanticGroups.map(g => g.selector));
+  const implicitGroups = await discoverImplicitGroups(page, {
+    scope: options?.scope,
+    pass,
+    existingSelectors,
+  });
+
+  return [...semanticGroups, ...implicitGroups];
 }
 
 /**
@@ -687,3 +698,285 @@ export async function discoverToasts(
 }
 
 export { GROUP_SELECTOR };
+
+// ── Implicit group discovery (framework-agnostic) ───────────
+
+/**
+ * Heuristic data collected for each candidate implicit group.
+ * Gathered inside page.evaluate() in a single browser round-trip.
+ */
+interface ImplicitGroupCandidate {
+  /** How this candidate was detected. */
+  reason: "repeated-siblings" | "visual-card" | "interactive-container";
+  /** CSS selector for the container element. */
+  selector: string;
+  /** Lowercased tag name. */
+  tagName: string;
+  /** Best label found (heading, aria-label, class-based, etc.) */
+  label: string;
+  /** Whether the element is visible. */
+  isVisible: boolean;
+  /** Number of repeated children (for repeated-siblings). */
+  childCount?: number;
+}
+
+/**
+ * Discover implicit groups that lack semantic HTML or ARIA roles.
+ *
+ * Runs three heuristics inside a single page.evaluate():
+ * 1. **Repeated siblings** — a parent with 3+ structurally identical children
+ *    is a list/card container.
+ * 2. **Visual cards** — elements with distinct background, border, or shadow
+ *    compared to their parent.
+ * 3. **Interactive containers** — non-semantic containers holding 2+ form controls.
+ *
+ * Results are deduplicated against the semantic groups already discovered
+ * by discoverGroups() so there is no double-counting.
+ */
+export async function discoverImplicitGroups(
+  page: Page,
+  options?: { scope?: string; pass?: string; existingSelectors?: Set<string> },
+): Promise<ManifestGroup[]> {
+  const pass = options?.pass ?? "pass-1";
+  const now = new Date().toISOString();
+  const existingSelectors = options?.existingSelectors ?? new Set<string>();
+
+  const candidates: ImplicitGroupCandidate[] = await page.evaluate(
+    ({ scope, groupSel }: { scope: string | undefined; groupSel: string }) => {
+      const container = scope
+        ? document.querySelector(scope) ?? document.body
+        : document.body;
+
+      const results: ImplicitGroupCandidate[] = [];
+      const seen = new Set<Element>();
+
+      // ── Helper: build a selector for an element ────────────
+      function buildSelector(el: Element): string {
+        const tag = el.tagName.toLowerCase();
+        const id = el.getAttribute("id");
+        if (id) return `#${CSS.escape(id)}`;
+        const ariaLabel = el.getAttribute("aria-label");
+        if (ariaLabel) return `${tag}[aria-label="${CSS.escape(ariaLabel)}"]`;
+        const cls = el.className;
+        if (cls && typeof cls === "string" && cls.trim()) {
+          const first = cls.trim().split(/\s+/)[0];
+          return `${tag}.${CSS.escape(first)}`;
+        }
+        return tag;
+      }
+
+      // ── Helper: find best label for a container ────────────
+      function findLabel(el: Element): string {
+        // aria-label
+        const ariaLabel = el.getAttribute("aria-label");
+        if (ariaLabel) return ariaLabel;
+        // Direct heading child
+        const heading = el.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6");
+        if (heading?.textContent?.trim()) return heading.textContent.trim();
+        // aria-labelledby
+        const labelledBy = el.getAttribute("aria-labelledby");
+        if (labelledBy) {
+          const ref = document.getElementById(labelledBy);
+          if (ref?.textContent?.trim()) return ref.textContent.trim();
+        }
+        // Class-based label: extract meaningful word from class name
+        const cls = el.className;
+        if (cls && typeof cls === "string") {
+          // Try to find a semantic class (card, panel, section, etc.)
+          const classes = cls.trim().split(/\s+/);
+          for (const c of classes) {
+            // Strip framework prefixes and extract meaningful part
+            const clean = c.replace(/^(mui|ant|chakra|el|v-|mat-)/, "")
+                           .replace(/[-_]/g, " ").trim();
+            if (clean.length > 2 && clean.length < 40 && !/^[a-f0-9]{6,}$/i.test(clean)) {
+              return clean;
+            }
+          }
+        }
+        // Tag name fallback
+        return el.tagName.toLowerCase();
+      }
+
+      // ── Helper: structural hash of an element (tag + child tags) ──
+      function structureHash(el: Element): string {
+        const tag = el.tagName.toLowerCase();
+        const childTags = Array.from(el.children)
+          .map(c => c.tagName.toLowerCase())
+          .join(",");
+        return `${tag}:${childTags}`;
+      }
+
+      // ── 1. Repeated sibling detection ─────────────────────
+      // Walk through the DOM looking for parents whose children share
+      // the same structural shape. Minimum 3 identical siblings.
+      function findRepeatedSiblings(root: Element) {
+        const children = Array.from(root.children).filter(c => {
+          // Skip invisible children
+          const style = window.getComputedStyle(c as HTMLElement);
+          return style.display !== "none" && style.visibility !== "hidden";
+        });
+
+        if (children.length < 3) return;
+
+        // Compute structural hashes
+        const hashes = children.map(c => structureHash(c));
+
+        // Count each hash
+        const hashCounts = new Map<string, number>();
+        for (const h of hashes) {
+          hashCounts.set(h, (hashCounts.get(h) ?? 0) + 1);
+        }
+
+        // Find the dominant hash (most common child structure)
+        let bestHash = "";
+        let bestCount = 0;
+        for (const [h, count] of hashCounts) {
+          if (count > bestCount) {
+            bestHash = h;
+            bestCount = count;
+          }
+        }
+
+        // If 3+ children share the same structure, this is a list container
+        if (bestCount >= 3 && !seen.has(root) && !root.matches(groupSel)) {
+          seen.add(root);
+          results.push({
+            reason: "repeated-siblings",
+            selector: buildSelector(root),
+            tagName: root.tagName.toLowerCase(),
+            label: findLabel(root),
+            isVisible: true,
+            childCount: bestCount,
+          });
+        }
+
+        // Recurse into children
+        for (const child of children) {
+          findRepeatedSiblings(child);
+        }
+      }
+
+      // ── 2. Visual card detection ──────────────────────────
+      // Elements with distinct background/border/shadow from their parent.
+      function findVisualCards(root: Element, depth: number) {
+        if (depth > 8) return; // Don't traverse too deep
+
+        const children = Array.from(root.children);
+        for (const child of children) {
+          if (seen.has(child) || child.matches(groupSel)) {
+            findVisualCards(child, depth + 1);
+            continue;
+          }
+
+          const htmlChild = child as HTMLElement;
+          const style = window.getComputedStyle(htmlChild);
+          if (style.display === "none" || style.visibility === "hidden") continue;
+
+          const parentStyle = window.getComputedStyle(root as HTMLElement);
+
+          // Check for visual boundary signals
+          const hasBorder = style.borderWidth !== "0px" &&
+                           style.borderStyle !== "none" &&
+                           style.borderColor !== parentStyle.borderColor;
+          const hasShadow = style.boxShadow !== "none" && style.boxShadow !== "";
+          const hasDistinctBg = style.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+                                style.backgroundColor !== "transparent" &&
+                                style.backgroundColor !== parentStyle.backgroundColor;
+          const hasRadius = style.borderRadius !== "0px" && style.borderRadius !== "";
+
+          // Need at least 2 visual signals to be a "card"
+          const visualSignals = [hasBorder, hasShadow, hasDistinctBg, hasRadius]
+            .filter(Boolean).length;
+
+          // Also check it has meaningful content (not just a wrapper)
+          const hasContent = child.children.length >= 2 ||
+                            child.querySelector("img, h1, h2, h3, h4, h5, h6, p, button, a, input");
+
+          if (visualSignals >= 2 && hasContent && !seen.has(child)) {
+            seen.add(child);
+            results.push({
+              reason: "visual-card",
+              selector: buildSelector(child),
+              tagName: child.tagName.toLowerCase(),
+              label: findLabel(child),
+              isVisible: true,
+            });
+          }
+
+          findVisualCards(child, depth + 1);
+        }
+      }
+
+      // ── 3. Interactive container detection ────────────────
+      // Non-semantic containers with 2+ form controls inside.
+      const INTERACTIVE_SELECTOR = "input, button, select, textarea, " +
+        '[role="button"], [role="textbox"], [role="combobox"], [role="listbox"], [role="slider"]';
+
+      function findInteractiveContainers(root: Element, depth: number) {
+        if (depth > 8) return;
+
+        const children = Array.from(root.children);
+        for (const child of children) {
+          if (seen.has(child) || child.matches(groupSel)) {
+            findInteractiveContainers(child, depth + 1);
+            continue;
+          }
+
+          const tag = child.tagName.toLowerCase();
+          // Skip elements already matched by GROUP_SELECTOR
+          if (["form", "fieldset", "nav", "header", "footer", "main", "aside",
+               "table", "dialog", "details"].includes(tag)) {
+            findInteractiveContainers(child, depth + 1);
+            continue;
+          }
+
+          const interactiveChildren = child.querySelectorAll(INTERACTIVE_SELECTOR);
+          if (interactiveChildren.length >= 2 && !seen.has(child)) {
+            seen.add(child);
+            results.push({
+              reason: "interactive-container",
+              selector: buildSelector(child),
+              tagName: tag,
+              label: findLabel(child),
+              isVisible: true,
+            });
+          } else {
+            findInteractiveContainers(child, depth + 1);
+          }
+        }
+      }
+
+      // Run all three heuristics
+      findRepeatedSiblings(container);
+      findVisualCards(container, 0);
+      findInteractiveContainers(container, 0);
+
+      return results;
+    },
+    { scope: options?.scope, groupSel: GROUP_SELECTOR },
+  );
+
+  // Convert candidates to ManifestGroup entries, deduplicating against existing groups
+  const groups: ManifestGroup[] = [];
+  const seenSelectors = new Set<string>(existingSelectors);
+
+  for (const c of candidates) {
+    if (seenSelectors.has(c.selector)) continue;
+    seenSelectors.add(c.selector);
+
+    groups.push({
+      label: c.label,
+      selector: c.selector,
+      groupType: c.reason === "interactive-container" ? "form" : "section",
+      wrapperType: "group",
+      discoveredIn: pass,
+      visibility: (c.isVisible ? "static" : "dynamic") as Visibility,
+      lastSeen: now,
+      ...(c.reason === "repeated-siblings" && c.childCount
+        ? { notes: `list-container (${c.childCount} items)` }
+        : {}),
+    });
+  }
+
+  return disambiguateSelectors(groups);
+}
