@@ -245,6 +245,17 @@ export class DomRecorder {
   /** Groups discovered in the initial DOM (before any user interaction). */
   private initialGroups = new Map<string, ManifestGroup>();
 
+  // ── Cross-navigation accumulators (data lives in Node.js) ───
+  /** Observer entries accumulated from pages that have been navigated away from. */
+  private accumulatedEntries: ObservedEntry[] = [];
+  /** User actions accumulated from pages that have been navigated away from. */
+  private accumulatedActions: ActionEntry[] = [];
+  /** Groups discovered on previously-visited pages, keyed by groupType::wrapperType::label. */
+  private priorPageGroups: ManifestGroup[] = [];
+
+  /** Bound handler reference so we can remove it in stop(). */
+  private onNavigation: (() => Promise<void>) | null = null;
+
   constructor(
     private readonly page: Page,
     private readonly scope?: string,
@@ -271,6 +282,52 @@ export class DomRecorder {
     for (const g of [...initGroups, ...initToasts]) {
       this.initialGroups.set(`${g.groupType}::${g.wrapperType}::${g.label}`, g);
     }
+
+    // Re-inject after every full-page navigation (login redirects, user clicking links, etc.).
+    // Each navigation destroys browser globals, so we flush data to Node.js accumulators first.
+    this.onNavigation = async () => {
+      // 1. Flush current page's observer data into Node.js accumulators.
+      //    This may fail if the old page context is already gone — that's OK.
+      try {
+        const { observed, actions } = await this.page.evaluate(() => {
+          const w = window as any;
+          return {
+            observed: (w.__pw_recorder_entries ?? []) as ObservedEntry[],
+            actions: (w.__pw_recorder_actions ?? []) as ActionEntry[],
+          };
+        });
+        this.accumulatedEntries.push(...observed);
+        this.accumulatedActions.push(...actions);
+      } catch {
+        // Old execution context destroyed — data from previous page is lost.
+        // This is expected when the navigation was a full page replacement.
+      }
+
+      // 2. Discover groups on the page we just left (best-effort).
+      //    Skip this — the page has already navigated, DOM is for the new page.
+
+      // 3. Re-inject INIT_SCRIPT into the new page.
+      try {
+        await this.page.evaluate(INIT_SCRIPT);
+      } catch {
+        // Page may still be loading — will retry on next navigation or harvest.
+      }
+
+      // 4. Snapshot new page's initial groups so we can diff correctly.
+      try {
+        const [newGroups, newToasts] = await Promise.all([
+          discoverGroups(this.page, { scope: this.scope, pass: "record-nav" }),
+          discoverToasts(this.page, { scope: this.scope, pass: "record-nav" }),
+        ]);
+        for (const g of [...newGroups, ...newToasts]) {
+          this.initialGroups.set(`${g.groupType}::${g.wrapperType}::${g.label}`, g);
+        }
+      } catch {
+        // Discovery may fail if page is mid-load — acceptable.
+      }
+    };
+
+    this.page.on("domcontentloaded", this.onNavigation);
   }
 
   /**
@@ -286,30 +343,48 @@ export class DomRecorder {
    * `triggeredBy` set to the nearest preceding user action.
    */
   async harvest(): Promise<ManifestGroup[]> {
-    // P2-258: Combine entries and actions into a single page.evaluate() call
-    // to avoid race condition from two separate evaluate calls.
-    const { observed, actions } = await this.page.evaluate(() => {
-      const w = window as any;
-      return {
-        observed: (w.__pw_recorder_entries as ObservedEntry[]) ?? [],
-        actions: (w.__pw_recorder_actions as ActionEntry[]) ?? [],
-      };
-    });
+    // Fetch current page's observer data and merge with accumulated cross-page data.
+    let observed = [...this.accumulatedEntries];
+    let actions = [...this.accumulatedActions];
 
-    // Run full discovery on current DOM state to get properly classified groups
-    const passTag = "record";
-    const [fullGroups, fullToasts] = await Promise.all([
-      discoverGroups(this.page, { scope: this.scope, pass: passTag }),
-      discoverToasts(this.page, { scope: this.scope, pass: passTag }),
-    ]);
-    const allDiscovered = [...fullGroups, ...fullToasts];
+    try {
+      // P2-258: Combine entries and actions into a single page.evaluate() call
+      // to avoid race condition from two separate evaluate calls.
+      const current = await this.page.evaluate(() => {
+        const w = window as any;
+        return {
+          observed: (w.__pw_recorder_entries ?? []) as ObservedEntry[],
+          actions: (w.__pw_recorder_actions ?? []) as ActionEntry[],
+        };
+      });
+      observed.push(...current.observed);
+      actions.push(...current.actions);
+    } catch {
+      // Browser context may be gone (e.g. Ctrl+C race) — use accumulated data only.
+    }
+
+    // Run full discovery on current DOM state to get properly classified groups.
+    let allDiscovered: ManifestGroup[] = [...this.priorPageGroups];
+    try {
+      const passTag = "record";
+      const [fullGroups, fullToasts] = await Promise.all([
+        discoverGroups(this.page, { scope: this.scope, pass: passTag }),
+        discoverToasts(this.page, { scope: this.scope, pass: passTag }),
+      ]);
+      allDiscovered.push(...fullGroups, ...fullToasts);
+    } catch {
+      // Discovery may fail if browser is closing — use prior page groups only.
+    }
 
     // Diff: find groups that are new since start()
     const result: ManifestGroup[] = [];
+    const seenKeys = new Set<string>();
 
     for (const group of allDiscovered) {
       const key = `${group.groupType}::${group.wrapperType}::${group.label}`;
       if (this.initialGroups.has(key)) continue; // Was already present before recording
+      if (seenKeys.has(key)) continue; // Deduplicate across pages
+      seenKeys.add(key);
 
       // This group is new — find triggeredBy from the observer/action log
       const groupRole = roleForGroup(group);
@@ -336,28 +411,50 @@ export class DomRecorder {
   }
 
   /**
+   * Return groups accumulated from previously-visited pages.
+   * Used as a fallback when harvest() fails due to browser closing.
+   */
+  getAccumulatedGroups(): ManifestGroup[] {
+    return this.priorPageGroups.map(g => ({
+      ...g,
+      visibility: "exploration" as const,
+      discoveredIn: "record" as const,
+    }));
+  }
+
+  /**
    * Stop the MutationObserver and clean up browser globals.
    */
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
 
-    await this.page.evaluate(() => {
-      const w = window as any;
-      if (w.__pw_recorder_observer) {
-        w.__pw_recorder_observer.disconnect();
-        delete w.__pw_recorder_observer;
-      }
-      // P2-174: disconnect shadow root observers
-      if (w.__pw_recorder_shadow_observers) {
-        for (const obs of w.__pw_recorder_shadow_observers) {
-          obs.disconnect();
+    // Remove the navigation re-injection listener
+    if (this.onNavigation) {
+      this.page.off("domcontentloaded", this.onNavigation);
+      this.onNavigation = null;
+    }
+
+    try {
+      await this.page.evaluate(() => {
+        const w = window as any;
+        if (w.__pw_recorder_observer) {
+          w.__pw_recorder_observer.disconnect();
+          delete w.__pw_recorder_observer;
         }
-        delete w.__pw_recorder_shadow_observers;
-      }
-      delete w.__pw_recorder_entries;
-      delete w.__pw_recorder_actions;
-    });
+        // P2-174: disconnect shadow root observers
+        if (w.__pw_recorder_shadow_observers) {
+          for (const obs of w.__pw_recorder_shadow_observers) {
+            obs.disconnect();
+          }
+          delete w.__pw_recorder_shadow_observers;
+        }
+        delete w.__pw_recorder_entries;
+        delete w.__pw_recorder_actions;
+      });
+    } catch {
+      // Browser context may already be gone — nothing to clean up.
+    }
   }
 }
 

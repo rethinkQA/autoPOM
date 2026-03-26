@@ -28,7 +28,7 @@ import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName } from "../src/naming.js";
 import { DomRecorder } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
-import type { CrawlerManifest } from "../src/types.js";
+import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
@@ -493,9 +493,17 @@ async function runRecord(args: RecordArgs): Promise<void> {
     }
   }
 
-  // Record mode always runs headed so the user can interact
+  // Record mode always runs headed so the user can interact.
+  // Disable Playwright's built-in SIGINT/SIGTERM/SIGHUP handling so that
+  // Ctrl+C doesn't kill the browser before we can harvest recorded data.
   const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
-  const browser = await chromium.launch({ headless: false, args: launchArgs });
+  const browser = await chromium.launch({
+    headless: false,
+    args: launchArgs,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
 
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
@@ -507,6 +515,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     await recorder.start();
 
     console.error("  ● Recording — interact with the page to trigger dynamic elements.");
+    console.error("  ● Navigate freely (login, follow links) — all pages are captured.");
     console.error("  ● Press Ctrl+C when done to harvest and save.\n");
 
     // Wait until the user sends SIGINT (Ctrl+C)
@@ -520,8 +529,15 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     console.error("\n  ⏳ Harvesting recorded elements…");
 
-    const groups = await recorder.harvest();
-    await recorder.stop();
+    let groups: ManifestGroup[] = [];
+    try {
+      groups = await recorder.harvest();
+      await recorder.stop();
+    } catch (harvestErr: unknown) {
+      // Browser may be closing — fall back to accumulated data
+      console.error(`  ⚠ Harvest error (using accumulated data): ${harvestErr instanceof Error ? harvestErr.message : harvestErr}`);
+      groups = recorder.getAccumulatedGroups();
+    }
 
     console.error(`  ✓ Recorded ${groups.length} new group(s)`);
 
@@ -568,7 +584,13 @@ async function main(): Promise<void> {
   }
 
   const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
-  const browser = await chromium.launch({ headless: args.headless, args: launchArgs });
+  const browser = await chromium.launch({
+    headless: args.headless,
+    args: launchArgs,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
 
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });

@@ -26,13 +26,13 @@ test("fill a form by label", async ({ page }) => {
 
 ### Running the validation suite
 
-The repo ships 7 test-fixture apps (vanilla HTML, React + MUI, Vue + Vuetify, Angular + Angular Material, Svelte + Bits UI, Next.js + MUI, Lit + Shoelace) and 1,306 framework-only tests (crawler tests are separate — see root ROADMAP.md for full count).
+The repo ships 7 test-fixture apps (vanilla HTML, React + MUI, Vue + Vuetify, Angular + Angular Material, Svelte + Bits UI, Next.js + MUI, Lit + Shoelace) and 1329 tests.
 
 ```bash
 npm install
-npx playwright test                       # all 7 apps (1,043 integration tests = 149 × 7)
+npx playwright test                       # all 7 apps (1064 integration tests)
 npx playwright test --project=vanilla     # single app
-npx playwright test --config=playwright.unit.config.ts   # 263 unit tests
+npx playwright test --config=playwright.unit.config.ts   # 265 unit tests
 ```
 
 Playwright auto-starts each app's dev server via the multi-project `webServer` config.
@@ -425,7 +425,7 @@ framework/
 │   ├── table-rows.spec.ts            (7 tests)
 │   ├── functional-swap.spec.ts       (16 tests)
 │   │
-│   └── unit/                         (18 files, 259 tests)
+│   └── unit/                         (20 files, 265 tests)
 │       ├── click-in-container.spec.ts
 │       ├── coercion.spec.ts
 │       ├── context.spec.ts
@@ -472,7 +472,7 @@ The generated docs cover all four export paths:
 
 ## Test Coverage
 
-1,306 tests across 37 spec files (18 integration × 7 apps + 19 unit), all passing:
+1329 tests across 38 spec files (18 integration × 7 apps + 20 unit), all passing:
 
 ### Cross-App Compatibility
 
@@ -485,7 +485,7 @@ The generated docs cover all four export paths:
 | svelte-app | 3005 | Svelte 5 + Bits UI ^2.16.3 + flatpickr | 149 | ✅ |
 | nextjs-app | 3006 | Next.js + MUI `@mui/material` ^7.3.9 + react-datepicker + custom toast | 149 | ✅ |
 | lit-app | 3007 | Lit + Shoelace ^2.20.1 (shadow DOM) + native date input | 149 | ✅ |
-| **Total** | | **6 component libraries + vanilla baseline** | **1,043** | **✅** |
+| **Total** | | **6 component libraries + vanilla baseline** | **1064** | **✅** |
 
 Each app uses its framework's idiomatic component library, producing fundamentally different DOM structures (shadow DOM, portaled dropdowns, ARIA widgets, virtual tables). The framework handles all of them with generic ARIA/role-based detection — library-specific logic is isolated in adapters (`DatePickerAdapter`, `SelectAdapter`, checkbox `force: true` fallback).
 
@@ -494,7 +494,7 @@ Key adapter components:
 - **`DatePickerAdapter`** (`src/elements/`) — Technology-specific date picker adapters in `src/adapters/`.
 - **Checkbox/Radio** — Try-then-fallback pattern: normal interaction first, `force: true` only on failure (handles both MUI hidden inputs and Shoelace shadow DOM).
 
-### Integration tests (149 tests per app, 18 files)
+### Integration tests (152 tests per app, 18 files)
 
 | Spec | Tests | Covers |
 |------|-------|--------|
@@ -517,7 +517,7 @@ Key adapter components:
 | aria-validation | 8 | ARIA attributes: aria-live on toast, dialog role/title, table role, accessible names, radio group role, checkbox aria-checked |
 | keyboard-navigation | 7 | Tab/Shift+Tab order, arrow keys in radio group, Enter activates button, dialog focus trap, Escape closes dialog, Space toggles checkbox |
 
-### Unit tests (263 tests, 19 files)
+### Unit tests (265 tests, 20 files)
 
 | Spec | Covers |
 |------|--------|
