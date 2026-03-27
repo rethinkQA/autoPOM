@@ -56,6 +56,11 @@ export async function crawlPage(
         scope: scope ?? undefined,
         pass: passTag,
       });
+      // If AI returned nothing useful, augment with heuristics
+      if (allGroups.length === 0) {
+        console.error("  ⚠ AI returned 0 groups — augmenting with heuristic discovery…");
+        allGroups = await heuristicDiscovery(page, scope, passTag);
+      }
     } catch (err) {
       console.error(`  ⚠ AI discovery failed, falling back to heuristics: ${err}`);
       allGroups = await heuristicDiscovery(page, scope, passTag);
