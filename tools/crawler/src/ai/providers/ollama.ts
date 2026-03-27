@@ -126,19 +126,23 @@ export class OllamaProvider implements AiProvider {
     return text;
   }
 
-  /** Send a chat completion to Ollama. */
+  /**
+   * Send a generate request to Ollama.
+   * Uses /api/generate (not /api/chat) because llava returns empty
+   * strings with the chat endpoint on many Ollama versions.
+   */
   private async chat(system: string, user: string, base64Img: string): Promise<string> {
     const body = {
       model: this.model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user, images: [base64Img] },
-      ],
+      system,
+      prompt: user,
+      images: [base64Img],
       stream: false,
+      // No format: "json" — llava outputs {} with that constraint.
       options: { temperature: 0, num_predict: 4096 },
     };
 
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -149,8 +153,8 @@ export class OllamaProvider implements AiProvider {
       throw new Error(`Ollama API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as { message?: { content?: string } };
-    return data.message?.content ?? "";
+    const data = await response.json() as { response?: string };
+    return data.response ?? "";
   }
 }
 
