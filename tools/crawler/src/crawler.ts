@@ -49,22 +49,12 @@ export async function crawlPage(
   let allGroups: ManifestGroup[];
 
   if (options?.aiProvider) {
-    // AI-powered discovery merged with heuristics for best coverage
-    try {
-      const { discoverGroupsWithAi } = await import("./ai/discover-ai.js");
-      const aiGroups = await discoverGroupsWithAi(page, options.aiProvider, {
-        scope: scope ?? undefined,
-        pass: passTag,
-      });
-      // Always run heuristics and merge — AI adds semantic labels,
-      // heuristics catch structural elements the AI might miss.
-      const heuristicGroups = await heuristicDiscovery(page, scope, passTag);
-      allGroups = mergeGroups(aiGroups, heuristicGroups);
-      console.error(`  ✓ Merged: ${aiGroups.length} AI + ${heuristicGroups.length} heuristic → ${allGroups.length} unique groups`);
-    } catch (err) {
-      console.error(`  ⚠ AI discovery failed, falling back to heuristics: ${err}`);
-      allGroups = await heuristicDiscovery(page, scope, passTag);
-    }
+    // AI-powered discovery — no heuristic mixing
+    const { discoverGroupsWithAi } = await import("./ai/discover-ai.js");
+    allGroups = await discoverGroupsWithAi(page, options.aiProvider, {
+      scope: scope ?? undefined,
+      pass: passTag,
+    });
   } else {
     allGroups = await heuristicDiscovery(page, scope, passTag);
   }
@@ -117,29 +107,6 @@ async function heuristicDiscovery(
   ]);
 
   return [...groups, ...toasts];
-}
-
-/**
- * Merge AI-discovered groups with heuristic groups, deduplicating by
- * selector. AI groups take priority (better labels), heuristic groups
- * fill in anything the AI missed.
- */
-function mergeGroups(aiGroups: ManifestGroup[], heuristicGroups: ManifestGroup[]): ManifestGroup[] {
-  const seen = new Map<string, ManifestGroup>();
-
-  // AI groups first — they have better semantic labels
-  for (const g of aiGroups) {
-    seen.set(g.selector, g);
-  }
-
-  // Heuristic groups fill in gaps
-  for (const g of heuristicGroups) {
-    if (!seen.has(g.selector)) {
-      seen.set(g.selector, g);
-    }
-  }
-
-  return Array.from(seen.values());
 }
 
 /**
