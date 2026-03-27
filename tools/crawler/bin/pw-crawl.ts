@@ -626,11 +626,41 @@ async function runRecord(args: RecordArgs): Promise<void> {
     console.error("  ● Navigate freely (login, follow links) — each page gets its own manifest.");
     if (aiProvider) {
       console.error("  ● Each page is analyzed automatically when you navigate to it.");
-      console.error("  ● Press Enter to re-scan the current page (hover menus, edit mode, etc.).");
+      console.error("  ● Press F8 in the browser to re-scan (captures hover menus, edit mode, etc.).");
+      console.error("  ● Or press Enter in the terminal to re-scan.");
     }
     console.error("  ● Press Ctrl+C when done to save.\n");
 
-    // Listen for Enter key to trigger manual re-scan
+    // Listen for F8 keypress in the browser to trigger re-scan.
+    // This lets the user capture hover states without losing browser focus.
+    if (aiProvider) {
+      // Expose a Node function to the browser context
+      await page.exposeFunction("__pwRescan", () => {
+        void analyzeCurrentPage(true);
+      });
+
+      // Inject F8 listener into the page
+      const injectF8Listener = async () => {
+        await page.evaluate(() => {
+          if ((window as any).__pwF8Bound) return;
+          (window as any).__pwF8Bound = true;
+          window.addEventListener("keydown", (e) => {
+            if (e.key === "F8") {
+              e.preventDefault();
+              (window as any).__pwRescan();
+            }
+          });
+        }).catch(() => {}); // may fail during navigation
+      };
+
+      await injectF8Listener();
+
+      // Re-inject after each navigation (exposeFunction survives across
+      // navigations in the same context, but the event listener doesn't)
+      page.on("load", () => void injectF8Listener());
+    }
+
+    // Listen for Enter key in terminal to trigger manual re-scan
     if (aiProvider && process.stdin.isTTY) {
       process.stdin.setRawMode(true);
       process.stdin.resume();
