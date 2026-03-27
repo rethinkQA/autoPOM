@@ -559,32 +559,43 @@ async function runRecord(args: RecordArgs): Promise<void> {
     // We can't revisit pages at the end because state changes (e.g.
     // login) mean earlier pages (login form) won't be there anymore.
     // Instead, run AI discovery immediately when each new page loads.
+    // Press Enter at any time to re-scan the current page (for hover
+    // menus, expanded panels, edit mode, etc.).
 
-    /** Collected results: pathname → { fullUrl, groups } */
-    const aiResults = new Map<string, { fullUrl: string; groups: ManifestGroup[] }>();
+    /** Collected results: array of { pathname, fullUrl, groups, scanIndex } */
+    const aiScans: { pathname: string; fullUrl: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
+    /** Track how many scans each pathname has had. */
+    const scanCounts = new Map<string, number>();
     let aiAnalyzing = false; // prevent overlapping analysis
 
-    async function analyzeCurrentPage(): Promise<void> {
+    async function analyzeCurrentPage(force = false): Promise<void> {
       if (!aiProvider || aiAnalyzing) return;
 
       const pathname = safePathname(page.url());
-      if (aiResults.has(pathname)) return; // already analyzed
+      const count = scanCounts.get(pathname) ?? 0;
+
+      // Auto-scans skip if already analyzed; manual (force) always runs
+      if (!force && count > 0) return;
 
       const fullUrl = page.url();
+      const scanIndex = count + 1;
       aiAnalyzing = true;
 
-      console.error(`  🤖 Analyzing ${pathname}…`);
+      const label = scanIndex > 1 ? `${pathname} (scan ${scanIndex})` : pathname;
+      console.error(`  🤖 Analyzing ${label}…`);
       try {
         const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
         const groups = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
-          pass: "ai-record",
+          pass: `ai-record-${scanIndex}`,
         });
-        aiResults.set(pathname, { fullUrl, groups });
-        console.error(`  ✓ ${pathname} — ${groups.length} group(s) found`);
+        aiScans.push({ pathname, fullUrl, groups, scanIndex });
+        scanCounts.set(pathname, scanIndex);
+        console.error(`  ✓ ${label} — ${groups.length} group(s) found`);
       } catch (err: unknown) {
-        console.error(`  ⚠ AI analysis failed for ${pathname}: ${err instanceof Error ? err.message : err}`);
-        aiResults.set(pathname, { fullUrl, groups: [] });
+        console.error(`  ⚠ AI analysis failed for ${label}: ${err instanceof Error ? err.message : err}`);
+        aiScans.push({ pathname, fullUrl, groups: [], scanIndex });
+        scanCounts.set(pathname, scanIndex);
       } finally {
         aiAnalyzing = false;
       }
@@ -615,8 +626,26 @@ async function runRecord(args: RecordArgs): Promise<void> {
     console.error("  ● Navigate freely (login, follow links) — each page gets its own manifest.");
     if (aiProvider) {
       console.error("  ● Each page is analyzed automatically when you navigate to it.");
+      console.error("  ● Press Enter to re-scan the current page (hover menus, edit mode, etc.).");
     }
     console.error("  ● Press Ctrl+C when done to save.\n");
+
+    // Listen for Enter key to trigger manual re-scan
+    if (aiProvider && process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.on("data", (data: Buffer) => {
+        const key = data[0];
+        // Enter = 0x0D (carriage return)
+        if (key === 0x0d || key === 0x0a) {
+          void analyzeCurrentPage(true);
+        }
+        // Ctrl+C = 0x03 — let the SIGINT handler deal with it
+        if (key === 0x03) {
+          process.emit("SIGINT", "SIGINT");
+        }
+      });
+    }
 
     // Wait until the user sends SIGINT (Ctrl+C)
     await new Promise<void>((resolve) => {
@@ -627,6 +656,12 @@ async function runRecord(args: RecordArgs): Promise<void> {
       process.on("SIGINT", handler);
     });
 
+    // Clean up stdin raw mode
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    }
+
     console.error("\n  ⏳ Saving recorded elements…");
 
     let pages: PageRecording[] = [];
@@ -635,9 +670,30 @@ async function runRecord(args: RecordArgs): Promise<void> {
       // Analyze the current page if it hasn't been analyzed yet
       await analyzeCurrentPage();
 
-      // Convert AI results to PageRecording format
-      for (const [pathname, result] of aiResults) {
-        pages.push({ pathname, groups: result.groups });
+      // Convert AI scans to PageRecording format.
+      // Multiple scans of the same pathname get separate entries with
+      // a state suffix so they produce separate manifest files.
+      // The generate command's template detection will merge structurally
+      // similar manifests into shared page objects.
+      const pathnameScanCount = new Map<string, number>();
+      for (const scan of aiScans) {
+        const count = (pathnameScanCount.get(scan.pathname) ?? 0) + 1;
+        pathnameScanCount.set(scan.pathname, count);
+      }
+
+      const pathnameSeen = new Map<string, number>();
+      for (const scan of aiScans) {
+        const totalScans = pathnameScanCount.get(scan.pathname) ?? 1;
+        const seenSoFar = (pathnameSeen.get(scan.pathname) ?? 0) + 1;
+        pathnameSeen.set(scan.pathname, seenSoFar);
+
+        // If only one scan for this path, use plain pathname.
+        // If multiple, append state suffix to differentiate.
+        const effectivePathname = totalScans > 1
+          ? `${scan.pathname.replace(/\/+$/, "")}/state-${seenSoFar}`
+          : scan.pathname;
+
+        pages.push({ pathname: effectivePathname, groups: scan.groups });
       }
     } else {
       // Heuristic mode: harvest from DomRecorder
@@ -659,9 +715,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
       await mkdir(outputDir, { recursive: true });
 
       for (const recording of pages) {
-        // Derive filename from the full URL (inferRouteName needs a parseable URL)
-        const fullUrl = aiResults.get(recording.pathname)?.fullUrl ?? recording.pathname;
-        const routeName = inferRouteName(fullUrl);
+        // Derive filename from the pathname (which may include /state-N suffix)
+        const routeName = inferRouteName(recording.pathname);
         const fileName = `${routeName}.manifest.json`;
         const filePath = join(outputDir, fileName);
 
