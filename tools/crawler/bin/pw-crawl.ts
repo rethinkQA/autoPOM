@@ -611,10 +611,10 @@ async function runRecord(args: RecordArgs): Promise<void> {
       // AI mode: navigate back to each visited page and run AI discovery
       const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
 
-      for (const [pathname, url] of visitedPages) {
+      for (const [pathname, fullUrl] of visitedPages) {
         console.error(`  🤖 Analyzing ${pathname}…`);
         try {
-          await page.goto(url, { waitUntil: "domcontentloaded" });
+          await page.goto(fullUrl, { waitUntil: "domcontentloaded" });
           const groups = await discoverGroupsWithAi(page, aiProvider, {
             scope: args.scope ?? undefined,
             pass: "ai-record",
@@ -645,8 +645,9 @@ async function runRecord(args: RecordArgs): Promise<void> {
       await mkdir(outputDir, { recursive: true });
 
       for (const recording of pages) {
-        // Derive filename from the URL pathname
-        const routeName = inferRouteName(recording.pathname);
+        // Derive filename from the full URL (inferRouteName needs a parseable URL)
+        const fullUrl = visitedPages.get(recording.pathname) ?? recording.pathname;
+        const routeName = inferRouteName(fullUrl);
         const fileName = `${routeName}.manifest.json`;
         const filePath = join(outputDir, fileName);
 
