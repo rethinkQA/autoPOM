@@ -560,14 +560,26 @@ async function runRecord(args: RecordArgs): Promise<void> {
       const pathname = safePathname(page.url());
       if (!visitedPages.has(pathname)) {
         visitedPages.set(pathname, page.url());
+        console.error(`  ↳ Tracking page: ${pathname}`);
       }
     };
 
     // Track initial page
     trackCurrentPage();
 
-    // Track navigation to new pages
+    // Track navigation — use multiple event sources to catch all types:
+    //  - "load" fires on full page loads
+    //  - "domcontentloaded" fires earlier on full navigations
+    //  - "framenavigated" fires for full navigation AND history.pushState
     page.on("load", trackCurrentPage);
+    page.on("domcontentloaded", trackCurrentPage);
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) trackCurrentPage();
+    });
+
+    // Fallback: poll for URL changes every 2s (catches SPA hash/pushState nav
+    // on older browsers or frameworks that bypass Playwright events)
+    const pollInterval = setInterval(trackCurrentPage, 2000);
 
     // Only set up DomRecorder in heuristic mode
     let recorder: DomRecorder | undefined;
@@ -591,6 +603,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     });
 
     console.error("\n  ⏳ Harvesting recorded elements…");
+    clearInterval(pollInterval);
 
     let pages: PageRecording[] = [];
 

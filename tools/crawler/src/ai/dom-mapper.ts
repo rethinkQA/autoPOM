@@ -85,9 +85,13 @@ async function resolveSelector(
     if (selector) return selector;
   }
 
-  // Strategy 3: Semantic tag matching
+  // Strategy 3: Semantic tag matching by groupType/wrapperType
   const selector = await trySemanticTagSelector(page, group);
   if (selector) return selector;
+
+  // Strategy 4: Broad search — ID substrings, heading text, aria-label text
+  const broadSelector = await tryBroadSearch(page, group);
+  if (broadSelector) return broadSelector;
 
   return null;
 }
@@ -285,5 +289,134 @@ async function trySemanticTagSelector(
       return null;
     },
     { groupType: group.groupType, wrapperType: group.wrapperType, label: group.label },
+  );
+}
+
+/**
+ * Strategy 4: Broad search using label keywords.
+ *
+ * Tokenizes the AI label into keywords and searches the DOM for:
+ *  a) Elements whose ID contains one of the keywords
+ *  b) Container elements whose heading/legend text matches
+ *  c) Elements whose aria-label contains a keyword
+ *  d) Container elements (section/div/form/fieldset/nav/aside/…) with a
+ *     class name that contains a keyword
+ *
+ * Only returns a match for group-like containers, not individual
+ * interactive elements (button, input, link, etc.).
+ */
+async function tryBroadSearch(
+  page: Page,
+  group: AiDiscoveredGroup,
+): Promise<string | null> {
+  // Build keywords from the label (2+ chars, lowercased, no stop words)
+  const stopWords = new Set(["the", "a", "an", "of", "in", "on", "to", "for", "and", "or", "is", "it"]);
+  const keywords = group.label
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.toLowerCase())
+    .filter((w) => w.length >= 2 && !stopWords.has(w));
+
+  if (keywords.length === 0) return null;
+
+  return page.evaluate(
+    ({ keywords, accessibilityName }: { keywords: string[]; accessibilityName: string }) => {
+      const CONTAINER_TAGS = new Set([
+        "div", "section", "article", "aside", "main", "nav", "header",
+        "footer", "form", "fieldset", "table", "dialog", "details",
+        "ul", "ol", "dl",
+      ]);
+
+      function isContainer(el: Element): boolean {
+        return CONTAINER_TAGS.has(el.tagName.toLowerCase()) ||
+          el.hasAttribute("role");
+      }
+
+      function buildSelector(el: Element): string | null {
+        const tag = el.tagName.toLowerCase();
+        const id = el.getAttribute("id");
+        if (id) return `#${CSS.escape(id)}`;
+        const ariaLabel = el.getAttribute("aria-label");
+        if (ariaLabel) return `${tag}[aria-label="${CSS.escape(ariaLabel)}"]`;
+        const cls = el.className;
+        if (cls && typeof cls === "string" && cls.trim()) {
+          const first = cls.trim().split(/\s+/)[0];
+          const sel = `${tag}.${CSS.escape(first)}`;
+          if (document.querySelectorAll(sel).length === 1) return sel;
+          // Try more specific: first two classes
+          const parts = cls.trim().split(/\s+/).slice(0, 2);
+          if (parts.length === 2) {
+            const sel2 = `${tag}.${CSS.escape(parts[0])}.${CSS.escape(parts[1])}`;
+            if (document.querySelectorAll(sel2).length === 1) return sel2;
+          }
+        }
+        return null;
+      }
+
+      // (a) Match by ID containing a keyword
+      for (const kw of keywords) {
+        const els = document.querySelectorAll(`[id*="${kw}" i]`);
+        for (const el of els) {
+          if (isContainer(el)) {
+            const sel = buildSelector(el);
+            if (sel) return sel;
+          }
+        }
+      }
+
+      // (b) Match container whose heading/legend text contains a keyword
+      const headingContainers = document.querySelectorAll(
+        "section, div, form, fieldset, nav, aside, article, main, header, footer, details, [role]"
+      );
+      for (const container of headingContainers) {
+        const heading = container.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > legend, :scope > caption");
+        if (!heading) continue;
+        const headingText = heading.textContent?.trim().toLowerCase() ?? "";
+        const matches = keywords.some((kw) => headingText.includes(kw));
+        if (matches) {
+          const sel = buildSelector(container);
+          if (sel) return sel;
+        }
+      }
+
+      // (c) Match by aria-label containing a keyword
+      for (const kw of keywords) {
+        const els = document.querySelectorAll(`[aria-label*="${kw}" i]`);
+        for (const el of els) {
+          if (isContainer(el)) {
+            const sel = buildSelector(el);
+            if (sel) return sel;
+          }
+        }
+      }
+
+      // (d) Match container whose class name contains a keyword
+      for (const kw of keywords) {
+        const els = document.querySelectorAll(`[class*="${kw}" i]`);
+        for (const el of els) {
+          if (isContainer(el)) {
+            const sel = buildSelector(el);
+            if (sel) return sel;
+          }
+        }
+      }
+
+      // (e) Last resort: match by accessibilityName if provided
+      if (accessibilityName) {
+        const nameWords = accessibilityName.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+        for (const nw of nameWords) {
+          const els = document.querySelectorAll(`[id*="${nw}" i], [aria-label*="${nw}" i], [class*="${nw}" i]`);
+          for (const el of els) {
+            if (isContainer(el)) {
+              const sel = buildSelector(el);
+              if (sel) return sel;
+            }
+          }
+        }
+      }
+
+      return null;
+    },
+    { keywords, accessibilityName: group.accessibilityName ?? "" },
   );
 }
