@@ -4,24 +4,27 @@
  * Requires a running Ollama server (default: http://localhost:11434).
  * No API key needed. Supports multimodal models like llava, llava-llama3, bakllava.
  *
- * Uses a simplified prompt compared to cloud providers because local
- * models (7B–13B) struggle with long structured instructions.
+ * Uses the /api/chat endpoint with a simplified prompt — small vision
+ * models (7B–13B) struggle with long structured instructions AND with
+ * Ollama's `format: "json"` constraint (which produces `{}`).
+ * Instead we let the model respond in free text and extract JSON via regex.
  */
 
 import type { AiProvider, AiPageInput, AiDiscoveredGroup } from "../types.js";
 
-/** Short, direct prompt that small vision models can actually follow. */
-const OLLAMA_PROMPT = `Look at this web page screenshot and the ARIA accessibility tree below.
+/**
+ * System message — kept very short with a complete filled-in example
+ * so the model can mimic the structure.
+ */
+const SYSTEM_MSG = `You analyze web page screenshots. When the user shows you a web page, identify the major UI sections (forms, navbars, headers, footers, tables, card grids, dialogs, etc).
 
-List every distinct UI section/region you see (nav bars, forms, headers, footers, sidebars, card grids, tables, dialogs, etc). Do NOT list individual buttons or links — only containers/regions.
+Reply with a JSON object like this example:
 
-Return JSON: {"groups": [{"label": "short name", "groupType": "one of: nav|header|footer|main|aside|section|form|fieldset|region|toolbar|tablist|menu|details|generic", "wrapperType": "one of: group|table|dialog|toast|datePicker", "description": "one sentence", "accessibilityRole": "ARIA role if known", "accessibilityName": "accessible name if known"}]}
+{"groups":[{"label":"Login Form","groupType":"form"},{"label":"Page Header","groupType":"header"},{"label":"Nav Bar","groupType":"nav"}]}
 
-If you see a login form, that is a "form" groupType with wrapperType "group".
-If you see a navigation bar, that is a "nav" groupType.
-If you see a header area, that is a "header" groupType.
+Valid groupType values: nav, header, footer, main, aside, section, form, region, toolbar, menu, generic.
 
-Return ONLY the JSON object. No explanation.`;
+Only include the JSON object in your reply, nothing else.`;
 
 interface OllamaProviderOptions {
   model: string;
@@ -39,29 +42,30 @@ export class OllamaProvider implements AiProvider {
   }
 
   async analyzePageGroups(input: AiPageInput): Promise<AiDiscoveredGroup[]> {
-    const prompt = `${OLLAMA_PROMPT}
+    const userMsg = `What UI sections do you see on this page?
 
-## ARIA Snapshot
-
-${input.accessibilityTree}
-
-Page URL: ${input.url}
-
-Now identify every UI group/section visible on this page. Return JSON.`;
+ARIA accessibility tree:
+${input.accessibilityTree}`;
 
     const body = {
       model: this.model,
-      prompt,
-      images: [input.screenshot.toString("base64")],
+      messages: [
+        { role: "system", content: SYSTEM_MSG },
+        {
+          role: "user",
+          content: userMsg,
+          images: [input.screenshot.toString("base64")],
+        },
+      ],
       stream: false,
-      format: "json",
+      // Do NOT set format: "json" — llava produces {} with that constraint.
       options: {
         temperature: 0,
         num_predict: 4096,
       },
     };
 
-    const response = await fetch(`${this.baseUrl}/api/generate`, {
+    const response = await fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -72,13 +76,45 @@ Now identify every UI group/section visible on this page. Return JSON.`;
       throw new Error(`Ollama API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as { response: string };
+    const data = await response.json() as { message?: { content?: string } };
+    const text = data.message?.content ?? "";
 
-    if (!data.response) throw new Error("Ollama returned empty response");
+    if (!text) throw new Error("Ollama returned empty response");
 
-    console.error(`  🤖 Raw ollama response: ${data.response.slice(0, 500)}`);
+    console.error(`  🤖 Raw ollama response: ${text.slice(0, 500)}`);
 
-    const parsed = JSON.parse(data.response) as { groups?: AiDiscoveredGroup[] };
-    return parsed.groups ?? [];
+    return extractGroups(text);
   }
+}
+
+/**
+ * Extract a groups array from free-text LLM output.
+ * Tries JSON.parse first, then falls back to regex extraction.
+ */
+function extractGroups(text: string): AiDiscoveredGroup[] {
+  // Try parsing the entire response as JSON
+  try {
+    const obj = JSON.parse(text) as { groups?: AiDiscoveredGroup[] };
+    if (Array.isArray(obj.groups) && obj.groups.length > 0) return obj.groups;
+  } catch { /* not pure JSON — try extracting */ }
+
+  // Try extracting a JSON object from surrounding text
+  const match = text.match(/\{[\s\S]*"groups"\s*:\s*\[[\s\S]*\]\s*\}/);
+  if (match) {
+    try {
+      const obj = JSON.parse(match[0]) as { groups?: AiDiscoveredGroup[] };
+      if (Array.isArray(obj.groups) && obj.groups.length > 0) return obj.groups;
+    } catch { /* malformed JSON */ }
+  }
+
+  // Try extracting a bare JSON array
+  const arrMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (arrMatch) {
+    try {
+      const arr = JSON.parse(arrMatch[0]) as AiDiscoveredGroup[];
+      if (Array.isArray(arr) && arr.length > 0) return arr;
+    } catch { /* malformed */ }
+  }
+
+  return [];
 }
