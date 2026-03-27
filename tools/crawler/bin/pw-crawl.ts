@@ -25,7 +25,7 @@ import { resolve, join, basename } from "node:path";
 import { crawlPage, diffPage } from "../src/crawler.js";
 import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
-import { inferRouteName, labelToPropertyName } from "../src/naming.js";
+import { inferRouteName, labelToPropertyName, safePathname, normalizeRoute } from "../src/naming.js";
 import { DomRecorder } from "../src/recorder.js";
 import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
@@ -559,48 +559,45 @@ async function runRecord(args: RecordArgs): Promise<void> {
     // We can't revisit pages at the end because state changes (e.g.
     // login) mean earlier pages (login form) won't be there anymore.
     // Instead, run AI discovery immediately when each new page loads.
-    // The AI determines the page name from the content — not the URL —
-    // so SPAs, parameterized routes, and login→dashboard transitions
-    // all get correct, distinct page identities.
+    //
+    // Page identity is based on the URL's route template — dynamic
+    // segments (IDs, UUIDs) are collapsed so /devices/123 and
+    // /devices/456 are the same page ("/devices/:id").
 
-    /** Collected results: array of { pageName, fullUrl, groups, scanIndex } */
-    const aiScans: { pageName: string; fullUrl: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
-    /** Track how many scans each AI page name has had. */
+    /** Collected results: array of { page (template), pathname, groups, scanIndex } */
+    const aiScans: { page: string; pathname: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
+    /** Track how many scans each route template has had. */
     const scanCounts = new Map<string, number>();
-    /** Track the last AI page name so auto-scans can detect actual page changes. */
-    let lastPageName = "";
     let aiAnalyzing = false; // prevent overlapping analysis
 
     async function analyzeCurrentPage(force = false): Promise<void> {
       if (!aiProvider || aiAnalyzing) return;
 
+      const { page: routeTemplate, pathname } = normalizeRoute(page.url());
+      const count = scanCounts.get(routeTemplate) ?? 0;
+
+      // Auto-scans skip if this route template was already analyzed;
+      // manual (force) always runs (for hover menus, edit mode, etc.)
+      if (!force && count > 0) return;
+
+      const scanIndex = count + 1;
       aiAnalyzing = true;
 
+      const label = scanIndex > 1 ? `${routeTemplate} (scan ${scanIndex})` : routeTemplate;
+      console.error(`  🤖 Analyzing ${label}…`);
       try {
         const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
-        const result = await discoverGroupsWithAi(page, aiProvider!, {
+        const groups = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
-          pass: `ai-record`,
+          pass: `ai-record-${scanIndex}`,
         });
-
-        const pageName = result.pageName;
-        const count = scanCounts.get(pageName) ?? 0;
-
-        // Auto-scans skip if this page name was already analyzed
-        if (!force && count > 0) {
-          // But if the AI says it's a different page than last time, allow it
-          if (pageName === lastPageName) return;
-        }
-
-        const scanIndex = count + 1;
-        const label = scanIndex > 1 ? `${pageName} (scan ${scanIndex})` : pageName;
-
-        aiScans.push({ pageName, fullUrl: page.url(), groups: result.groups, scanIndex });
-        scanCounts.set(pageName, scanIndex);
-        lastPageName = pageName;
-        console.error(`  ✓ "${label}" — ${result.groups.length} group(s) found`);
+        aiScans.push({ page: routeTemplate, pathname, groups, scanIndex });
+        scanCounts.set(routeTemplate, scanIndex);
+        console.error(`  ✓ ${label} — ${groups.length} group(s) found`);
       } catch (err: unknown) {
-        console.error(`  ⚠ AI analysis failed: ${err instanceof Error ? err.message : err}`);
+        console.error(`  ⚠ AI analysis failed for ${label}: ${err instanceof Error ? err.message : err}`);
+        aiScans.push({ page: routeTemplate, pathname, groups: [], scanIndex });
+        scanCounts.set(routeTemplate, scanIndex);
       } finally {
         aiAnalyzing = false;
       }
@@ -706,30 +703,25 @@ async function runRecord(args: RecordArgs): Promise<void> {
       await analyzeCurrentPage();
 
       // Convert AI scans to PageRecording format.
-      // The AI determines page names, so we use those instead of URL
-      // pathnames. Multiple scans of the same page name get state suffixes.
-      const pageNameScanCount = new Map<string, number>();
+      // group by route template (page) — e.g. "/devices/:id"
+      // Multiple scans of the same template get state suffixes.
+      const pageScanCount = new Map<string, number>();
       for (const scan of aiScans) {
-        const count = (pageNameScanCount.get(scan.pageName) ?? 0) + 1;
-        pageNameScanCount.set(scan.pageName, count);
+        const count = (pageScanCount.get(scan.page) ?? 0) + 1;
+        pageScanCount.set(scan.page, count);
       }
 
-      const pageNameSeen = new Map<string, number>();
+      const pageSeen = new Map<string, number>();
       for (const scan of aiScans) {
-        const totalScans = pageNameScanCount.get(scan.pageName) ?? 1;
-        const seenSoFar = (pageNameSeen.get(scan.pageName) ?? 0) + 1;
-        pageNameSeen.set(scan.pageName, seenSoFar);
+        const totalScans = pageScanCount.get(scan.page) ?? 1;
+        const seenSoFar = (pageSeen.get(scan.page) ?? 0) + 1;
+        pageSeen.set(scan.page, seenSoFar);
 
-        // Convert AI page name to a kebab-case pathname for the manifest.
-        // e.g. "Login Form" → "/login-form", "Device List" → "/device-list"
-        const basePath = "/" + scan.pageName
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "");
-
-        // If multiple scans for this page, append state suffix.
+        // Use the route template as the pathname for manifest naming.
+        // If multiple scans for this template, append state suffix.
+        const basePath = scan.page.replace(/:id/g, "detail");
         const effectivePathname = totalScans > 1
-          ? `${basePath}/state-${seenSoFar}`
+          ? `${basePath.replace(/\/+$/, "")}/state-${seenSoFar}`
           : basePath;
 
         pages.push({ pathname: effectivePathname, groups: scan.groups });

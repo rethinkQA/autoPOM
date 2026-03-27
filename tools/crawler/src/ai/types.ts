@@ -64,14 +64,6 @@ export interface AiDiscoveredGroup {
   accessibilityName?: string;
 }
 
-/** Full result from AI page analysis. */
-export interface AiAnalysisResult {
-  /** AI-determined page name (2-4 words). */
-  pageName: string;
-  /** UI groups found on the page. */
-  groups: AiDiscoveredGroup[];
-}
-
 /**
  * AI provider — analyzes a page and returns discovered groups.
  *
@@ -84,9 +76,9 @@ export interface AiProvider {
 
   /**
    * Analyze a page screenshot + accessibility tree and return
-   * the UI groups found on the page along with an AI-determined page name.
+   * the UI groups found on the page.
    */
-  analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult>;
+  analyzePageGroups(input: AiPageInput): Promise<AiDiscoveredGroup[]>;
 }
 
 

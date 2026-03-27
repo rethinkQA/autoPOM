@@ -186,3 +186,81 @@ export function safePathname(url: string): string {
     return "/";
   }
 }
+
+// ── Dynamic segment detection ────────────────────────────────
+
+/** Matches segments that are purely numeric (IDs). */
+const NUMERIC_ID = /^\d+$/;
+
+/** Matches UUIDs (8-4-4-4-12 hex). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Matches hex strings ≥8 chars (common short IDs, hashes). */
+const HEX_ID = /^[0-9a-f]{8,}$/i;
+
+/** Matches MongoDB ObjectIds (24 hex chars). */
+const OBJECT_ID = /^[0-9a-f]{24}$/i;
+
+/** Matches base64-like tokens ≥16 chars (JWT segments, encoded IDs). */
+const BASE64_TOKEN = /^[A-Za-z0-9_-]{16,}$/;
+
+/**
+ * Test whether a single URL path segment looks like a dynamic value
+ * (ID, UUID, hash) rather than a named route.
+ */
+function isDynamicSegment(segment: string): boolean {
+  return (
+    NUMERIC_ID.test(segment) ||
+    UUID.test(segment) ||
+    OBJECT_ID.test(segment) ||
+    HEX_ID.test(segment) ||
+    // Long base64 tokens that mix letters+digits — but NOT normal words
+    (BASE64_TOKEN.test(segment) && /\d/.test(segment) && /[a-zA-Z]/.test(segment))
+  );
+}
+
+/**
+ * Normalize a URL into a route template.
+ *
+ * Collapses dynamic segments (numeric IDs, UUIDs, hashes) into `:id`
+ * placeholders so that `/devices/123` and `/devices/456` map to the
+ * same route template `/devices/:id`.
+ *
+ * Returns `{ page, state }` where:
+ *   - `page`  = the template with dynamic segments collapsed (used for grouping)
+ *   - `state` = the original pathname (used for manifest metadata)
+ *
+ * Works generically with any URL structure — no app-specific patterns.
+ *
+ * Examples:
+ *   "/devices"              → { page: "/devices" }
+ *   "/devices/123"          → { page: "/devices/:id" }
+ *   "/devices/123/edit"     → { page: "/devices/:id/edit" }
+ *   "/admin/buildings"      → { page: "/admin/buildings" }
+ *   "/users/550e8400-e29b-41d4-a716-446655440000" → { page: "/users/:id" }
+ *   "/"                     → { page: "/" }
+ */
+export function normalizeRoute(url: string): { page: string; pathname: string } {
+  let pathname: string;
+  try {
+    const parsed = url.startsWith("/") ? new URL(url, "http://localhost") : new URL(url);
+    pathname = parsed.pathname;
+
+    // Handle hash-based routing (e.g. /#/devices/123)
+    if (parsed.hash && parsed.hash.startsWith("#/")) {
+      pathname = parsed.hash.slice(1); // "#/foo" → "/foo"
+    }
+  } catch {
+    pathname = url;
+  }
+
+  // Normalize trailing slashes (but keep root as "/")
+  const clean = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
+
+  // Split, collapse dynamic segments, rejoin
+  const segments = clean.split("/").filter((s) => s.length > 0);
+  const normalized = segments.map((s) => (isDynamicSegment(s) ? ":id" : s));
+  const page = "/" + normalized.join("/");
+
+  return { page, pathname: clean || "/" };
+}
