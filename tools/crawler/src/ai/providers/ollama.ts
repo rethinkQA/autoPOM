@@ -59,6 +59,8 @@ export class OllamaProvider implements AiProvider {
 
     if (!data.response) throw new Error("Ollama returned empty response");
 
+    console.error(`  🤖 Raw ollama response: ${data.response.slice(0, 500)}`);
+
     const parsed = JSON.parse(data.response) as { groups: AiDiscoveredGroup[] };
     return parsed.groups ?? [];
   }

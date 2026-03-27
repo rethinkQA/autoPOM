@@ -42,6 +42,8 @@ export async function discoverGroupsWithAi(
   // 1. Capture page context
   const context = await capturePageContext(page);
 
+  console.error(`  🤖 ARIA snapshot (${context.accessibilityTree.length} chars):\n${context.accessibilityTree.slice(0, 300)}…`);
+
   // 2. Send to AI provider
   const aiGroups = await provider.analyzePageGroups(context);
 
