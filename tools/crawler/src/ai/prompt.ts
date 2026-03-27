@@ -18,6 +18,10 @@
 export const OUTPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    pageName: {
+      type: "string" as const,
+      description: "Short descriptive name for this page (2-4 words), e.g. 'Login Form', 'Device List', 'User Dashboard'. Based on the page's primary content/purpose, NOT the URL.",
+    },
     groups: {
       type: "array" as const,
       items: {
@@ -59,7 +63,7 @@ export const OUTPUT_SCHEMA = {
       },
     },
   },
-  required: ["groups" as const],
+  required: ["pageName" as const, "groups" as const],
   additionalProperties: false,
 };
 
@@ -102,13 +106,25 @@ A group is any distinct visual or functional region a QA engineer would target i
 
 ## Output format
 
-Return a JSON object with a single "groups" array. Each entry has:
+Return a JSON object with:
+- pageName: string (2-4 words, descriptive name for this page — see "Page Identity" below)
+- groups: array of UI groups found on the page
+
+Each group entry has:
 - label: string (2-5 words, human-readable)
 - groupType: one of [nav, header, footer, main, aside, section, fieldset, form, region, toolbar, tablist, menu, menubar, details, generic]
 - wrapperType: one of [group, table, dialog, toast, datePicker]
 - description: string (one sentence explaining what this group is)
 - accessibilityRole: string (ARIA role from the a11y tree, if found)
 - accessibilityName: string (accessible name from the a11y tree, if found)
+
+## Page Identity
+
+Also determine a short, descriptive name for this page (2-4 words). This name should:
+- Reflect the page's PRIMARY purpose/content (e.g. "Login Form", "Device List", "User Settings", "Dashboard Overview")
+- Be CONSISTENT: the same logical page should always get the same name, regardless of URL
+- Be DIFFERENT for genuinely different pages, even if they share the same URL (e.g. a login form vs a dashboard at "/")
+- Ignore URL parameters, query strings, or IDs — "/devices/1" and "/devices/2" are both "Device Detail"
 
 Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
 

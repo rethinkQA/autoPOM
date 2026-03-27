@@ -11,4 +11,5 @@ export type {
   AiProviderName,
   AiPageInput,
   AiDiscoveredGroup,
+  AiAnalysisResult,
 } from "./types.js";

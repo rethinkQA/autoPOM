@@ -13,7 +13,7 @@
  * weakest vision models — any model can describe what it sees.
  */
 
-import type { AiProvider, AiPageInput, AiDiscoveredGroup } from "../types.js";
+import type { AiProvider, AiPageInput, AiDiscoveredGroup, AiAnalysisResult } from "../types.js";
 import type { GroupType } from "../../types.js";
 
 // ── Prompts ─────────────────────────────────────────────────
@@ -80,12 +80,15 @@ export class OllamaProvider implements AiProvider {
     this.baseUrl = options.baseUrl;
   }
 
-  async analyzePageGroups(input: AiPageInput): Promise<AiDiscoveredGroup[]> {
+  async analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult> {
     const base64Img = input.screenshot.toString("base64");
+
+    // Ollama models can't reliably determine page names — derive from URL
+    const pageName = input.url.replace(/^\//, "").replace(/\/$/, "") || "Home";
 
     // Phase 1: Try structured JSON
     const jsonGroups = await this.tryJsonPhase(input.accessibilityTree, base64Img);
-    if (jsonGroups.length > 0) return jsonGroups;
+    if (jsonGroups.length > 0) return { pageName, groups: jsonGroups };
 
     console.error("  🤖 Phase 1 (JSON) returned 0 — trying Phase 2 (describe)…");
 
@@ -99,10 +102,10 @@ export class OllamaProvider implements AiProvider {
       // Phase 3: Last resort — infer from ARIA tree alone (no AI needed)
       console.error("  🤖 Phase 2 found 0 — inferring from ARIA tree…");
       const ariaGroups = inferFromAria(input.accessibilityTree);
-      return ariaGroups;
+      return { pageName, groups: ariaGroups };
     }
 
-    return nlGroups;
+    return { pageName, groups: nlGroups };
   }
 
   /** Phase 1: Ask for JSON groups. */

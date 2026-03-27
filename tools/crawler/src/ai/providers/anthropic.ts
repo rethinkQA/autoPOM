@@ -5,7 +5,7 @@
  * Set ANTHROPIC_API_KEY environment variable or pass via --ai-key.
  */
 
-import type { AiProvider, AiPageInput, AiDiscoveredGroup } from "../types.js";
+import type { AiProvider, AiPageInput, AiDiscoveredGroup, AiAnalysisResult } from "../types.js";
 import { SYSTEM_PROMPT, buildUserMessage } from "../prompt.js";
 
 interface AnthropicProviderOptions {
@@ -26,7 +26,7 @@ export class AnthropicProvider implements AiProvider {
     this.baseUrl = options.baseUrl ?? "https://api.anthropic.com";
   }
 
-  async analyzePageGroups(input: AiPageInput): Promise<AiDiscoveredGroup[]> {
+  async analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult> {
     const { text, imageBase64 } = buildUserMessage(
       input.screenshot,
       input.accessibilityTree,
@@ -75,7 +75,7 @@ export class AnthropicProvider implements AiProvider {
 
     // Claude may wrap JSON in markdown code fences — strip them
     const raw = textBlock.text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const parsed = JSON.parse(raw) as { groups: AiDiscoveredGroup[] };
-    return parsed.groups ?? [];
+    const parsed = JSON.parse(raw) as { pageName?: string; groups: AiDiscoveredGroup[] };
+    return { pageName: parsed.pageName ?? "Unknown Page", groups: parsed.groups ?? [] };
   }
 }
