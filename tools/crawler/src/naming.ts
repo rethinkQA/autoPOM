@@ -133,7 +133,8 @@ export function deduplicateNames(
  */
 export function inferRouteName(url: string): string {
   try {
-    const parsed = new URL(url);
+    // Support both full URLs and bare pathnames
+    const parsed = url.startsWith("/") ? new URL(url, "http://localhost") : new URL(url);
     let path = parsed.pathname;
 
     // Check hash-based routing first

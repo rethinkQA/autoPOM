@@ -420,8 +420,9 @@ async function runGenerate(args: GenerateArgs): Promise<void> {
     const manifest = validateManifest(safeJsonParse(raw, fullPath), fullPath);
 
     // Infer route name from filename or manifest URL
-    const rawFromFilename = basename(manifestPath, ".json").replace(/-manifest$/, "");
-    const route = rawFromFilename !== basename(manifestPath, ".json")
+    const withoutJson = basename(manifestPath, ".json");
+    const rawFromFilename = withoutJson.replace(/[.-]manifest$/, "");
+    const route = rawFromFilename !== withoutJson
       ? labelToPropertyName(rawFromFilename)
       : inferRouteName(manifest.url);
 
