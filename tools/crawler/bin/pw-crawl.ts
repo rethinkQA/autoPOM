@@ -25,7 +25,7 @@ import { resolve, join, basename } from "node:path";
 import { crawlPage, diffPage } from "../src/crawler.js";
 import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
-import { inferRouteName, labelToPropertyName } from "../src/naming.js";
+import { inferRouteName, labelToPropertyName, safePathname } from "../src/naming.js";
 import { DomRecorder } from "../src/recorder.js";
 import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
@@ -99,6 +99,10 @@ interface RecordArgs {
   scope?: string;
   ignoreHTTPSErrors: boolean;
   help: boolean;
+  aiProvider?: AiProviderName;
+  aiModel?: string;
+  aiKey?: string;
+  aiBaseUrl?: string;
 }
 
 type CliArgs = CrawlArgs | GenerateArgs | RecordArgs;
@@ -264,6 +268,18 @@ function parseRecordArgs(argv: string[]): RecordArgs {
       case "--ignore-https-errors":
         args.ignoreHTTPSErrors = true;
         break;
+      case "--ai-provider":
+        args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
+        break;
+      case "--ai-model":
+        args.aiModel = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-key":
+        args.aiKey = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-base-url":
+        args.aiBaseUrl = requireValue(argv, ++i, arg);
+        break;
       case "-h":
       case "--help":
         args.help = true;
@@ -323,6 +339,10 @@ Options:
   -o, --output <dir>       Output directory for per-page manifests (default: stdout)
   --scope <selector>       Limit recording to a section of the page
   --ignore-https-errors    Skip TLS certificate validation
+  --ai-provider <name>     Use AI discovery (openai, anthropic, ollama)
+  --ai-model <model>       AI model override (default: per-provider)
+  --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
+  --ai-base-url <url>      Custom API base URL
 
 ── Generate Mode ───────────────────────────────────────────────
 
@@ -522,10 +542,42 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
-    const recorder = new DomRecorder(page);
-    await recorder.start();
+    // Resolve AI provider if requested
+    let aiProvider;
+    if (args.aiProvider) {
+      const { createAiProvider } = await import("../src/ai/provider.js");
+      aiProvider = await createAiProvider({
+        provider: args.aiProvider,
+        model: args.aiModel,
+        apiKey: args.aiKey,
+        baseUrl: args.aiBaseUrl,
+      });
+    }
 
-    console.error("  ● Recording — interact with the page to trigger dynamic elements.");
+    // Track visited URLs (pathname → full URL) for AI mode
+    const visitedPages = new Map<string, string>();
+    const trackCurrentPage = () => {
+      const pathname = safePathname(page.url());
+      if (!visitedPages.has(pathname)) {
+        visitedPages.set(pathname, page.url());
+      }
+    };
+
+    // Track initial page
+    trackCurrentPage();
+
+    // Track navigation to new pages
+    page.on("load", trackCurrentPage);
+
+    // Only set up DomRecorder in heuristic mode
+    let recorder: DomRecorder | undefined;
+    if (!aiProvider) {
+      recorder = new DomRecorder(page);
+      await recorder.start();
+    }
+
+    const modeLabel = aiProvider ? "AI" : "heuristic";
+    console.error(`  ● Recording (${modeLabel}) — interact with the page to trigger dynamic elements.`);
     console.error("  ● Navigate freely (login, follow links) — each page gets its own manifest.");
     console.error("  ● Press Ctrl+C when done to harvest and save.\n");
 
@@ -541,13 +593,34 @@ async function runRecord(args: RecordArgs): Promise<void> {
     console.error("\n  ⏳ Harvesting recorded elements…");
 
     let pages: PageRecording[] = [];
-    try {
-      pages = await recorder.harvestByPage();
-      await recorder.stop();
-    } catch (harvestErr: unknown) {
-      // Browser may be closing — fall back to accumulated data
-      console.error(`  ⚠ Harvest error (using accumulated data): ${harvestErr instanceof Error ? harvestErr.message : harvestErr}`);
-      pages = recorder.getAccumulatedPages();
+
+    if (aiProvider) {
+      // AI mode: navigate back to each visited page and run AI discovery
+      const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
+
+      for (const [pathname, url] of visitedPages) {
+        console.error(`  🤖 Analyzing ${pathname}…`);
+        try {
+          await page.goto(url, { waitUntil: "domcontentloaded" });
+          const groups = await discoverGroupsWithAi(page, aiProvider, {
+            scope: args.scope ?? undefined,
+            pass: "ai-record",
+          });
+          pages.push({ pathname, groups });
+        } catch (err: unknown) {
+          console.error(`  ⚠ AI discovery failed for ${pathname}: ${err instanceof Error ? err.message : err}`);
+          pages.push({ pathname, groups: [] });
+        }
+      }
+    } else {
+      // Heuristic mode: harvest from DomRecorder
+      try {
+        pages = await recorder!.harvestByPage();
+        await recorder!.stop();
+      } catch (harvestErr: unknown) {
+        console.error(`  ⚠ Harvest error (using accumulated data): ${harvestErr instanceof Error ? harvestErr.message : harvestErr}`);
+        pages = recorder!.getAccumulatedPages();
+      }
     }
 
     const totalGroups = pages.reduce((n, p) => n + p.groups.length, 0);
