@@ -54,11 +54,13 @@ export const OUTPUT_SCHEMA = {
             description: "The accessible name of the matching node in the accessibility tree.",
           },
         },
-        required: ["label", "groupType", "wrapperType"],
+        required: ["label", "groupType", "wrapperType", "description", "accessibilityRole", "accessibilityName"],
+        additionalProperties: false,
       },
     },
   },
   required: ["groups" as const],
+  additionalProperties: false,
 };
 
 // ── System prompt ───────────────────────────────────────────
