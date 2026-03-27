@@ -126,8 +126,8 @@ test.describe("inferRouteName", () => {
     expect(inferRouteName("http://localhost:3001/products/list")).toBe("productsList");
   });
 
-  test("replaces numeric last segment with 'detail'", () => {
-    expect(inferRouteName("http://localhost:3001/products/123")).toBe("productsDetail");
+  test("strips numeric last segment, uses parent", () => {
+    expect(inferRouteName("http://localhost:3001/products/123")).toBe("products");
   });
 
   test("returns 'page' for invalid URL", () => {

@@ -449,8 +449,8 @@ test.describe("emitMultiRoute", () => {
     const files = emitMultiRoute(routes);
 
     expect(files.size).toBe(1);
-    expect(files.has("home-page.ts")).toBe(true);
-    expect(files.get("home-page.ts")).toContain("homePage");
+    expect(files.has("home.ts")).toBe(true);
+    expect(files.get("home.ts")).toContain("homePage");
   });
 
   test("produces standalone files for routes with different shapes", () => {
@@ -472,9 +472,10 @@ test.describe("emitMultiRoute", () => {
 
     const files = emitMultiRoute(routes);
 
-    expect(files.size).toBe(2);
-    expect(files.has("home-page.ts")).toBe(true);
-    expect(files.has("about-page.ts")).toBe(true);
+    expect(files.size).toBe(3);
+    expect(files.has("shared-components.ts")).toBe(true);
+    expect(files.has("home.ts")).toBe(true);
+    expect(files.has("about.ts")).toBe(true);
   });
 
   test("returns empty map for empty input", () => {

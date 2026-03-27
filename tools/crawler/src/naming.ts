@@ -123,13 +123,17 @@ export function deduplicateNames(
 }
 
 /**
- * Infer a route name from a URL path.
+ * Infer a short route name from a URL path.
  *
- * Examples:
- *   "http://localhost:3001/"       → "home"
- *   "http://localhost:3001/#about" → "about"
- *   "http://localhost:3001/about"  → "about"
- *   "http://localhost:3001/products/123" → "productsDetail"
+ * Uses only the last 1–2 meaningful segments to keep names concise:
+ *   "/"                              → "home"
+ *   "/about"                         → "about"
+ *   "/#about"                        → "about"
+ *   "/products/list"                 → "productsList"
+ *   "/products/123"                  → "products"
+ *   "/admin/rackraj/buildings/detail" → "buildings"
+ *   "/admin/rackraj/buildings/:id"   → "buildings"
+ *   "/devices/:id/edit"              → "devices"
  */
 export function inferRouteName(url: string): string {
   try {
@@ -150,20 +154,22 @@ export function inferRouteName(url: string): string {
     // Remove leading/trailing slashes
     path = path.replace(/^\/+|\/+$/g, "");
 
-    // Split into segments and build camelCase
+    // Split into segments
     const segments = path.split("/").filter((s) => s.length > 0);
+    if (segments.length === 0) return "home";
 
-    if (segments.length === 0) {
-      return "home";
-    }
+    // Strip dynamic-looking segments (IDs, :id placeholders, "detail")
+    const meaningful = segments.filter(
+      (s) => s !== ":id" && s !== "detail" && !/^\d+$/.test(s) &&
+        !/^[0-9a-f]{8}-/i.test(s),
+    );
 
-    // If it looks like a detail page (last segment is numeric or UUID)
-    const lastSegment = segments[segments.length - 1];
-    if (/^[0-9]+$/.test(lastSegment) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lastSegment)) {
-      segments[segments.length - 1] = "detail";
-    }
+    if (meaningful.length === 0) return "home";
 
-    return segments
+    // Take last 2 meaningful segments at most
+    const tail = meaningful.slice(-2);
+
+    return tail
       .map((seg, i) => {
         const lower = seg.toLowerCase();
         if (i === 0) return lower;

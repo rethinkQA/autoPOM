@@ -945,7 +945,7 @@ export function emitMultiRoute(
   // Single route — just emit standalone (no shared extraction possible)
   if (routes.length === 1) {
     const route = routes[0];
-    const filename = `${route.route}-page.ts`;
+    const filename = `${route.route}.ts`;
     result.set(
       filename,
       emitPageObject(route.manifest, {
@@ -982,7 +982,7 @@ export function emitMultiRoute(
 
   // Step 4: Emit standalone page objects — composing shared components
   for (const route of standalone) {
-    const filename = `${route.route}-page.ts`;
+    const filename = `${route.route}.ts`;
     if (shared.length > 0) {
       result.set(
         filename,

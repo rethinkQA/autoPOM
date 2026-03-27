@@ -51,10 +51,11 @@ export async function crawlPage(
   if (options?.aiProvider) {
     // AI-powered discovery — no heuristic mixing
     const { discoverGroupsWithAi } = await import("./ai/discover-ai.js");
-    allGroups = await discoverGroupsWithAi(page, options.aiProvider, {
+    const result = await discoverGroupsWithAi(page, options.aiProvider, {
       scope: scope ?? undefined,
       pass: passTag,
     });
+    allGroups = result.groups;
   } else {
     allGroups = await heuristicDiscovery(page, scope, passTag);
   }

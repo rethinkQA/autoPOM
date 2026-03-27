@@ -43,6 +43,14 @@ export interface AiPageInput {
   url: string;
 }
 
+/** Full result from AI page analysis. */
+export interface AiAnalysisResult {
+  /** Short kebab-case page name chosen by the AI. */
+  pageName: string;
+  /** Groups discovered on the page. */
+  groups: AiDiscoveredGroup[];
+}
+
 /** A single group identified by the AI. */
 export interface AiDiscoveredGroup {
   /** Human-readable label for the group. */
@@ -76,9 +84,9 @@ export interface AiProvider {
 
   /**
    * Analyze a page screenshot + accessibility tree and return
-   * the UI groups found on the page.
+   * the page name and UI groups found on the page.
    */
-  analyzePageGroups(input: AiPageInput): Promise<AiDiscoveredGroup[]>;
+  analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult>;
 }
 
 

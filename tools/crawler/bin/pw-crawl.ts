@@ -440,7 +440,7 @@ async function runGenerate(args: GenerateArgs): Promise<void> {
   let files: Map<string, string>;
   if (routes.length === 1) {
     const route = routes[0];
-    const filename = `${route.route}-page.ts`;
+    const filename = `${route.route}.ts`;
     files = new Map([[filename, emitPageObject(route.manifest, {
       ...emitOptions,
       routeName: route.route,
@@ -615,8 +615,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
       return bestOverlap >= 0.7 ? bestKey : null;
     }
 
-    /** Collected results: array of { page (template), pathname, groups, scanIndex } */
-    const aiScans: { page: string; pathname: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
+    /** Collected results: array of { page (template), pageName (AI-chosen), pathname, groups, scanIndex } */
+    const aiScans: { page: string; pageName: string; pathname: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
     /** Track how many scans each route template has had. */
     const scanCounts = new Map<string, number>();
     /** Track shape fingerprints per page for structural matching. */
@@ -648,10 +648,11 @@ async function runRecord(args: RecordArgs): Promise<void> {
       console.error(`  🤖 Analyzing ${routeTemplate}…`);
       try {
         const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
-        const groups = await discoverGroupsWithAi(page, aiProvider!, {
+        const result = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
           pass: `ai-record-${(exactCount || 0) + 1}`,
         });
+        const { pageName, groups } = result;
 
         // Determine the effective page key:
         // 1. Exact route template match → merge under same key
@@ -672,7 +673,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
         const count = scanCounts.get(effectiveKey) ?? 0;
         const scanIndex = count + 1;
 
-        aiScans.push({ page: effectiveKey, pathname, groups, scanIndex });
+        aiScans.push({ page: effectiveKey, pageName, pathname, groups, scanIndex });
         scanCounts.set(effectiveKey, scanIndex);
         // Also mark the original route template as "handled" so auto-scans skip it
         if (effectiveKey !== routeTemplate) {
@@ -689,7 +690,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
         console.error(`  ✓ ${label} — ${groups.length} group(s) found`);
       } catch (err: unknown) {
         console.error(`  ⚠ AI analysis failed for ${routeTemplate}: ${err instanceof Error ? err.message : err}`);
-        aiScans.push({ page: routeTemplate, pathname, groups: [], scanIndex: 1 });
+        aiScans.push({ page: routeTemplate, pageName: "page", pathname, groups: [], scanIndex: 1 });
         scanCounts.set(routeTemplate, 1);
       } finally {
         aiAnalyzing = false;
@@ -799,6 +800,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
       // F8 re-scans reveal more groups (hover menus, expanded panels)
       // that belong on the SAME page — not separate state files.
       const mergedByRoute = new Map<string, { pathname: string; groups: ManifestGroup[] }>();
+      /** AI-chosen page names keyed by route template. First scan wins. */
+      const aiPageNames = new Map<string, string>();
 
       for (const scan of aiScans) {
         const existing = mergedByRoute.get(scan.page);
@@ -813,8 +816,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
           );
           existing.groups = merged.groups;
         } else {
-          const basePath = scan.page.replace(/:id/g, "detail");
-          mergedByRoute.set(scan.page, { pathname: basePath, groups: [...scan.groups] });
+          mergedByRoute.set(scan.page, { pathname: scan.pageName, groups: [...scan.groups] });
+          aiPageNames.set(scan.page, scan.pageName);
         }
       }
 
@@ -841,8 +844,10 @@ async function runRecord(args: RecordArgs): Promise<void> {
       await mkdir(outputDir, { recursive: true });
 
       for (const recording of pages) {
-        // Derive filename from the pathname (which may include /state-N suffix)
-        const routeName = inferRouteName(recording.pathname);
+        // Use the AI page name (stored in pathname for AI mode) or infer from URL
+        const routeName = aiProvider
+          ? labelToPropertyName(recording.pathname)
+          : inferRouteName(recording.pathname);
         const fileName = `${routeName}.manifest.json`;
         const filePath = join(outputDir, fileName);
 

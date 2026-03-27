@@ -5,7 +5,7 @@
  * Set OPENAI_API_KEY environment variable or pass via --ai-key.
  */
 
-import type { AiProvider, AiPageInput, AiDiscoveredGroup } from "../types.js";
+import type { AiProvider, AiPageInput, AiAnalysisResult, AiDiscoveredGroup } from "../types.js";
 import { SYSTEM_PROMPT, OUTPUT_SCHEMA, buildUserMessage } from "../prompt.js";
 
 interface OpenAiProviderOptions {
@@ -26,7 +26,7 @@ export class OpenAiProvider implements AiProvider {
     this.baseUrl = options.baseUrl ?? "https://api.openai.com/v1";
   }
 
-  async analyzePageGroups(input: AiPageInput): Promise<AiDiscoveredGroup[]> {
+  async analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult> {
     const { text, imageBase64 } = buildUserMessage(
       input.screenshot,
       input.accessibilityTree,
@@ -77,7 +77,7 @@ export class OpenAiProvider implements AiProvider {
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("OpenAI returned empty response");
 
-    const parsed = JSON.parse(content) as { groups: AiDiscoveredGroup[] };
-    return parsed.groups ?? [];
+    const parsed = JSON.parse(content) as { pageName?: string; groups: AiDiscoveredGroup[] };
+    return { pageName: parsed.pageName ?? "page", groups: parsed.groups ?? [] };
   }
 }

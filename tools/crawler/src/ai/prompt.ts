@@ -18,6 +18,10 @@
 export const OUTPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    pageName: {
+      type: "string" as const,
+      description: "A short, lowercase, kebab-case name for this page (1-3 words). Use the page's primary purpose, e.g. 'login', 'buildings', 'device-list', 'dashboard'. Do NOT include the full URL path.",
+    },
     groups: {
       type: "array" as const,
       items: {
@@ -59,7 +63,7 @@ export const OUTPUT_SCHEMA = {
       },
     },
   },
-  required: ["groups" as const],
+  required: ["pageName" as const, "groups" as const],
   additionalProperties: false,
 };
 
@@ -109,6 +113,8 @@ Return a JSON object with a single "groups" array. Each entry has:
 - description: string (one sentence explaining what this group is)
 - accessibilityRole: string (ARIA role from the a11y tree, if found)
 - accessibilityName: string (accessible name from the a11y tree, if found)
+
+Also include a "pageName" field — a short, lowercase, kebab-case name for this page (1-3 words) based on its primary purpose. Examples: "login", "buildings", "device-list", "dashboard". Do NOT use the full URL path.
 
 Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
 
