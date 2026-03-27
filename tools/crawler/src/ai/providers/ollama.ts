@@ -107,9 +107,11 @@ export class OllamaProvider implements AiProvider {
 
   /** Phase 1: Ask for JSON groups. */
   private async tryJsonPhase(ariaTree: string, base64Img: string): Promise<AiDiscoveredGroup[]> {
-    const userMsg = `What UI sections do you see on this page?\n\nARIA tree:\n${ariaTree}`;
+    // Inline the system instruction into the prompt — llava ignores the
+    // separate "system" field on multimodal requests.
+    const prompt = `${JSON_SYSTEM}\n\nWhat UI sections do you see on this page?\n\nARIA tree:\n${ariaTree}`;
 
-    const text = await this.chat(JSON_SYSTEM, userMsg, base64Img);
+    const text = await this.generate(prompt, base64Img);
     console.error(`  🤖 Raw ollama response (phase 1): ${text.slice(0, 500)}`);
 
     return extractGroups(text);
@@ -117,28 +119,22 @@ export class OllamaProvider implements AiProvider {
 
   /** Phase 2: Ask to describe the page in natural language. */
   private async describePhase(base64Img: string): Promise<string> {
-    const text = await this.chat(
-      "You are a helpful assistant that describes web pages.",
-      DESCRIBE_PROMPT,
-      base64Img,
-    );
+    const text = await this.generate(DESCRIBE_PROMPT, base64Img);
     console.error(`  🤖 Raw ollama response (phase 2): ${text.slice(0, 500)}`);
     return text;
   }
 
   /**
    * Send a generate request to Ollama.
-   * Uses /api/generate (not /api/chat) because llava returns empty
-   * strings with the chat endpoint on many Ollama versions.
+   * Uses /api/generate — everything goes in "prompt" (no separate "system"
+   * field) because llava ignores or mishandles system on multimodal requests.
    */
-  private async chat(system: string, user: string, base64Img: string): Promise<string> {
+  private async generate(prompt: string, base64Img: string): Promise<string> {
     const body = {
       model: this.model,
-      system,
-      prompt: user,
+      prompt,
       images: [base64Img],
       stream: false,
-      // No format: "json" — llava outputs {} with that constraint.
       options: { temperature: 0, num_predict: 4096 },
     };
 
@@ -153,8 +149,12 @@ export class OllamaProvider implements AiProvider {
       throw new Error(`Ollama API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as { response?: string };
-    return data.response ?? "";
+    const rawText = await response.text();
+    console.error(`  🤖 Ollama raw body (first 300): ${rawText.slice(0, 300)}`);
+
+    const data = JSON.parse(rawText) as Record<string, unknown>;
+    const text = typeof data.response === "string" ? data.response : "";
+    return text;
   }
 }
 
