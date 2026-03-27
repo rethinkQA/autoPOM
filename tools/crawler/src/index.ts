@@ -64,3 +64,15 @@ export type {
   EmitterDiff,
   EmitterConfig,
 } from "./emitter-types.js";
+
+// ── AI-powered discovery ────────────────────────────────────
+
+export { discoverGroupsWithAi, createAiProvider, capturePageContext } from "./ai/index.js";
+
+export type {
+  AiProvider,
+  AiProviderConfig,
+  AiProviderName,
+  AiDiscoveredGroup,
+  AiPageInput,
+} from "./ai/types.js";

@@ -115,6 +115,9 @@ export interface CrawlOptions {
 
   /** Whether to observe network requests (default: false). */
   observeNetwork?: boolean;
+
+  /** AI provider instance for AI-powered discovery (optional). */
+  aiProvider?: import("./ai/types.js").AiProvider;
 }
 
 // ── Record options ──────────────────────────────────────────

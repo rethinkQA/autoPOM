@@ -17,7 +17,7 @@ import { NetworkObserver } from "./network.js";
  * Crawl a live page and produce a manifest of discovered groups.
  *
  * @param page      The Playwright Page (already navigated to the target URL).
- * @param options   Crawl options (scope, pass number, network observation).
+ * @param options   Crawl options (scope, pass number, network observation, AI provider).
  *                  NOTE: `observeNetwork` only captures requests that occur after
  *                  this call — page-load requests fired during the initial
  *                  navigation are not observed. To capture page-load traffic,
@@ -45,23 +45,24 @@ export async function crawlPage(
   // Wait for the page to be reasonably stable
   await page.waitForLoadState("domcontentloaded");
 
-  // Discover groups and toasts in parallel
-  let groups: ManifestGroup[];
-  let toasts: ManifestGroup[];
-  try {
-    [groups, toasts] = await Promise.all([
-      discoverGroups(page, { scope: scope ?? undefined, pass: passTag }),
-      discoverToasts(page, { scope: scope ?? undefined, pass: passTag }),
-    ]);
-  } catch (err) {
-    // Stop network observation to avoid leaking page event listeners
-    // into subsequent operations on the same page.
-    networkObserver?.stop();
-    throw err;
-  }
+  // Discover groups — AI-powered or heuristic
+  let allGroups: ManifestGroup[];
 
-  // Combine all discovered entries
-  const allGroups: ManifestGroup[] = [...groups, ...toasts];
+  if (options?.aiProvider) {
+    // AI-powered discovery with heuristic fallback
+    try {
+      const { discoverGroupsWithAi } = await import("./ai/discover-ai.js");
+      allGroups = await discoverGroupsWithAi(page, options.aiProvider, {
+        scope: scope ?? undefined,
+        pass: passTag,
+      });
+    } catch (err) {
+      console.error(`  ⚠ AI discovery failed, falling back to heuristics: ${err}`);
+      allGroups = await heuristicDiscovery(page, scope, passTag);
+    }
+  } else {
+    allGroups = await heuristicDiscovery(page, scope, passTag);
+  }
 
   // Build or merge the manifest
   let manifest: CrawlerManifest;
@@ -92,6 +93,25 @@ export async function crawlPage(
   }
 
   return manifest;
+}
+
+/**
+ * Standard heuristic discovery — semantic groups + toasts + implicit groups.
+ */
+async function heuristicDiscovery(
+  page: Page,
+  scope: string | null,
+  passTag: string,
+): Promise<ManifestGroup[]> {
+  let groups: ManifestGroup[];
+  let toasts: ManifestGroup[];
+
+  [groups, toasts] = await Promise.all([
+    discoverGroups(page, { scope: scope ?? undefined, pass: passTag }),
+    discoverToasts(page, { scope: scope ?? undefined, pass: passTag }),
+  ]);
+
+  return [...groups, ...toasts];
 }
 
 /**

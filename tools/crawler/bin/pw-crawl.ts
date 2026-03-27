@@ -31,6 +31,7 @@ import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
 import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
+import type { AiProviderName } from "../src/ai/types.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -75,6 +76,10 @@ interface CrawlArgs {
   headless: boolean;
   ignoreHTTPSErrors: boolean;
   help: boolean;
+  aiProvider?: AiProviderName;
+  aiModel?: string;
+  aiKey?: string;
+  aiBaseUrl?: string;
 }
 
 interface GenerateArgs {
@@ -288,6 +293,10 @@ Options:
   --observe-network        Capture API dependencies during crawl
   --headed                 Run browser in headed mode (visible)
   --ignore-https-errors    Skip TLS certificate validation
+  --ai-provider <name>     Use AI discovery (openai, anthropic, ollama)
+  --ai-model <model>       AI model override (default: per-provider)
+  --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
+  --ai-base-url <url>      Custom API base URL
 
 ── Record Mode (Interactive) ───────────────────────────────────
 
@@ -670,12 +679,25 @@ async function main(): Promise<void> {
 
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
+    // Resolve AI provider if requested
+    let aiProvider;
+    if (args.aiProvider) {
+      const { createAiProvider } = await import("../src/ai/provider.js");
+      aiProvider = await createAiProvider({
+        provider: args.aiProvider,
+        model: args.aiModel,
+        apiKey: args.aiKey,
+        baseUrl: args.aiBaseUrl,
+      });
+    }
+
     const manifest = await crawlPage(
       page,
       {
         scope: args.scope,
         pass: args.pass,
         observeNetwork: args.observeNetwork,
+        aiProvider,
       },
       existing,
     );
