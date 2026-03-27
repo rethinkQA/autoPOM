@@ -628,7 +628,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     console.error("  ● Navigate freely (login, follow links) — each page gets its own manifest.");
     if (aiProvider) {
       console.error("  ● Each page is analyzed automatically when you navigate to it.");
-      console.error("  ● Press F8 in the browser to re-scan (captures hover menus, edit mode, etc.).");
+      console.error("  ● Press F8 in the browser to re-scan (adds hover menus, dropdowns, etc. to the same page).");
       console.error("  ● Or press Enter in the terminal to re-scan.");
     }
     console.error("  ● Press Ctrl+C when done to save.\n");
@@ -702,29 +702,31 @@ async function runRecord(args: RecordArgs): Promise<void> {
       // Analyze the current page if it hasn't been analyzed yet
       await analyzeCurrentPage();
 
-      // Convert AI scans to PageRecording format.
-      // group by route template (page) — e.g. "/devices/:id"
-      // Multiple scans of the same template get state suffixes.
-      const pageScanCount = new Map<string, number>();
+      // Merge all scans for the same route template into one page.
+      // F8 re-scans reveal more groups (hover menus, expanded panels)
+      // that belong on the SAME page — not separate state files.
+      const mergedByRoute = new Map<string, { pathname: string; groups: ManifestGroup[] }>();
+
       for (const scan of aiScans) {
-        const count = (pageScanCount.get(scan.page) ?? 0) + 1;
-        pageScanCount.set(scan.page, count);
+        const existing = mergedByRoute.get(scan.page);
+        if (existing) {
+          // Merge groups — use mergeManifest's dedup to avoid duplicates
+          const merged = mergeManifest(
+            mergeManifest(null, existing.groups, existing.pathname, 1, args.scope ?? null),
+            scan.groups,
+            existing.pathname,
+            2,
+            args.scope ?? null,
+          );
+          existing.groups = merged.groups;
+        } else {
+          const basePath = scan.page.replace(/:id/g, "detail");
+          mergedByRoute.set(scan.page, { pathname: basePath, groups: [...scan.groups] });
+        }
       }
 
-      const pageSeen = new Map<string, number>();
-      for (const scan of aiScans) {
-        const totalScans = pageScanCount.get(scan.page) ?? 1;
-        const seenSoFar = (pageSeen.get(scan.page) ?? 0) + 1;
-        pageSeen.set(scan.page, seenSoFar);
-
-        // Use the route template as the pathname for manifest naming.
-        // If multiple scans for this template, append state suffix.
-        const basePath = scan.page.replace(/:id/g, "detail");
-        const effectivePathname = totalScans > 1
-          ? `${basePath.replace(/\/+$/, "")}/state-${seenSoFar}`
-          : basePath;
-
-        pages.push({ pathname: effectivePathname, groups: scan.groups });
+      for (const entry of mergedByRoute.values()) {
+        pages.push(entry);
       }
     } else {
       // Heuristic mode: harvest from DomRecorder
