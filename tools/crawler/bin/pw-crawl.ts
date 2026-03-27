@@ -155,6 +155,18 @@ function parseCrawlArgs(argv: string[]): CrawlArgs {
       case "--ignore-https-errors":
         args.ignoreHTTPSErrors = true;
         break;
+      case "--ai-provider":
+        args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
+        break;
+      case "--ai-model":
+        args.aiModel = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-key":
+        args.aiKey = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-base-url":
+        args.aiBaseUrl = requireValue(argv, ++i, arg);
+        break;
       case "-h":
       case "--help":
         args.help = true;
