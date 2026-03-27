@@ -33,7 +33,7 @@
       "lastSeen": "2026-03-19T15:09:50.285Z"
     },
     {
-      "label": "Name",
+      "label": "Data Table",
       "selector": "table",
       "groupType": "generic",
       "wrapperType": "table",

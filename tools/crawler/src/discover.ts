@@ -60,11 +60,13 @@ type LabelSource =
   | "aria-label"
   | "aria-labelledby"
   | "legend"
+  | "caption"
   | "summary"
   | "heading"
   | "deep-heading"
   | "title"
   | "ancestor-aria-label"
+  | "preceding-heading"
   | "text-content"
   | "id"
   | "tag";
@@ -94,8 +96,12 @@ interface RawGroupData {
   nearestAncestorLabel: string | null;
   /** First short text content within the element (fallback). */
   firstTextContent: string | null;
+  /** Nearest heading (h1-h6) that precedes this element in document flow. */
+  precedingHeadingText: string | null;
   /** The element's id attribute. */
   id: string | null;
+  /** Text content of <caption> child (for table). */
+  captionText: string | null;
   /** CSS classes for selector building. */
   className: string;
   /** Whether the element is currently visible. */
@@ -188,6 +194,10 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
         const summary = el.querySelector(":scope > summary");
         const summaryText = summary?.textContent?.trim() ?? null;
 
+        // Extract caption text (for table)
+        const caption = el.querySelector(":scope > caption");
+        const captionText = caption?.textContent?.trim() ?? null;
+
         // Extract first heading child text (direct children only)
         const heading = el.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6");
         const headingText = heading?.textContent?.trim() ?? null;
@@ -213,10 +223,55 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
           ancestor = ancestor.parentElement;
         }
 
+        // Nearest preceding heading in document flow.
+        // Walk backwards through previous siblings (and up to parent
+        // siblings) to find the heading that introduces this element —
+        // the same way a human scans a page top-down.
+        let precedingHeadingText: string | null = null;
+        const HEADING_TAGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+        let cursor: Element | null = el;
+        outer:
+        while (cursor && cursor !== document.body) {
+          let sib = cursor.previousElementSibling;
+          while (sib) {
+            // Check the sibling itself
+            if (HEADING_TAGS.has(sib.tagName)) {
+              precedingHeadingText = sib.textContent?.trim() ?? null;
+              break outer;
+            }
+            // Check last heading inside the sibling (e.g. heading inside a div wrapper)
+            const inner = sib.querySelector("h1, h2, h3, h4, h5, h6");
+            if (inner) {
+              // Find the LAST heading (closest to our element in flow)
+              const allInner = sib.querySelectorAll("h1, h2, h3, h4, h5, h6");
+              const last = allInner[allInner.length - 1];
+              precedingHeadingText = last.textContent?.trim() ?? null;
+              break outer;
+            }
+            sib = sib.previousElementSibling;
+          }
+          // Move up to parent and continue searching its siblings
+          cursor = cursor.parentElement;
+        }
+
         // First short text content as last-resort fallback
-        // Look for the first text node or short element text
+        // Look for the first text node or short element text.
+        // Skip <style>, <script>, and <noscript> — their text content
+        // is code/CSS, not human-readable labels.
+        const SKIP_TAGS = new Set(["STYLE", "SCRIPT", "NOSCRIPT"]);
         let firstTextContent: string | null = null;
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const walker = document.createTreeWalker(
+          el,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode(node) {
+              if (node.parentElement && SKIP_TAGS.has(node.parentElement.tagName)) {
+                return NodeFilter.FILTER_REJECT;
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            },
+          },
+        );
         let textNode = walker.nextNode();
         while (textNode) {
           const txt = textNode.textContent?.trim();
@@ -278,11 +333,13 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
           ariaLabelledBy: resolvedLabelledBy,
           legendText,
           summaryText,
+          captionText,
           headingText,
           deepHeadingText,
           titleAttr,
           nearestAncestorLabel,
           firstTextContent,
+          precedingHeadingText,
           id,
           className: typeof className === "string" ? className : "",
           isVisible,
@@ -325,19 +382,22 @@ function isFrameworkId(id: string): boolean {
  * 6. Any descendant heading (deep search)
  * 7. title attribute
  * 8. Nearest ancestor's aria-label
- * 9. First meaningful text content in the element
- * 10. id attribute (if it looks human-authored)
- * 11. Fallback: tag name
+ * 9. Nearest preceding heading in document flow
+ * 10. First meaningful text content in the element
+ * 11. id attribute (if it looks human-authored)
+ * 12. Fallback: tag name
  */
 function resolveLabel(raw: RawGroupData): { label: string; source: LabelSource } {
   if (raw.ariaLabel) return { label: raw.ariaLabel, source: "aria-label" };
   if (raw.ariaLabelledBy && !isFrameworkId(raw.ariaLabelledBy)) return { label: raw.ariaLabelledBy, source: "aria-labelledby" };
   if (raw.legendText) return { label: raw.legendText, source: "legend" };
+  if (raw.captionText) return { label: raw.captionText, source: "caption" };
   if (raw.summaryText) return { label: raw.summaryText, source: "summary" };
   if (raw.headingText) return { label: raw.headingText, source: "heading" };
   if (raw.deepHeadingText) return { label: raw.deepHeadingText, source: "deep-heading" };
   if (raw.titleAttr) return { label: raw.titleAttr, source: "title" };
   if (raw.nearestAncestorLabel) return { label: raw.nearestAncestorLabel, source: "ancestor-aria-label" };
+  if (raw.precedingHeadingText) return { label: raw.precedingHeadingText, source: "preceding-heading" };
   if (raw.firstTextContent) return { label: raw.firstTextContent, source: "text-content" };
   if (raw.id && !isFrameworkId(raw.id)) return { label: raw.id, source: "id" };
   return { label: raw.tagName, source: "tag" };

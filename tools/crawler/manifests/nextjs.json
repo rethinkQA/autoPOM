@@ -51,7 +51,7 @@
       "lastSeen": "2026-03-19T15:09:50.988Z"
     },
     {
-      "label": ".css-1a7iywq-MuiTableHead-root{display:table-header-group;}",
+      "label": "Data Table",
       "selector": "table.MuiTable-root",
       "groupType": "generic",
       "wrapperType": "table",

@@ -20,6 +20,8 @@ const RESERVED_WORDS = new Set([
   "await", "async", "of", "from",
   // Common Playwright/framework names we don't want to shadow
   "page", "test", "expect",
+  // Factory function names from @playwright-elements/core
+  "group", "table", "dialog", "toast", "datePicker",
 ]);
 
 /**

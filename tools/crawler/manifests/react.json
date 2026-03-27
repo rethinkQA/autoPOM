@@ -50,7 +50,7 @@
       "lastSeen": "2026-03-16T20:24:56.453Z"
     },
     {
-      "label": "Name",
+      "label": "Data Table",
       "selector": "table.MuiTable-root",
       "groupType": "generic",
       "wrapperType": "table",
