@@ -31,7 +31,7 @@ import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
 import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
-import type { AiProviderName } from "../src/ai/types.js";
+import type { AiProviderName, AiProvider } from "../src/ai/types.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -543,7 +543,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
     // Resolve AI provider if requested
-    let aiProvider;
+    let aiProvider: AiProvider | undefined;
     if (args.aiProvider) {
       const { createAiProvider } = await import("../src/ai/provider.js");
       aiProvider = await createAiProvider({
@@ -554,32 +554,53 @@ async function runRecord(args: RecordArgs): Promise<void> {
       });
     }
 
-    // Track visited URLs (pathname → full URL) for AI mode
-    const visitedPages = new Map<string, string>();
-    const trackCurrentPage = () => {
+    // ── AI record mode: analyze each page on arrival ──────────
+    // We can't revisit pages at the end because state changes (e.g.
+    // login) mean earlier pages (login form) won't be there anymore.
+    // Instead, run AI discovery immediately when each new page loads.
+
+    /** Collected results: pathname → { fullUrl, groups } */
+    const aiResults = new Map<string, { fullUrl: string; groups: ManifestGroup[] }>();
+    let aiAnalyzing = false; // prevent overlapping analysis
+
+    async function analyzeCurrentPage(): Promise<void> {
+      if (!aiProvider || aiAnalyzing) return;
+
       const pathname = safePathname(page.url());
-      if (!visitedPages.has(pathname)) {
-        visitedPages.set(pathname, page.url());
-        console.error(`  ↳ Tracking page: ${pathname}`);
+      if (aiResults.has(pathname)) return; // already analyzed
+
+      const fullUrl = page.url();
+      aiAnalyzing = true;
+
+      console.error(`  🤖 Analyzing ${pathname}…`);
+      try {
+        const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
+        const groups = await discoverGroupsWithAi(page, aiProvider!, {
+          scope: args.scope ?? undefined,
+          pass: "ai-record",
+        });
+        aiResults.set(pathname, { fullUrl, groups });
+        console.error(`  ✓ ${pathname} — ${groups.length} group(s) found`);
+      } catch (err: unknown) {
+        console.error(`  ⚠ AI analysis failed for ${pathname}: ${err instanceof Error ? err.message : err}`);
+        aiResults.set(pathname, { fullUrl, groups: [] });
+      } finally {
+        aiAnalyzing = false;
       }
-    };
+    }
 
-    // Track initial page
-    trackCurrentPage();
+    // Analyze the initial page immediately (e.g. the login screen)
+    if (aiProvider) {
+      await analyzeCurrentPage();
+    }
 
-    // Track navigation — use multiple event sources to catch all types:
-    //  - "load" fires on full page loads
-    //  - "domcontentloaded" fires earlier on full navigations
-    //  - "framenavigated" fires for full navigation AND history.pushState
-    page.on("load", trackCurrentPage);
-    page.on("domcontentloaded", trackCurrentPage);
-    page.on("framenavigated", (frame) => {
-      if (frame === page.mainFrame()) trackCurrentPage();
-    });
-
-    // Fallback: poll for URL changes every 2s (catches SPA hash/pushState nav
-    // on older browsers or frameworks that bypass Playwright events)
-    const pollInterval = setInterval(trackCurrentPage, 2000);
+    // On navigation, analyze the new page after it loads
+    if (aiProvider) {
+      page.on("domcontentloaded", () => {
+        // Small delay to let the page render after DOM ready
+        setTimeout(() => void analyzeCurrentPage(), 1500);
+      });
+    }
 
     // Only set up DomRecorder in heuristic mode
     let recorder: DomRecorder | undefined;
@@ -589,9 +610,12 @@ async function runRecord(args: RecordArgs): Promise<void> {
     }
 
     const modeLabel = aiProvider ? "AI" : "heuristic";
-    console.error(`  ● Recording (${modeLabel}) — interact with the page to trigger dynamic elements.`);
+    console.error(`\n  ● Recording (${modeLabel}) — interact with the page to trigger dynamic elements.`);
     console.error("  ● Navigate freely (login, follow links) — each page gets its own manifest.");
-    console.error("  ● Press Ctrl+C when done to harvest and save.\n");
+    if (aiProvider) {
+      console.error("  ● Each page is analyzed automatically when you navigate to it.");
+    }
+    console.error("  ● Press Ctrl+C when done to save.\n");
 
     // Wait until the user sends SIGINT (Ctrl+C)
     await new Promise<void>((resolve) => {
@@ -602,28 +626,17 @@ async function runRecord(args: RecordArgs): Promise<void> {
       process.on("SIGINT", handler);
     });
 
-    console.error("\n  ⏳ Harvesting recorded elements…");
-    clearInterval(pollInterval);
+    console.error("\n  ⏳ Saving recorded elements…");
 
     let pages: PageRecording[] = [];
 
     if (aiProvider) {
-      // AI mode: navigate back to each visited page and run AI discovery
-      const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
+      // Analyze the current page if it hasn't been analyzed yet
+      await analyzeCurrentPage();
 
-      for (const [pathname, fullUrl] of visitedPages) {
-        console.error(`  🤖 Analyzing ${pathname}…`);
-        try {
-          await page.goto(fullUrl, { waitUntil: "domcontentloaded" });
-          const groups = await discoverGroupsWithAi(page, aiProvider, {
-            scope: args.scope ?? undefined,
-            pass: "ai-record",
-          });
-          pages.push({ pathname, groups });
-        } catch (err: unknown) {
-          console.error(`  ⚠ AI discovery failed for ${pathname}: ${err instanceof Error ? err.message : err}`);
-          pages.push({ pathname, groups: [] });
-        }
+      // Convert AI results to PageRecording format
+      for (const [pathname, result] of aiResults) {
+        pages.push({ pathname, groups: result.groups });
       }
     } else {
       // Heuristic mode: harvest from DomRecorder
@@ -646,7 +659,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
       for (const recording of pages) {
         // Derive filename from the full URL (inferRouteName needs a parseable URL)
-        const fullUrl = visitedPages.get(recording.pathname) ?? recording.pathname;
+        const fullUrl = aiResults.get(recording.pathname)?.fullUrl ?? recording.pathname;
         const routeName = inferRouteName(fullUrl);
         const fileName = `${routeName}.manifest.json`;
         const filePath = join(outputDir, fileName);
@@ -779,7 +792,7 @@ async function main(): Promise<void> {
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
     // Resolve AI provider if requested
-    let aiProvider;
+    let aiProvider: AiProvider | undefined;
     if (args.aiProvider) {
       const { createAiProvider } = await import("../src/ai/provider.js");
       aiProvider = await createAiProvider({
