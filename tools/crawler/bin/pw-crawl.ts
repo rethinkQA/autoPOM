@@ -560,44 +560,137 @@ async function runRecord(args: RecordArgs): Promise<void> {
     // login) mean earlier pages (login form) won't be there anymore.
     // Instead, run AI discovery immediately when each new page loads.
     //
-    // Page identity is based on the URL's route template — dynamic
-    // segments (IDs, UUIDs) are collapsed so /devices/123 and
-    // /devices/456 are the same page ("/devices/:id").
+    // Page identity uses a two-step approach:
+    //   1. URL route template — dynamic segments collapsed (/devices/123 → /devices/:id)
+    //   2. Structural shape matching — if the discovered groups overlap ≥70%
+    //      with a previously seen page, it's the same page in a different mode
+    //      (e.g. /devices/:id/edit is the same as /devices/:id).
+    //
+    // This avoids hardcoded action suffix lists; the system determines
+    // page identity from the actual content structure.
+
+    /** Fingerprint a set of groups into a Set of shape keys for overlap comparison. */
+    function groupFingerprints(groups: ManifestGroup[]): Set<string> {
+      const fps = new Set<string>();
+      for (const g of groups) {
+        // Normalize: strip IDs, text, aria-labels — same logic as emitter's shape comparison
+        const sel = g.selector
+          .replace(/:text-is\("[^"]*"\)/g, ":text-is(*)")
+          .replace(/#[a-zA-Z0-9_-]+/g, "#*")
+          .replace(/\[aria-label="[^"]*"\]/g, "[aria-label=*]");
+        fps.add(`${g.wrapperType}::${sel}`);
+      }
+      return fps;
+    }
+
+    /** Compute overlap ratio (Jaccard similarity) between two fingerprint sets. */
+    function shapeOverlap(a: Set<string>, b: Set<string>): number {
+      if (a.size === 0 && b.size === 0) return 1;
+      if (a.size === 0 || b.size === 0) return 0;
+      let intersection = 0;
+      for (const fp of a) {
+        if (b.has(fp)) intersection++;
+      }
+      const union = new Set([...a, ...b]).size;
+      return intersection / union;
+    }
+
+    /**
+     * Find an existing page whose shape overlaps ≥70% with the given groups.
+     * Returns the route template key of the matching page, or null.
+     */
+    function findMatchingPage(groups: ManifestGroup[]): string | null {
+      const newFps = groupFingerprints(groups);
+      let bestKey: string | null = null;
+      let bestOverlap = 0;
+
+      for (const [routeKey, entry] of pageShapes) {
+        const overlap = shapeOverlap(newFps, entry.fingerprints);
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          bestKey = routeKey;
+        }
+      }
+
+      return bestOverlap >= 0.7 ? bestKey : null;
+    }
 
     /** Collected results: array of { page (template), pathname, groups, scanIndex } */
     const aiScans: { page: string; pathname: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
     /** Track how many scans each route template has had. */
     const scanCounts = new Map<string, number>();
+    /** Track shape fingerprints per page for structural matching. */
+    const pageShapes = new Map<string, { fingerprints: Set<string> }>();
     let aiAnalyzing = false; // prevent overlapping analysis
 
     async function analyzeCurrentPage(force = false): Promise<void> {
       if (!aiProvider || aiAnalyzing) return;
 
       const { page: routeTemplate, pathname } = normalizeRoute(page.url());
-      const count = scanCounts.get(routeTemplate) ?? 0;
+
+      // Exact route match: already scanned this template before
+      const exactCount = scanCounts.get(routeTemplate) ?? 0;
 
       // Auto-scans skip if this route template was already analyzed;
       // manual (force) always runs (for hover menus, edit mode, etc.)
-      if (!force && count > 0) return;
+      if (!force && exactCount > 0) return;
 
-      const scanIndex = count + 1;
+      // Also skip auto-scans if a structurally matching page was already seen
+      // (prevents re-analyzing /devices/:id/edit when /devices/:id is known)
+      if (!force && pageShapes.size > 0) {
+        // We don't have groups yet — but we can check if this exact template
+        // was already merged into another page via shape matching
+        if (scanCounts.has(routeTemplate)) return;
+      }
+
       aiAnalyzing = true;
 
-      const label = scanIndex > 1 ? `${routeTemplate} (scan ${scanIndex})` : routeTemplate;
-      console.error(`  🤖 Analyzing ${label}…`);
+      console.error(`  🤖 Analyzing ${routeTemplate}…`);
       try {
         const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
         const groups = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
-          pass: `ai-record-${scanIndex}`,
+          pass: `ai-record-${(exactCount || 0) + 1}`,
         });
-        aiScans.push({ page: routeTemplate, pathname, groups, scanIndex });
-        scanCounts.set(routeTemplate, scanIndex);
+
+        // Determine the effective page key:
+        // 1. Exact route template match → merge under same key
+        // 2. Shape overlap ≥70% with existing page → merge under that key
+        // 3. Otherwise → new page
+        let effectiveKey = routeTemplate;
+        const matchedKey = groups.length > 0 ? findMatchingPage(groups) : null;
+
+        if (exactCount > 0) {
+          // Already seen this exact route template — just another scan
+          effectiveKey = routeTemplate;
+        } else if (matchedKey) {
+          // Different URL but same structure → same page in different mode
+          effectiveKey = matchedKey;
+          console.error(`  ↳ Shape matches ${matchedKey} — merging`);
+        }
+
+        const count = scanCounts.get(effectiveKey) ?? 0;
+        const scanIndex = count + 1;
+
+        aiScans.push({ page: effectiveKey, pathname, groups, scanIndex });
+        scanCounts.set(effectiveKey, scanIndex);
+        // Also mark the original route template as "handled" so auto-scans skip it
+        if (effectiveKey !== routeTemplate) {
+          scanCounts.set(routeTemplate, scanIndex);
+        }
+
+        // Update the page's shape fingerprints (union of all scans)
+        const existingFps = pageShapes.get(effectiveKey)?.fingerprints ?? new Set<string>();
+        const newFps = groupFingerprints(groups);
+        for (const fp of newFps) existingFps.add(fp);
+        pageShapes.set(effectiveKey, { fingerprints: existingFps });
+
+        const label = scanIndex > 1 ? `${effectiveKey} (scan ${scanIndex})` : effectiveKey;
         console.error(`  ✓ ${label} — ${groups.length} group(s) found`);
       } catch (err: unknown) {
-        console.error(`  ⚠ AI analysis failed for ${label}: ${err instanceof Error ? err.message : err}`);
-        aiScans.push({ page: routeTemplate, pathname, groups: [], scanIndex });
-        scanCounts.set(routeTemplate, scanIndex);
+        console.error(`  ⚠ AI analysis failed for ${routeTemplate}: ${err instanceof Error ? err.message : err}`);
+        aiScans.push({ page: routeTemplate, pathname, groups: [], scanIndex: 1 });
+        scanCounts.set(routeTemplate, 1);
       } finally {
         aiAnalyzing = false;
       }
