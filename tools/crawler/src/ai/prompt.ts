@@ -220,13 +220,18 @@ When previously discovered pages are provided, reuse the same label for shared e
 
 Give DISTINCT labels to different elements — never call two different things by the same name.
 
-## Tables — EVERY table matters
+## Tables and grids — EVERY one matters
 
-Every \`<table>\` element in the DOM is a meaningful section. Do NOT skip any table. For each table:
-- Look at \`<th>\` elements (column headers) to understand what data it shows
-- Look at surrounding headings, \`aria-label\`, \`id\`, or \`caption\` for a descriptive name
-- Give each table a UNIQUE label based on its content: "Products Table", "Order History Table" — NOT "Table 1", "Table 2"
-- Set wrapperType to "table" for all \`<table>\` elements
+Every table or grid in the DOM is a meaningful section. This includes:
+- Native \`<table>\` elements
+- Elements with \`role="table"\`, \`role="grid"\`, or \`role="treegrid"\`
+- Div-based data grids (common in frameworks like AG Grid, Material UI, etc.) — look for repeated row structures with column-like children
+
+For EACH table/grid found:
+- Look at \`<th>\` elements, column header cells, \`aria-label\`, \`id\`, heading text, or \`<caption>\` to name it
+- Give each a UNIQUE, descriptive label: "Products Table", "Order History Table" — NOT "Table 1", "Table 2"
+- Set wrapperType to "table" for ALL tables and grids
+- If you see multiple tables, you MUST return a separate group entry for each one — do NOT merge them or skip any
 
 ## Output
 
