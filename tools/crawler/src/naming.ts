@@ -270,7 +270,11 @@ export function normalizeRoute(url: string): { page: string; pathname: string } 
 
     // Handle hash-based routing (e.g. /#/devices/123)
     if (parsed.hash && parsed.hash.startsWith("#/")) {
-      pathname = parsed.hash.slice(1); // "#/foo" → "/foo"
+      let hashPath = parsed.hash.slice(1); // "#/foo" → "/foo"
+      // Strip query params embedded in the hash (e.g. "#/devices?tab=info" → "/devices")
+      const qIdx = hashPath.indexOf("?");
+      if (qIdx !== -1) hashPath = hashPath.slice(0, qIdx);
+      pathname = hashPath;
     }
   } catch {
     pathname = url;

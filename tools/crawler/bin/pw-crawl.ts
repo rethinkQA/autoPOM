@@ -575,9 +575,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
     function groupFingerprints(groups: ManifestGroup[]): Set<string> {
       const fps = new Set<string>();
       for (const g of groups) {
-        // Use label + wrapperType as the fingerprint — stable across page states
-        // (CSS selectors change between states; labels from the AI are consistent)
-        fps.add(`${g.wrapperType}::${g.label.toLowerCase()}`);
+        // Use groupType + wrapperType — both from fixed enums, immune to AI label variation
+        fps.add(`${g.groupType}::${g.wrapperType}`);
       }
       return fps;
     }
