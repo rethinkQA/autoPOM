@@ -20,6 +20,11 @@ export interface AiDiscoverOptions {
   pass?: string;
   /** Previously discovered pages for cross-page naming consistency. */
   previousPages?: AiPageSummary[];
+  /**
+   * When true (default), drop groups whose elements are not visible.
+   * Set to false for manual re-scans where user revealed dynamic elements.
+   */
+  filterInvisible?: boolean;
 }
 
 /**
@@ -65,7 +70,8 @@ export async function discoverGroupsWithAi(
   console.error(`  🤖 AI found ${result.groups.length} group(s) (page: "${result.pageName}") — mapping to DOM…`);
 
   // 3. Map AI groups to DOM selectors via getByRole
-  const groups = await mapGroupsToSelectors(page, result.groups, pass);
+  const filterInvisible = options?.filterInvisible ?? true;
+  const groups = await mapGroupsToSelectors(page, result.groups, pass, filterInvisible);
 
   console.error(`  🤖 Mapped ${groups.length}/${result.groups.length} group(s) to selectors.`);
 

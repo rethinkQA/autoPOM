@@ -573,12 +573,9 @@ async function runRecord(args: RecordArgs): Promise<void> {
     function groupFingerprints(groups: ManifestGroup[]): Set<string> {
       const fps = new Set<string>();
       for (const g of groups) {
-        // Normalize: strip IDs, text, aria-labels — same logic as emitter's shape comparison
-        const sel = g.selector
-          .replace(/:text-is\("[^"]*"\)/g, ":text-is(*)")
-          .replace(/#[a-zA-Z0-9_-]+/g, "#*")
-          .replace(/\[aria-label="[^"]*"\]/g, "[aria-label=*]");
-        fps.add(`${g.wrapperType}::${sel}`);
+        // Use label + wrapperType as the fingerprint — stable across page states
+        // (CSS selectors change between states; labels from the AI are consistent)
+        fps.add(`${g.wrapperType}::${g.label.toLowerCase()}`);
       }
       return fps;
     }
@@ -668,10 +665,14 @@ async function runRecord(args: RecordArgs): Promise<void> {
         }
 
         // AI discovery: ARIA tree → AI → getByRole → selectors
+        // On auto-scans, filter invisible elements (phantom DOM artifacts).
+        // On manual re-scans (force=true / F8), include them since the user
+        // intentionally revealed dynamic elements.
         const result = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
           pass: `ai-record-${(exactCount || 0) + 1}`,
           previousPages: previousPages.length > 0 ? previousPages : undefined,
+          filterInvisible: !force,
         });
         const { pageName, groups } = result;
 
