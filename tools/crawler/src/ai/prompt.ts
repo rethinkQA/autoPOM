@@ -200,15 +200,33 @@ Use the ARIA snapshot to find semantic roles and accessible names. If a DOM elem
 - accessibilityRole: ARIA role (from ARIA tree or role attribute)
 - accessibilityName: accessible name (from ARIA tree, aria-label, or heading)
 
-## Page naming
+## Page naming and URL mutations
 
-pageName should reflect the page's primary purpose in 1-3 kebab-case words (e.g. "login", "device-list", "dashboard"). Base it on the URL path and main content heading, not transient UI state.
+The URL you receive may include query parameters (\`?tab=info&sort=name\`) and hash fragments (\`#details\`). These represent **page state**, not different pages.
+
+- **pageName** should reflect the page's primary purpose in 1-3 kebab-case words (e.g. "login", "device-list", "dashboard")
+- Base the name on the **base URL path** — ignore query params, hash fragments, and dynamic IDs
+- Examples:
+  - \`/buildings?tab=details&view=map\` → "buildings"
+  - \`/devices/123/edit\` → "device-edit"
+  - \`/admin/users?sort=name&page=2\` → "admin-users"
+  - \`/#/settings/profile\` → "settings-profile"
+
+A single "page" may be visited with different URL mutations (tabs, filters, sorts, pagination). Your analysis should capture the sections visible in the CURRENT state — other states may be scanned separately and merged later.
 
 ## Naming consistency
 
 When previously discovered pages are provided, reuse the same label for shared elements across pages. Shared elements (navigation, header, footer, sidebar) that appear on multiple pages should have GENERIC labels — "Main Navigation", "Page Header", "Page Footer" — not page-specific names. Reserve specific labels for page-unique content.
 
 Give DISTINCT labels to different elements — never call two different things by the same name.
+
+## Tables — EVERY table matters
+
+Every \`<table>\` element in the DOM is a meaningful section. Do NOT skip any table. For each table:
+- Look at \`<th>\` elements (column headers) to understand what data it shows
+- Look at surrounding headings, \`aria-label\`, \`id\`, or \`caption\` for a descriptive name
+- Give each table a UNIQUE label based on its content: "Products Table", "Order History Table" — NOT "Table 1", "Table 2"
+- Set wrapperType to "table" for all \`<table>\` elements
 
 ## Output
 

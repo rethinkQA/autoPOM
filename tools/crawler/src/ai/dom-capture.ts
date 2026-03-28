@@ -344,6 +344,13 @@ export async function captureCleanedDom(page: Page): Promise<string> {
       "draggable", "dir", "lang", "summary", "cellpadding", "cellspacing",
     ]);
 
+    // Structural tags that must NEVER be collapsed — the AI needs to see every one
+    const NEVER_COLLAPSE = new Set([
+      "table", "form", "fieldset", "section", "article", "nav",
+      "aside", "header", "footer", "main", "details", "dialog",
+      "figure", "search", "menu",
+    ]);
+
     const MAX_TEXT = 40;      // chars per text node
     const MAX_DEPTH = 20;     // nesting limit
     const COLLAPSE_AFTER = 3; // run length that triggers collapsing (show first 2)
@@ -440,8 +447,8 @@ export async function captureCleanedDom(page: Page): Promise<string> {
         while (j < childElements.length && childElements[j].tagName.toLowerCase() === firstTag) j++;
         const runLen = j - i;
 
-        if (runLen > COLLAPSE_AFTER) {
-          // Show first 2, collapse the rest
+        if (runLen > COLLAPSE_AFTER && !NEVER_COLLAPSE.has(firstTag)) {
+          // Show first 2, collapse the rest (only for repetitive leaf-ish elements)
           for (let k = i; k < i + 2; k++) {
             inner += serialize(childElements[k], depth + 1);
           }

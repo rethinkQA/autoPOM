@@ -8,7 +8,7 @@
 
 import type { Page } from "playwright";
 import type { AiPageInput } from "./types.js";
-import { safePathname } from "../naming.js";
+import { safeUrl } from "../naming.js";
 import { captureCleanedDom } from "./dom-capture.js";
 
 /**
@@ -32,6 +32,6 @@ export async function capturePageContext(page: Page): Promise<AiPageInput> {
     screenshot,
     accessibilityTree: ariaSnapshot,
     cleanedDom,
-    url: safePathname(page.url()),
+    url: safeUrl(page.url()),
   };
 }

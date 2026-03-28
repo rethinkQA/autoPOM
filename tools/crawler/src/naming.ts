@@ -195,6 +195,20 @@ export function safePathname(url: string): string {
   }
 }
 
+/**
+ * Extract the full path from a URL: pathname + query string + hash.
+ * Strips origin but preserves everything that indicates page state.
+ * Returns "/" on parse failure.
+ */
+export function safeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return "/";
+  }
+}
+
 // ── Dynamic segment detection ────────────────────────────────
 
 /** Matches segments that are purely numeric (IDs). */
