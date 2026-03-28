@@ -562,9 +562,11 @@ async function runRecord(args: RecordArgs): Promise<void> {
     //
     // Page identity uses a two-step approach:
     //   1. URL route template — dynamic segments collapsed (/devices/123 → /devices/:id)
-    //   2. Structural shape matching — if the discovered groups overlap ≥70%
+    //   2. Structural shape matching — if the discovered groups overlap ≥40%
     //      with a previously seen page, it's the same page in a different mode
     //      (e.g. /devices/:id/edit is the same as /devices/:id).
+    //      Threshold is lower than 50% because page states (tabs, detail views)
+    //      may share only navigation + footer while swapping main content.
     //
     // This avoids hardcoded action suffix lists; the system determines
     // page identity from the actual content structure.
@@ -593,7 +595,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     }
 
     /**
-     * Find an existing page whose shape overlaps ≥70% with the given groups.
+     * Find an existing page whose shape overlaps ≥40% with the given groups.
      * Returns the route template key of the matching page, or null.
      */
     function findMatchingPage(groups: ManifestGroup[]): string | null {
@@ -609,7 +611,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
         }
       }
 
-      return bestOverlap >= 0.7 ? bestKey : null;
+      return bestOverlap >= 0.4 ? bestKey : null;
     }
 
     /** Collected results: array of { page (template), pageName (AI-chosen), pathname, groups, scanIndex } */
@@ -618,6 +620,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
     const scanCounts = new Map<string, number>();
     /** Track shape fingerprints per page for structural matching. */
     const pageShapes = new Map<string, { fingerprints: Set<string> }>();
+    /** Map AI-chosen pageName → effective route key (for merging URL mutations). */
+    const pageNameToKey = new Map<string, string>();
     let aiAnalyzing = false; // prevent overlapping analysis
 
     async function analyzeCurrentPage(force = false): Promise<void> {
@@ -678,14 +682,20 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
         // Determine the effective page key:
         // 1. Exact route template match → merge under same key
-        // 2. Shape overlap ≥70% with existing page → merge under that key
-        // 3. Otherwise → new page
+        // 2. AI pageName matches a previously seen page → same page, different state
+        // 3. Shape overlap ≥70% with existing page → merge under that key
+        // 4. Otherwise → new page
         let effectiveKey = routeTemplate;
+        const pageNameKey = pageNameToKey.get(pageName);
         const matchedKey = groups.length > 0 ? findMatchingPage(groups) : null;
 
         if (exactCount > 0) {
           // Already seen this exact route template — just another scan
           effectiveKey = routeTemplate;
+        } else if (pageNameKey) {
+          // AI returned the same pageName as a previous scan → URL mutation of same page
+          effectiveKey = pageNameKey;
+          console.error(`  ↳ pageName "${pageName}" matches ${pageNameKey} — merging URL states`);
         } else if (matchedKey) {
           // Different URL but same structure → same page in different mode
           effectiveKey = matchedKey;
@@ -700,6 +710,11 @@ async function runRecord(args: RecordArgs): Promise<void> {
         // Also mark the original route template as "handled" so auto-scans skip it
         if (effectiveKey !== routeTemplate) {
           scanCounts.set(routeTemplate, scanIndex);
+        }
+
+        // Register pageName → key mapping so future scans with same pageName merge
+        if (!pageNameToKey.has(pageName)) {
+          pageNameToKey.set(pageName, effectiveKey);
         }
 
         // Update the page's shape fingerprints (union of all scans)
@@ -818,15 +833,32 @@ async function runRecord(args: RecordArgs): Promise<void> {
       // Analyze the current page if it hasn't been analyzed yet
       await analyzeCurrentPage();
 
-      // Merge all scans for the same route template into one page.
-      // F8 re-scans reveal more groups (hover menus, expanded panels)
-      // that belong on the SAME page — not separate state files.
+      // Merge all scans for the same page into one manifest.
+      // Scans are grouped by:
+      //   1. scan.page (effective route key — already merged at scan time)
+      //   2. AI pageName (safety net — if AI gave the same name, it's the same page)
+      // This ensures URL mutations (tabs, filters, detail views) produce
+      // one manifest with ALL groups instead of separate per-state manifests.
       const mergedByRoute = new Map<string, { pathname: string; groups: ManifestGroup[] }>();
       /** AI-chosen page names keyed by route template. First scan wins. */
       const aiPageNames = new Map<string, string>();
+      /** Reverse lookup: AI pageName → route key for pageName-based merging. */
+      const nameToRoute = new Map<string, string>();
 
       for (const scan of aiScans) {
-        const existing = mergedByRoute.get(scan.page);
+        // Determine the merge key — prefer route-based key, fall back to pageName
+        let mergeTarget = scan.page;
+        const existingByRoute = mergedByRoute.get(mergeTarget);
+
+        if (!existingByRoute) {
+          // No exact route match — check if the pageName was already seen
+          const existingRouteForName = nameToRoute.get(scan.pageName);
+          if (existingRouteForName && mergedByRoute.has(existingRouteForName)) {
+            mergeTarget = existingRouteForName;
+          }
+        }
+
+        const existing = mergedByRoute.get(mergeTarget);
         if (existing) {
           // Merge groups — use mergeManifest's dedup to avoid duplicates
           const merged = mergeManifest(
@@ -838,8 +870,9 @@ async function runRecord(args: RecordArgs): Promise<void> {
           );
           existing.groups = merged.groups;
         } else {
-          mergedByRoute.set(scan.page, { pathname: scan.pageName, groups: [...scan.groups] });
-          aiPageNames.set(scan.page, scan.pageName);
+          mergedByRoute.set(mergeTarget, { pathname: scan.pageName, groups: [...scan.groups] });
+          aiPageNames.set(mergeTarget, scan.pageName);
+          nameToRoute.set(scan.pageName, mergeTarget);
         }
       }
 
