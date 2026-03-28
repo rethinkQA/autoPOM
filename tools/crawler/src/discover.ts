@@ -19,7 +19,7 @@ import type { GroupType, ManifestGroup, Visibility, WrapperType } from "./types.
  * Combined CSS selector that captures all group-like elements in
  * a single querySelectorAll. This covers:
  * - HTML landmark elements (nav, header, footer, main, aside)
- * - Sectioning with labels (section[aria-label], section[aria-labelledby])
+ * - Sectioning elements (section, article)
  * - Form groupings (fieldset, form)
  * - Tablular data (table)
  * - Dialogs (dialog, [role="dialog"])
@@ -32,8 +32,8 @@ const GROUP_SELECTOR = [
   "footer",
   "main",
   "aside",
-  "section[aria-label]",
-  "section[aria-labelledby]",
+  "section",
+  "article",
   "fieldset",
   "form",
   "table",
@@ -426,6 +426,7 @@ function classifyGroupType(raw: RawGroupData): GroupType {
   if (tag === "main") return "main";
   if (tag === "aside") return "aside";
   if (tag === "section") return "section";
+  if (tag === "article") return "section";
   if (tag === "fieldset") return "fieldset";
   if (tag === "form") return "form";
   if (tag === "details") return "details";
@@ -1006,10 +1007,62 @@ export async function discoverImplicitGroups(
         }
       }
 
-      // Run all three heuristics
+      // ── 4. Headed container detection ─────────────────────
+      // Non-semantic containers (div, etc.) with a direct heading child.
+      // These are visually obvious sections that a human would identify.
+      const HEADING_SELECTOR = ":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6";
+
+      function findHeadedContainers(root: Element, depth: number) {
+        if (depth > 8) return;
+
+        const children = Array.from(root.children);
+        for (const child of children) {
+          if (seen.has(child) || child.matches(groupSel)) {
+            findHeadedContainers(child, depth + 1);
+            continue;
+          }
+
+          const tag = child.tagName.toLowerCase();
+          // Skip elements already matched by GROUP_SELECTOR or semantic tags
+          if (["section", "article", "form", "fieldset", "nav", "header", "footer",
+               "main", "aside", "table", "dialog", "details"].includes(tag)) {
+            findHeadedContainers(child, depth + 1);
+            continue;
+          }
+
+          const htmlChild = child as HTMLElement;
+          const style = window.getComputedStyle(htmlChild);
+          if (style.display === "none" || style.visibility === "hidden") continue;
+
+          // Must have a direct heading child
+          const heading = child.querySelector(HEADING_SELECTOR);
+          if (!heading?.textContent?.trim()) {
+            findHeadedContainers(child, depth + 1);
+            continue;
+          }
+
+          // Must have meaningful content beyond just the heading
+          const hasContent = child.children.length >= 2;
+          if (hasContent && !seen.has(child)) {
+            seen.add(child);
+            results.push({
+              reason: "visual-card" as const, // reuse reason type — these are visually distinct sections
+              selector: buildSelector(child),
+              tagName: tag,
+              label: heading.textContent!.trim(),
+              isVisible: true,
+            });
+          } else {
+            findHeadedContainers(child, depth + 1);
+          }
+        }
+      }
+
+      // Run all four heuristics
       findRepeatedSiblings(container);
       findVisualCards(container, 0);
       findInteractiveContainers(container, 0);
+      findHeadedContainers(container, 0);
 
       return results;
     },
