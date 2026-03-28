@@ -19,7 +19,7 @@ import type { GroupType, ManifestGroup, Visibility, WrapperType } from "./types.
  * Combined CSS selector that captures all group-like elements in
  * a single querySelectorAll. This covers:
  * - HTML landmark elements (nav, header, footer, main, aside)
- * - Sectioning elements (section, article)
+ * - Sectioning with labels (section[aria-label], section[aria-labelledby])
  * - Form groupings (fieldset, form)
  * - Tablular data (table)
  * - Dialogs (dialog, [role="dialog"])
@@ -27,31 +27,23 @@ import type { GroupType, ManifestGroup, Visibility, WrapperType } from "./types.
  * - ARIA landmarks and widgets with labels
  */
 const GROUP_SELECTOR = [
-  // HTML landmarks
   "nav",
   "header",
   "footer",
   "main",
   "aside",
-  // Sectioning
-  "section",
-  "article",
-  // Forms
+  "section[aria-label]",
+  "section[aria-labelledby]",
   "fieldset",
   "form",
-  // Data
   "table",
-  // Overlays
   "dialog",
-  // Disclosure
   "details",
-  // Any element with an explicit aria-label is intentionally named → likely a group
-  "[aria-label]",
-  "[aria-labelledby]",
-  // ARIA roles (catch divs with roles)
   "[role='navigation']",
-  "[role='region']",
-  "[role='group']",
+  "[role='region'][aria-label]",
+  "[role='region'][aria-labelledby]",
+  "[role='group'][aria-label]",
+  "[role='group'][aria-labelledby]",
   "[role='toolbar']",
   "[role='tablist']",
   "[role='menu']",
@@ -59,12 +51,6 @@ const GROUP_SELECTOR = [
   "[role='table']",
   "[role='dialog']",
   "[role='alertdialog']",
-  "[role='list']",
-  "[role='listbox']",
-  "[role='search']",
-  "[role='complementary']",
-  "[role='contentinfo']",
-  "[role='banner']",
 ].join(", ");
 
 // ── Label extraction ────────────────────────────────────────
@@ -187,17 +173,6 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
       // as separate groups when their parent card/form is already captured.
       const elementSet = new Set(elements);
       const filtered = elements.filter((el) => {
-        // Skip leaf interactive elements — they matched via [aria-label] but
-        // are individual controls, not group containers
-        const tag = el.tagName.toLowerCase();
-        const LEAF_TAGS = new Set([
-          "input", "button", "select", "textarea", "a", "img", "label",
-          "option", "optgroup", "progress", "meter", "output", "canvas",
-          "video", "audio", "iframe", "object", "embed", "svg", "hr", "br",
-          "span", "b", "i", "em", "strong", "small", "abbr", "code", "pre",
-        ]);
-        if (LEAF_TAGS.has(tag)) return false;
-
         let parent = el.parentElement;
         while (parent && parent !== container) {
           if (elementSet.has(parent)) return false; // ancestor is also a group — skip this child
@@ -437,17 +412,12 @@ function classifyGroupType(raw: RawGroupData): GroupType {
 
   // Explicit ARIA roles take precedence
   if (role === "navigation") return "nav";
-  if (role === "banner") return "header";
-  if (role === "contentinfo") return "footer";
-  if (role === "complementary") return "aside";
-  if (role === "search") return "form";
   if (role === "toolbar") return "toolbar";
   if (role === "tablist") return "tablist";
   if (role === "menu") return "menu";
   if (role === "menubar") return "menubar";
   if (role === "region") return "region";
-  if (role === "group") return "fieldset";
-  if (role === "list" || role === "listbox") return "region";
+  if (role === "group") return "fieldset"; // role="group" is semantically a fieldset
 
   // Tag-based classification
   if (tag === "nav") return "nav";
@@ -456,7 +426,6 @@ function classifyGroupType(raw: RawGroupData): GroupType {
   if (tag === "main") return "main";
   if (tag === "aside") return "aside";
   if (tag === "section") return "section";
-  if (tag === "article") return "section";
   if (tag === "fieldset") return "fieldset";
   if (tag === "form") return "form";
   if (tag === "details") return "details";
@@ -975,8 +944,7 @@ export async function discoverImplicitGroups(
                                 style.backgroundColor !== parentStyle.backgroundColor;
           const hasRadius = style.borderRadius !== "0px" && style.borderRadius !== "";
 
-          // Need at least 1 visual signal to be a candidate
-          // (AI curation handles filtering out noise)
+          // Need at least 2 visual signals to be a "card"
           const visualSignals = [hasBorder, hasShadow, hasDistinctBg, hasRadius]
             .filter(Boolean).length;
 
@@ -984,7 +952,7 @@ export async function discoverImplicitGroups(
           const hasContent = child.children.length >= 2 ||
                             child.querySelector("img, h1, h2, h3, h4, h5, h6, p, button, a, input");
 
-          if (visualSignals >= 1 && hasContent && !seen.has(child)) {
+          if (visualSignals >= 2 && hasContent && !seen.has(child)) {
             seen.add(child);
             results.push({
               reason: "visual-card",
@@ -1038,77 +1006,10 @@ export async function discoverImplicitGroups(
         }
       }
 
-      // ── 4. Headed container detection ─────────────────────
-      // Non-semantic containers (div, etc.) with a direct heading child.
-      // These are visually obvious sections that a human would identify.
-      // Heading selectors: direct child OR one level nested (common pattern: div > div > h2)
-      const DIRECT_HEADING = ":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6";
-      const NEAR_HEADING = "h1, h2, h3, h4, h5, h6";
-
-      function findNearHeading(el: Element): Element | null {
-        // Check direct children first
-        const direct = el.querySelector(DIRECT_HEADING);
-        if (direct) return direct;
-        // Check one level deeper (div > div > h2 pattern)
-        for (const child of Array.from(el.children)) {
-          const nested = child.querySelector(DIRECT_HEADING);
-          if (nested) return nested;
-        }
-        return null;
-      }
-
-      function findHeadedContainers(root: Element, depth: number) {
-        if (depth > 8) return;
-
-        const children = Array.from(root.children);
-        for (const child of children) {
-          if (seen.has(child) || child.matches(groupSel)) {
-            findHeadedContainers(child, depth + 1);
-            continue;
-          }
-
-          const tag = child.tagName.toLowerCase();
-          // Skip elements already matched by GROUP_SELECTOR or semantic tags
-          if (["section", "article", "form", "fieldset", "nav", "header", "footer",
-               "main", "aside", "table", "dialog", "details"].includes(tag)) {
-            findHeadedContainers(child, depth + 1);
-            continue;
-          }
-
-          const htmlChild = child as HTMLElement;
-          const style = window.getComputedStyle(htmlChild);
-          if (style.display === "none" || style.visibility === "hidden") continue;
-
-          // Find a heading within 2 levels of nesting
-          const heading = findNearHeading(child);
-          if (!heading?.textContent?.trim()) {
-            findHeadedContainers(child, depth + 1);
-            continue;
-          }
-
-          // Must have meaningful content beyond just the heading
-          const hasContent = child.children.length >= 2 ||
-                            child.querySelector("p, table, ul, ol, img, button, a, input, form");
-          if (hasContent && !seen.has(child)) {
-            seen.add(child);
-            results.push({
-              reason: "visual-card" as const,
-              selector: buildSelector(child),
-              tagName: tag,
-              label: heading.textContent!.trim(),
-              isVisible: true,
-            });
-          } else {
-            findHeadedContainers(child, depth + 1);
-          }
-        }
-      }
-
-      // Run all four heuristics
+      // Run all three heuristics
       findRepeatedSiblings(container);
       findVisualCards(container, 0);
       findInteractiveContainers(container, 0);
-      findHeadedContainers(container, 0);
 
       return results;
     },

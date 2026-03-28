@@ -647,8 +647,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
       console.error(`  🤖 Analyzing ${routeTemplate}…`);
       try {
-        const { curateGroupsWithAi } = await import("../src/ai/discover-ai.js");
-        const { discoverGroups } = await import("../src/discover.js");
+        const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
 
         // Build cross-page context from previous scans
         const previousPages: AiPageSummary[] = [];
@@ -668,16 +667,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
           }
         }
 
-        // Step 1: Heuristic discovery — finds all candidates with valid selectors
-        const heuristicGroups = await discoverGroups(page, {
-          scope: args.scope ?? undefined,
-          pass: `ai-record-${(exactCount || 0) + 1}`,
-        });
-
-        console.error(`  🔍 Heuristics found ${heuristicGroups.length} candidate(s) — sending to AI for curation…`);
-
-        // Step 2: AI curation — names groups well and filters junk
-        const result = await curateGroupsWithAi(page, aiProvider!, heuristicGroups, {
+        // AI discovery: ARIA tree → AI → getByRole → selectors
+        const result = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
           pass: `ai-record-${(exactCount || 0) + 1}`,
           previousPages: previousPages.length > 0 ? previousPages : undefined,
