@@ -574,9 +574,15 @@ async function runRecord(args: RecordArgs): Promise<void> {
     /** Fingerprint a set of groups into a Set of shape keys for overlap comparison. */
     function groupFingerprints(groups: ManifestGroup[]): Set<string> {
       const fps = new Set<string>();
+      // Count occurrences of each type combo so pages with different
+      // numbers of sections/tables/etc. produce distinct fingerprints,
+      // while staying immune to AI label variation.
+      const counts = new Map<string, number>();
       for (const g of groups) {
-        // Use groupType + wrapperType — both from fixed enums, immune to AI label variation
-        fps.add(`${g.groupType}::${g.wrapperType}`);
+        const base = `${g.groupType}::${g.wrapperType}`;
+        const n = (counts.get(base) ?? 0) + 1;
+        counts.set(base, n);
+        fps.add(`${base}#${n}`);
       }
       return fps;
     }
