@@ -34,12 +34,6 @@ export class OpenAiProvider implements AiProvider {
       input.previousPages,
     );
 
-    // Newer models (o1, o3, etc.) require max_completion_tokens; older ones use max_tokens
-    const isReasoningModel = /^(o1|o3|o4)/.test(this.model);
-    const tokenLimit = isReasoningModel
-      ? { max_completion_tokens: 4096 }
-      : { max_tokens: 4096 };
-
     const body = {
       model: this.model,
       messages: [
@@ -59,8 +53,7 @@ export class OpenAiProvider implements AiProvider {
         type: "json_schema",
         json_schema: { name: "page_groups", schema: OUTPUT_SCHEMA, strict: true },
       },
-      ...tokenLimit,
-      ...(isReasoningModel ? {} : { temperature: 0 }),
+      max_completion_tokens: 4096,
     };
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
