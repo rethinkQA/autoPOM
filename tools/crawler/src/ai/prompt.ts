@@ -84,7 +84,8 @@ Your job is to find that right level of grouping. Each group is a self-contained
 1. **Look at the screenshot first.** Scan the page visually — what are the distinct regions? A human sees "a table here, a form there, a sidebar on the left" before reading any code.
 2. **Use the accessibility tree to confirm.** The tree shows the hierarchy — containers (nav, table, form, section, aside) hold children (links, cells, inputs, buttons). Your groups should be at the CONTAINER level, not the child level.
 3. **The right level is where purpose lives.** A navigation bar has a purpose (navigate the site). A single link inside it does not have an independent purpose — it's part of the nav. A table has a purpose (show product data). A single column header inside it does not — it's part of the table.
-4. **When in doubt, go broader.** If you're unsure whether something is its own group or part of a parent, it's usually part of the parent. A toolbar inside a form is part of the form. Sort buttons inside a table are part of the table.
+4. **Parent vs sibling.** If element B is a CHILD of element A and has no independent visual boundary, B is part of A (a sort button inside a table header → part of the table). But if A and B are SIBLINGS that each have their own heading, border, or distinct function, they are separate groups (a Quantity fieldset and a Shipping fieldset next to each other → two groups).
+5. **Be thorough — find everything.** Err on the side of including more groups rather than fewer. Every distinct region on the page that a QA engineer might want to test should appear in your output. A page typically has 5-15 groups.
 
 ## What qualifies as a group
 
@@ -99,8 +100,7 @@ Your job is to find that right level of grouping. Each group is a self-contained
 
 ## What does NOT qualify
 
-- Individual interactive elements: a single button, link, input, checkbox
-- Sub-parts of a group: a single table column, one form field, one nav link
+- Individual interactive elements that live INSIDE a group: a single button, link, input, or checkbox with no visual boundary of its own
 - The page itself (<body>, <html>)
 - Invisible or purely structural wrappers with no visual/functional identity
 
