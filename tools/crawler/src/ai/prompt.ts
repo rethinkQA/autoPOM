@@ -9,6 +9,8 @@
 
 
 
+import type { AiPageSummary } from "./types.js";
+
 // ── Output JSON schema (for structured output / validation) ─
 
 /**
@@ -104,6 +106,7 @@ A group is any distinct visual or functional region a QA engineer would target i
 10. If a region is a modal/dialog overlay, use wrapperType "dialog".
 11. If a region shows transient notifications, use wrapperType "toast".
 12. Label every group by its PURPOSE or CONTENT, not by its first text or HTML structure. Read the page like a human — the heading above a section, the column headers in a table, the fields in a form all tell you what it IS.
+13. When previously discovered pages are provided, maintain naming consistency. If you see the same element (e.g. a navigation bar, a shared header) that was already labeled on another page, use the SAME label. Conversely, if two different elements exist (e.g. two different tables with different data), give them DISTINCT labels — never call two different things by the same name.
 
 ## Output format
 
@@ -129,11 +132,23 @@ export function buildUserMessage(
   screenshot: Buffer,
   ariaSnapshot: string,
   url: string,
+  previousPages?: AiPageSummary[],
 ): { text: string; imageBase64: string } {
+  let contextSection = "";
+  if (previousPages && previousPages.length > 0) {
+    const entries = previousPages.map((p) => {
+      const groupList = p.groups
+        .map((g) => `  - ${g.label} (${g.wrapperType})`)
+        .join("\n");
+      return `Page: "${p.pageName}" (URL: ${p.url})\n${groupList}`;
+    });
+    contextSection = `\n## Previously discovered pages\n\nThe following pages and groups have already been identified in this application. Use the same labels for shared elements (e.g. navigation, header) and distinct labels for different elements.\n\n${entries.join("\n\n")}\n`;
+  }
+
   const text = `Analyze this web page and identify all UI groups.
 
 Page URL: ${url}
-
+${contextSection}
 ## ARIA Snapshot (YAML)
 
 ${ariaSnapshot}

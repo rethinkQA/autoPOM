@@ -10,6 +10,7 @@
 import type { Page } from "playwright";
 import type { ManifestGroup } from "../types.js";
 import type { AiProvider } from "./types.js";
+import type { AiPageSummary } from "./types.js";
 import { capturePageContext } from "./capture.js";
 import { mapGroupsToSelectors } from "./dom-mapper.js";
 
@@ -18,6 +19,8 @@ export interface AiDiscoverOptions {
   scope?: string;
   /** Pass tag for the manifest (default: "ai-pass-1"). */
   pass?: string;
+  /** Previously discovered pages for cross-page naming consistency. */
+  previousPages?: AiPageSummary[];
 }
 
 /**
@@ -51,6 +54,9 @@ export async function discoverGroupsWithAi(
 
   // 1. Capture page context
   const context = await capturePageContext(page);
+  if (options?.previousPages) {
+    context.previousPages = options.previousPages;
+  }
 
   console.error(`  🤖 ARIA snapshot (${context.accessibilityTree.length} chars):\n${context.accessibilityTree.slice(0, 300)}…`);
 

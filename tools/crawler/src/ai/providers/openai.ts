@@ -31,6 +31,7 @@ export class OpenAiProvider implements AiProvider {
       input.screenshot,
       input.accessibilityTree,
       input.url,
+      input.previousPages,
     );
 
     const body = {

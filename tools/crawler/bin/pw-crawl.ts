@@ -31,7 +31,7 @@ import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
 import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
-import type { AiProviderName, AiProvider } from "../src/ai/types.js";
+import type { AiProviderName, AiProvider, AiPageSummary } from "../src/ai/types.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -648,9 +648,29 @@ async function runRecord(args: RecordArgs): Promise<void> {
       console.error(`  🤖 Analyzing ${routeTemplate}…`);
       try {
         const { discoverGroupsWithAi } = await import("../src/ai/discover-ai.js");
+
+        // Build cross-page context from previous scans
+        const previousPages: AiPageSummary[] = [];
+        const seenPages = new Set<string>();
+        for (const scan of aiScans) {
+          if (!seenPages.has(scan.page) && scan.groups.length > 0) {
+            seenPages.add(scan.page);
+            previousPages.push({
+              pageName: scan.pageName,
+              url: scan.pathname,
+              groups: scan.groups.map((g) => ({
+                label: g.label,
+                groupType: g.groupType,
+                wrapperType: g.wrapperType,
+              })),
+            });
+          }
+        }
+
         const result = await discoverGroupsWithAi(page, aiProvider!, {
           scope: args.scope ?? undefined,
           pass: `ai-record-${(exactCount || 0) + 1}`,
+          previousPages: previousPages.length > 0 ? previousPages : undefined,
         });
         const { pageName, groups } = result;
 

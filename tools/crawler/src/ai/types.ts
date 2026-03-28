@@ -31,6 +31,16 @@ export interface AiProviderConfig {
 
 // ── Provider interface ──────────────────────────────────────
 
+/** Summary of a previously discovered page (for cross-page context). */
+export interface AiPageSummary {
+  /** AI-chosen page name. */
+  pageName: string;
+  /** URL path when the page was analyzed. */
+  url: string;
+  /** Groups found on that page. */
+  groups: Array<{ label: string; groupType: string; wrapperType: string }>;
+}
+
 /** Input sent to the AI provider for page analysis. */
 export interface AiPageInput {
   /** Full-page screenshot as PNG buffer. */
@@ -41,6 +51,9 @@ export interface AiPageInput {
 
   /** The page URL path (no origin). */
   url: string;
+
+  /** Previously discovered pages in this session (for naming consistency). */
+  previousPages?: AiPageSummary[];
 }
 
 /** Full result from AI page analysis. */
