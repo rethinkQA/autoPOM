@@ -351,11 +351,9 @@ export async function captureCleanedDom(page: Page): Promise<string> {
       "figure", "search", "menu",
     ]);
 
-    // Roles that indicate a table/grid — divs with these must never be collapsed
+    // Container-level roles that must never be collapsed (keep minimal to avoid DOM bloat)
     const NEVER_COLLAPSE_ROLES = new Set([
-      "table", "grid", "treegrid", "row", "rowgroup",
-      "navigation", "form", "dialog", "alertdialog", "tabpanel",
-      "region", "complementary", "search", "toolbar", "menu", "menubar",
+      "table", "grid", "treegrid",
     ]);
 
     /** Check if an element should never be collapsed as a sibling run. */
@@ -364,8 +362,6 @@ export async function captureCleanedDom(page: Page): Promise<string> {
       if (NEVER_COLLAPSE_TAGS.has(tag)) return true;
       const role = el.getAttribute("role");
       if (role && NEVER_COLLAPSE_ROLES.has(role)) return true;
-      // Don't collapse wrappers that contain a table/grid inside
-      if (el.querySelector("table, [role='table'], [role='grid'], [role='treegrid']")) return true;
       return false;
     }
 
