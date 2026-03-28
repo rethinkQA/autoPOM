@@ -157,6 +157,12 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
       // Never a container if leaf
       if (LEAF_TAGS.has(tag)) return false;
 
+      // Custom elements (web components: tags with hyphens like <app-sidebar>)
+      if (tag.includes("-")) return true;
+
+      // Definition lists — common for key-value detail sections
+      if (tag === "dl") return true;
+
       // Has explicit role that indicates a container
       const role = el.getAttribute("role") || "";
       const containerRoles = new Set([
@@ -168,31 +174,39 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
       ]);
       if (containerRoles.has(role)) return true;
 
-      // Div/span with meaningful attributes
+      // Developer-marked test targets — always meaningful
+      if (el.getAttribute("data-testid") || el.getAttribute("data-test") || el.getAttribute("data-cy")) return true;
+
+      // Div/span/li/ul/ol with meaningful signals
       if (tag === "div" || tag === "span" || tag === "li" || tag === "ul" || tag === "ol") {
-        // Has an id, aria-label, or role → likely meaningful
-        if (el.id || el.getAttribute("aria-label") || role) return true;
+        // Has an id, aria-label, aria-labelledby, or role
+        if (el.id || el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || role) return true;
 
-        // Has a heading child → likely a section
+        // Has a heading child (direct or one level deep)
         if (el.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6")) return true;
+        if (el.querySelector(":scope > * > h1, :scope > * > h2, :scope > * > h3, :scope > * > h4, :scope > * > h5, :scope > * > h6")) return true;
 
-        // Has visual boundary + multiple children → likely a card/panel
+        // Has visual boundary + any children
         const childElements = el.children.length;
-        if (childElements >= 2 && hasVisualBoundary(el)) return true;
+        if (childElements >= 1 && hasVisualBoundary(el)) return true;
 
-        // Has multiple interactive children → likely a form/toolbar area
+        // Has interactive children (lowered from 3 to 2)
         const interactive = getInteractiveCount(el);
-        if (interactive >= 3) return true;
+        if (interactive >= 2) return true;
 
-        // Large enough and has enough child elements → structural container
+        // Large enough and has child elements
         const rect = el.getBoundingClientRect();
-        if (rect.width > 200 && rect.height > 100 && childElements >= 3) return true;
+        if (rect.width > 150 && rect.height > 80 && childElements >= 2) return true;
+
+        // Direct child of body/main with reasonable size — structural layout section
+        const parentTag = el.parentElement?.tagName.toLowerCase();
+        if ((parentTag === "body" || parentTag === "main") && rect.width > 200 && rect.height > 50) return true;
       }
 
-      // ul/ol with role or significant content
+      // ul/ol with significant content
       if (tag === "ul" || tag === "ol") {
         const items = el.querySelectorAll(":scope > li");
-        if (items.length >= 3) return true;
+        if (items.length >= 2) return true;
       }
 
       return false;
