@@ -177,14 +177,18 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
       // Developer-marked test targets — always meaningful
       if (el.getAttribute("data-testid") || el.getAttribute("data-test") || el.getAttribute("data-cy")) return true;
 
+      // Any element with an h1 or h2 child is almost certainly a major section
+      if (el.querySelector(":scope > h1, :scope > h2") ||
+          el.querySelector(":scope > * > h1, :scope > * > h2")) return true;
+
       // Div/span/li/ul/ol with meaningful signals
       if (tag === "div" || tag === "span" || tag === "li" || tag === "ul" || tag === "ol") {
         // Has an id, aria-label, aria-labelledby, or role
         if (el.id || el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || role) return true;
 
-        // Has a heading child (direct or one level deep)
-        if (el.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6")) return true;
-        if (el.querySelector(":scope > * > h1, :scope > * > h2, :scope > * > h3, :scope > * > h4, :scope > * > h5, :scope > * > h6")) return true;
+        // Has a heading child (h3-h6, direct or one level deep)
+        if (el.querySelector(":scope > h3, :scope > h4, :scope > h5, :scope > h6")) return true;
+        if (el.querySelector(":scope > * > h3, :scope > * > h4, :scope > * > h5, :scope > * > h6")) return true;
 
         // Has visual boundary + any children
         const childElements = el.children.length;
@@ -216,7 +220,30 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
       // Max depth to prevent explosion
       if (depth > 8) return null;
 
-      if (!isContainer(el)) return null;
+      const isThisContainer = isContainer(el);
+
+      // Always walk children — even non-containers may wrap important
+      // descendants (e.g. a plain div wrapping a table).
+      const children: CapturedContainer[] = [];
+      for (const child of el.children) {
+        if (child instanceof HTMLElement) {
+          const result = walkNode(child, depth + (isThisContainer ? 1 : 0));
+          if (result) {
+            if ((result as any).__orphans) {
+              // Non-container returned orphaned children — adopt them
+              children.push(...(result as any).__orphans);
+            } else {
+              children.push(result as CapturedContainer);
+            }
+          }
+        }
+      }
+
+      // If this element is not a container, bubble its children up
+      if (!isThisContainer) {
+        // Return children as "orphans" — the caller collects them
+        return children.length > 0 ? ({ __orphans: children } as any) : null;
+      }
 
       const rect = el.getBoundingClientRect();
       const tag = el.tagName.toLowerCase();
@@ -224,15 +251,6 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
       // Assign CID
       const cid = nextCid++;
       el.setAttribute("data-pw-cid", String(cid));
-
-      // Walk children
-      const children: CapturedContainer[] = [];
-      for (const child of el.children) {
-        if (child instanceof HTMLElement) {
-          const captured = walkNode(child, depth + 1);
-          if (captured) children.push(captured);
-        }
-      }
 
       return {
         cid,
@@ -256,12 +274,18 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
       };
     }
 
-    // Start from body's children
+    // Start from body's children — walk everything, capture containers
     const roots: CapturedContainer[] = [];
     for (const child of document.body.children) {
       if (child instanceof HTMLElement) {
-        const captured = walkNode(child, 0);
-        if (captured) roots.push(captured);
+        const result = walkNode(child, 0);
+        if (result) {
+          if ((result as any).__orphans) {
+            roots.push(...(result as any).__orphans);
+          } else {
+            roots.push(result as CapturedContainer);
+          }
+        }
       }
     }
 

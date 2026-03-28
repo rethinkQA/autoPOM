@@ -168,7 +168,13 @@ pageName should reflect the page's primary purpose in 1-3 kebab-case words (e.g.
 
 ## Naming consistency
 
-When previously discovered pages are provided, reuse the same label for shared elements (navigation, header) across pages. Give DISTINCT labels to different elements.
+When previously discovered pages are provided, reuse the same label for shared elements across pages. Shared elements (navigation, header, footer, sidebar) that appear on multiple pages should have GENERIC labels — "Main Navigation", "Page Header", "Page Footer" — not page-specific names. Reserve specific labels for page-unique content.
+
+Give DISTINCT labels to different elements — never call two different things by the same name.
+
+## Headings signal sections
+
+Large headings (h1, h2) are strong signals that a container is a meaningful section. If the DOM summary shows a container with heading: "..." text, that section is almost certainly important. Include it. A container with an h1/h2 heading is a top-level page section; h3-h6 headings indicate subsections.
 
 ## Output
 
