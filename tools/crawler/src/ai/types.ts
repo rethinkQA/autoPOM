@@ -85,6 +85,72 @@ export interface AiDiscoveredGroup {
   accessibilityName?: string;
 }
 
+// ── Curation types (hybrid approach) ────────────────────────
+
+/** A heuristic-discovered candidate sent to AI for curation. */
+export interface AiCurationCandidate {
+  /** Index in the original heuristic group array. */
+  index: number;
+  /** CSS selector already validated in the DOM. */
+  selector: string;
+  /** HTML tag name. */
+  tagName: string;
+  /** Heuristic groupType (nav, form, section, etc.). */
+  groupType: string;
+  /** Heuristic wrapperType (group, table, dialog, etc.). */
+  wrapperType: string;
+  /** Heuristic label (may be generic/poor). */
+  heuristicLabel: string;
+  /** How the heuristic label was derived. */
+  labelSource: string;
+  /** aria-label if present. */
+  ariaLabel?: string;
+  /** First heading inside the element. */
+  headingText?: string;
+  /** <legend> text (for fieldset). */
+  legendText?: string;
+  /** <caption> text (for table). */
+  captionText?: string;
+  /** Element id attribute. */
+  id?: string;
+}
+
+/** Input sent to the AI provider for curation. */
+export interface AiCurationInput {
+  /** Full-page screenshot as PNG buffer. */
+  screenshot: Buffer;
+  /** Playwright ARIA snapshot (YAML string). */
+  accessibilityTree: string;
+  /** Page URL path. */
+  url: string;
+  /** Heuristic-discovered candidates to curate. */
+  candidates: AiCurationCandidate[];
+  /** Previously discovered pages (for naming consistency). */
+  previousPages?: AiPageSummary[];
+}
+
+/** AI decision for a single candidate. */
+export interface AiCurationDecision {
+  /** Index matching the candidate's index. */
+  index: number;
+  /** Keep or remove this candidate. */
+  action: "keep" | "remove";
+  /** AI-chosen label (when action is "keep"). */
+  label?: string;
+  /** Brief reason for removal (when action is "remove"). */
+  reason?: string;
+}
+
+/** Full result from AI curation. */
+export interface AiCurationResult {
+  /** Short kebab-case page name chosen by the AI. */
+  pageName: string;
+  /** Curation decisions for each candidate. */
+  decisions: AiCurationDecision[];
+}
+
+// ── Provider interface ──────────────────────────────────────
+
 /**
  * AI provider — analyzes a page and returns discovered groups.
  *
@@ -100,6 +166,12 @@ export interface AiProvider {
    * the page name and UI groups found on the page.
    */
   analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult>;
+
+  /**
+   * Curate heuristic-discovered groups: name them well and filter junk.
+   * If not implemented, falls back to keeping all candidates with heuristic labels.
+   */
+  curateGroups?(input: AiCurationInput): Promise<AiCurationResult>;
 }
 
 
