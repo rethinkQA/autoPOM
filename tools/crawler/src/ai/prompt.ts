@@ -29,7 +29,7 @@ export const OUTPUT_SCHEMA = {
         properties: {
           label: {
             type: "string" as const,
-            description: "Short human-readable name for this group (2-5 words).",
+            description: "Short human-readable name describing what this group IS (2-5 words). Name by content/purpose: a table of products is 'Products Table', a form for login is 'Login Form', a nav with site links is 'Main Navigation'.",
           },
           groupType: {
             type: "string" as const,
@@ -100,9 +100,10 @@ A group is any distinct visual or functional region a QA engineer would target i
 6. Do NOT include individual interactive elements (single buttons, links, inputs). Only containers/regions.
 7. Do NOT include the page itself (<body>, <html>) as a group.
 8. Prefer specific groupTypes over "generic" — use "generic" only when nothing else fits.
-9. If a region contains a data table, use wrapperType "table".
+9. If a region contains a data table, use wrapperType "table". Name the table by WHAT DATA it contains — look at the column headers and row content to determine the subject. For example, a table with columns "Name, Price, Category" is a "Products Table", not "Data Table" or "Name Table".
 10. If a region is a modal/dialog overlay, use wrapperType "dialog".
 11. If a region shows transient notifications, use wrapperType "toast".
+12. Label every group by its PURPOSE or CONTENT, not by its first text or HTML structure. Read the page like a human — the heading above a section, the column headers in a table, the fields in a form all tell you what it IS.
 
 ## Output format
 
