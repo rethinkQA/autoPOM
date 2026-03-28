@@ -293,6 +293,183 @@ export async function captureDomTree(page: Page): Promise<CapturedContainer[]> {
   });
 }
 
+// ── Cleaned DOM capture ─────────────────────────────────────
+
+/**
+ * Capture a cleaned HTML representation of the full page DOM.
+ *
+ * Unlike captureDomTree() which only captures heuristic-identified containers,
+ * this captures the ENTIRE DOM structure as cleaned HTML so the AI sees
+ * everything and decides what's important.
+ *
+ * Optimizations:
+ * - Strips: script, style, noscript, meta, link, template tags
+ * - Strips: inline styles, event handlers, most data-* attributes
+ * - Replaces: SVG, canvas, video, audio, iframe with self-closing placeholders
+ * - Truncates: text content to 40 chars per text node
+ * - Collapses: runs of 4+ same-tag siblings to first 2 + count comment
+ * - Keeps: id, class, role, aria-*, data-testid/test/cy, href, name, type, etc.
+ * - Assigns: data-pw-cid to all block-level elements for mapper resolution
+ * - Filters: display:none elements (except at body level)
+ */
+export async function captureCleanedDom(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    let nextCid = 1;
+
+    // Tags to skip entirely
+    const SKIP = new Set([
+      "script", "style", "noscript", "link", "meta", "template",
+      "path", "defs", "clippath", "lineargradient", "radialgradient",
+      "symbol", "use", "g", "circle", "rect", "line", "polyline",
+      "polygon", "ellipse", "text", "tspan", "mask", "filter",
+      "pattern", "marker", "stop", "feblend", "fecolormatrix",
+      "fecomponenttransfer", "fecomposite", "feconvolvematrix",
+      "fediffuselighting", "fedisplacementmap", "feflood",
+      "fegaussianblur", "feimage", "femerge", "femorphology",
+      "feoffset", "fespecularlighting", "fetile", "feturbulence",
+    ]);
+
+    // Tags replaced with a self-closing placeholder (internal content stripped)
+    const PLACEHOLDER = new Set(["svg", "canvas", "video", "audio", "iframe", "picture", "object", "embed"]);
+
+    // True self-closing tags
+    const VOID = new Set(["img", "input", "br", "hr", "wbr", "col", "area", "track", "source"]);
+
+    // Attributes worth keeping
+    const KEEP_ATTR = new Set([
+      "id", "class", "role", "name", "type", "href", "for", "placeholder",
+      "title", "alt", "action", "method", "value", "checked", "disabled",
+      "readonly", "required", "selected", "open", "hidden", "colspan",
+      "rowspan", "scope", "headers", "tabindex", "contenteditable",
+      "draggable", "dir", "lang", "summary", "cellpadding", "cellspacing",
+    ]);
+
+    const MAX_TEXT = 40;      // chars per text node
+    const MAX_DEPTH = 20;     // nesting limit
+    const COLLAPSE_AFTER = 3; // run length that triggers collapsing (show first 2)
+
+    function isHidden(el: HTMLElement): boolean {
+      const s = getComputedStyle(el);
+      return s.display === "none";
+    }
+
+    function buildAttrs(el: HTMLElement, cid: number | null): string {
+      let s = "";
+      if (cid !== null) {
+        el.setAttribute("data-pw-cid", String(cid));
+        s += ` data-pw-cid="${cid}"`;
+      }
+      for (const a of el.attributes) {
+        if (a.name === "data-pw-cid") continue;
+        if (a.name === "style") continue; // always strip inline styles
+        if (a.name.startsWith("on")) continue; // strip event handlers
+        const keep =
+          KEEP_ATTR.has(a.name) ||
+          a.name.startsWith("aria-") ||
+          a.name === "data-testid" ||
+          a.name === "data-test" ||
+          a.name === "data-cy";
+        if (!keep) continue;
+        let v = a.value;
+        if (v.length > 80) v = v.slice(0, 80) + "\u2026";
+        s += ` ${a.name}="${v.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"`;
+      }
+      return s;
+    }
+
+    function serialize(el: HTMLElement, depth: number): string {
+      if (depth > MAX_DEPTH) return "";
+      const tag = el.tagName.toLowerCase();
+      if (SKIP.has(tag)) return "";
+
+      // Filter hidden elements (but keep body-level children to preserve layout)
+      if (depth > 0 && isHidden(el)) return "";
+
+      const pad = "  ".repeat(depth);
+
+      // Placeholder for media/complex elements
+      if (PLACEHOLDER.has(tag)) {
+        const cid = nextCid++;
+        const attrs = buildAttrs(el, cid);
+        return `${pad}<${tag}${attrs}/>\n`;
+      }
+
+      // Assign cid to all elements that have child elements (potential containers)
+      const hasChildElements = el.children.length > 0;
+      const cid = hasChildElements ? nextCid++ : null;
+      const attrs = buildAttrs(el, cid);
+
+      // Void (self-closing) tags
+      if (VOID.has(tag)) {
+        return `${pad}<${tag}${attrs}/>\n`;
+      }
+
+      // Gather text and child elements
+      let directText = "";
+      const childElements: HTMLElement[] = [];
+      for (const node of el.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const t = (node.textContent || "").trim();
+          if (t) {
+            const snippet = t.length > MAX_TEXT ? t.slice(0, MAX_TEXT) + "\u2026" : t;
+            directText += (directText ? " " : "") + snippet;
+          }
+        } else if (node instanceof HTMLElement) {
+          childElements.push(node);
+        }
+      }
+
+      // No children, no text → self-close
+      if (childElements.length === 0 && !directText) {
+        return `${pad}<${tag}${attrs}/>\n`;
+      }
+
+      // Only text, no child elements → inline
+      if (childElements.length === 0) {
+        return `${pad}<${tag}${attrs}>${directText}</${tag}>\n`;
+      }
+
+      // Serialize children with repetitive-sibling collapsing
+      let inner = directText ? `${pad}  ${directText}\n` : "";
+
+      let i = 0;
+      while (i < childElements.length) {
+        const firstTag = childElements[i].tagName.toLowerCase();
+        // Count consecutive same-tag siblings
+        let j = i + 1;
+        while (j < childElements.length && childElements[j].tagName.toLowerCase() === firstTag) j++;
+        const runLen = j - i;
+
+        if (runLen > COLLAPSE_AFTER) {
+          // Show first 2, collapse the rest
+          for (let k = i; k < i + 2; k++) {
+            inner += serialize(childElements[k], depth + 1);
+          }
+          inner += `${pad}  <!-- \u2026${runLen - 2} more <${firstTag}> -->\n`;
+          i = j;
+        } else {
+          // Show all in this run
+          inner += serialize(childElements[i], depth + 1);
+          i++;
+        }
+      }
+
+      if (!inner.trim()) return `${pad}<${tag}${attrs}/>\n`;
+
+      return `${pad}<${tag}${attrs}>\n${inner}${pad}</${tag}>\n`;
+    }
+
+    // Serialize from body's children
+    let result = "";
+    for (const child of document.body.children) {
+      if (child instanceof HTMLElement) {
+        result += serialize(child, 0);
+      }
+    }
+    return result;
+  });
+}
+
 // ── Cleanup ─────────────────────────────────────────────────
 
 /**
@@ -308,11 +485,11 @@ export async function cleanupCapture(page: Page): Promise<void> {
   });
 }
 
-// ── Format as text for the AI prompt ────────────────────────
+// ── Format as text for the AI prompt (legacy) ───────────────
 
 /**
- * Format the captured container tree as a readable indented text summary
- * for inclusion in the AI prompt.
+ * Format the captured container tree as a readable indented text summary.
+ * @deprecated Use captureCleanedDom() instead — sends full DOM to the AI.
  */
 export function formatDomSummary(containers: CapturedContainer[]): string {
   const lines: string[] = [];
@@ -320,7 +497,6 @@ export function formatDomSummary(containers: CapturedContainer[]): string {
   function formatNode(node: CapturedContainer, indent: number): void {
     const pad = "  ".repeat(indent);
 
-    // Build the main line: [cid] tag#id.class role="X" aria-label="Y" (WxH, visible/hidden, bordered)
     let line = `${pad}[${node.cid}] ${node.tag}`;
     if (node.id) line += `#${node.id}`;
     if (node.classes.length > 0) line += `.${node.classes.join(".")}`;
@@ -335,7 +511,6 @@ export function formatDomSummary(containers: CapturedContainer[]): string {
 
     lines.push(line);
 
-    // Add content hints on the next line
     const hints: string[] = [];
     if (node.headingText) hints.push(`heading: "${node.headingText}"`);
     if (node.interactiveCount > 0) hints.push(`interactive: ${node.interactiveCount}`);
@@ -345,7 +520,6 @@ export function formatDomSummary(containers: CapturedContainer[]): string {
       lines.push(`${pad}  ${hints.join(", ")}`);
     }
 
-    // Recurse into children
     for (const child of node.children) {
       formatNode(child, indent + 1);
     }

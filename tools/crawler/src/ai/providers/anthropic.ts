@@ -29,7 +29,7 @@ export class AnthropicProvider implements AiProvider {
   async analyzePageGroups(input: AiPageInput): Promise<AiAnalysisResult> {
     const { text, imageBase64 } = buildUserMessage(
       input.screenshot,
-      input.domSummary,
+      input.cleanedDom,
       input.accessibilityTree,
       input.url,
       input.previousPages,

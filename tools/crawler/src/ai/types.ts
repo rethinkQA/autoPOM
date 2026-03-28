@@ -49,8 +49,8 @@ export interface AiPageInput {
   /** Playwright ARIA snapshot (YAML string from locator.ariaSnapshot()). */
   accessibilityTree: string;
 
-  /** Pruned DOM container tree (formatted text from dom-capture). */
-  domSummary: string;
+  /** Cleaned HTML of the full page DOM (from captureCleanedDom). */
+  cleanedDom: string;
 
   /** The page URL path (no origin). */
   url: string;

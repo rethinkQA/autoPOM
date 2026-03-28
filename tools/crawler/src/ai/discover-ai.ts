@@ -63,7 +63,7 @@ export async function discoverGroupsWithAi(
     context.previousPages = options.previousPages;
   }
 
-  console.error(`  🤖 DOM summary (${context.domSummary.length} chars), ARIA snapshot (${context.accessibilityTree.length} chars)`);
+  console.error(`  🤖 Cleaned DOM (${context.cleanedDom.length} chars), ARIA snapshot (${context.accessibilityTree.length} chars)`);
 
   // 2. Send to AI provider
   const result = await provider.analyzePageGroups(context);
