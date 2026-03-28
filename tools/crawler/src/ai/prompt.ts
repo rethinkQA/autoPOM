@@ -1,10 +1,14 @@
 /**
  * AI prompt construction — builds the messages sent to the LLM.
  *
- * The prompt instructs the AI to analyze a page's accessibility tree
- * (ARIA snapshot) and return container-level groups matching our
- * manifest schema. The ARIA tree is the primary input; the screenshot
- * provides supplementary visual context.
+ * The prompt instructs the AI to analyze a page using three inputs:
+ *   1. DOM container summary (primary) — pruned tree of container elements
+ *      with visual metadata (borders, dimensions, headings, interactivity)
+ *   2. ARIA snapshot (supplementary) — semantic roles and names
+ *   3. Screenshot (supplementary) — visual context
+ *
+ * Each container in the DOM summary has a numeric [cid]. The AI returns
+ * the cid for each group so the mapper can find the exact DOM element.
  */
 
 import type { AiPageSummary } from "./types.js";
@@ -27,6 +31,10 @@ export const OUTPUT_SCHEMA = {
       items: {
         type: "object" as const,
         properties: {
+          containerIndex: {
+            type: "number" as const,
+            description: "The [cid] number from the DOM summary that corresponds to this group.",
+          },
           label: {
             type: "string" as const,
             description: "Short human-readable name describing what this group IS (2-5 words). Name by content/purpose: a table of products is 'Products Table', a form for login is 'Login Form', a nav with site links is 'Main Navigation'.",
@@ -51,14 +59,14 @@ export const OUTPUT_SCHEMA = {
           },
           accessibilityRole: {
             type: "string" as const,
-            description: "The ARIA role of the matching node in the accessibility tree.",
+            description: "The ARIA role of the matching node (from the ARIA snapshot or role attribute in DOM summary). Empty string if no role.",
           },
           accessibilityName: {
             type: "string" as const,
-            description: "The accessible name of the matching node in the accessibility tree.",
+            description: "The accessible name of the matching node (from aria-label, heading, or ARIA snapshot). Empty string if none.",
           },
         },
-        required: ["label", "groupType", "wrapperType", "description", "accessibilityRole", "accessibilityName"],
+        required: ["containerIndex", "label", "groupType", "wrapperType", "description", "accessibilityRole", "accessibilityName"],
         additionalProperties: false,
       },
     },
@@ -69,116 +77,113 @@ export const OUTPUT_SCHEMA = {
 
 // ── System prompt ───────────────────────────────────────────
 
-export const SYSTEM_PROMPT = `You are a UI analysis agent for an automated testing tool. Your job is to analyze a web page and identify the meaningful container-level groups that a QA engineer would need in a page object.
+export const SYSTEM_PROMPT = `You are a UI analysis agent for an automated testing tool. Your job is to analyze a web page and identify every meaningful container-level section that a QA engineer would need in a page object.
 
 ## Input
 
-You will receive:
-1. An ARIA snapshot in YAML format — the accessibility tree of the page
-2. A screenshot — use to determine what is ACTUALLY VISIBLE on the page right now
+You will receive three inputs:
+1. **DOM Container Summary** (PRIMARY) — A pruned tree of container-level DOM elements with metadata about each: tag, id, classes, role, aria-label, dimensions, visibility, visual boundaries, heading text, and interactive child count. Each node has a numeric [cid] identifier.
+2. **ARIA Snapshot** (SUPPLEMENTARY) — The accessibility tree in YAML format. Use this to get semantic roles and accessible names for nodes.
+3. **Screenshot** (SUPPLEMENTARY) — Visual rendering of the page. Use this to understand layout and confirm which sections are meaningful.
 
 ## Your goal
 
-Identify every meaningful, VISIBLE container-level region on the page. Think like a QA engineer describing the page: "There's a navigation bar at the top, a product table in the middle, a filter form above it, and a footer at the bottom." Each group is a self-contained region that serves a single purpose.
+Identify every container that a QA engineer would create a section for in a page object. These are the distinct regions of the page that group related functionality together.
 
-## CRITICAL: Only include VISIBLE elements
+## What makes a container meaningful?
 
-The ARIA tree may contain elements that exist in the DOM but are NOT currently visible (hidden modals, collapsed accordions, off-screen SPA routes, lazy-loaded panels). You MUST cross-reference with the screenshot.
+Look for these signals in the DOM summary:
 
-- If an element appears in the ARIA tree but NOT in the screenshot, DO NOT include it.
-- Exception: navigation menus that are visible but may not be obvious in screenshots (e.g. sticky headers) — include these.
-- Exception: footers that may be below the fold but are standard page structure — include these.
-- When in doubt, check the screenshot. If you can't see it, don't include it.
+1. **Semantic containers**: nav, header, footer, main, aside, section, article, form, fieldset, table, dialog, details, search — these are almost always meaningful.
 
-## How to read the ARIA tree
+2. **Bordered/styled containers**: Nodes marked "bordered" (have visible border, background, or shadow) that are large enough (width > 100, height > 50) — these are card panels, sidebars, content boxes.
 
-The ARIA snapshot is a YAML tree. Each line is a node with a role and (optionally) a name in quotes. Indentation shows parent-child relationships. Example:
+3. **Containers with headings**: Any node with a heading: "..." line — the developer gave it a title, so it's a named section.
 
-  - navigation "Main Menu":
-    - link "Home"
-    - link "Products"
-  - main:
-    - heading "Products" [level=1]
-    - table "Product List":
-      - rowgroup:
-        - row "header":
-          - columnheader "Name"
-          - columnheader "Price"
-    - region "Filters":
-      - textbox "Search"
-      - button "Apply"
-  - contentinfo:
-    - link "Privacy"
+4. **Containers with interactivity**: Nodes with interactive: N where N >= 2 — these hold buttons, inputs, links that form a functional area.
 
-From this tree, the groups are:
-- navigation "Main Menu" → Main Navigation
-- table "Product List" → Products Table
-- region "Filters" → Search Filters
-- contentinfo → Page Footer
+5. **Structural containers**: Large divs that organize the page layout — the main content area, sidebar column, toolbar row — even without borders, these are structural sections SDETs need.
 
-## Rules for picking groups
+Do NOT include:
+- Invisible containers (marked "hidden") — unless they are dialogues or modals that could appear on interaction
+- Tiny decorative containers (< 50x30)
+- Pure wrapper divs that just nest a single meaningful child — pick the child instead
+- Extremely deep structural nodes (depth > 5) unless they have a distinct purpose
 
-1. **Pick CONTAINER-level nodes.** These hold children that form a region: navigation, main, banner, contentinfo, complementary, region, table, form, group (for fieldsets), dialog, toolbar, tablist, menu, menubar, search, list (when it represents a section), article.
+## How to use the [cid]
 
-2. **Do NOT pick leaf elements.** Individual links, buttons, textboxes, checkboxes, headings, cells, rows, listitem — these are CHILDREN of groups, not groups themselves.
+Every container in the DOM summary has a [cid] number. When you identify a group, return its **containerIndex** set to that cid number. This is how we find the exact DOM element later.
 
-3. **Pick the right level.** If a region just wraps a single table, pick the table. If a region contains multiple distinct subsections, pick the region. If both serve different purposes, pick both.
+Example DOM summary:
+  [1] div#app (1200x900, visible)
+    [2] nav#main-nav role="navigation" aria-label="Main Menu" (1200x60, visible, bordered)
+      interactive: 5
+    [3] div.content-area (900x800, visible)
+      [4] div.filter-panel aria-label="Filters" (900x100, visible, bordered)
+        heading: "Filter Products"
+        interactive: 4
+      [5] table#products (900x400, visible)
+        heading: "Product List"
+      [6] table#orders (900x300, visible)
+        heading: "Recent Orders"
+    [7] aside.sidebar (300x800, visible, bordered)
+      heading: "Quick Actions"
+      interactive: 6
+    [8] footer (1200x60, visible)
+      interactive: 3
 
-4. **accessibilityRole and accessibilityName must match the ARIA tree EXACTLY.** Copy the role name and the quoted name string from the YAML as-is. If a node has no quoted name, use an empty string for accessibilityName.
+From this, the groups are:
+- [2] → Main Navigation (nav, group)
+- [4] → Filter Panel (section, group)
+- [5] → Products Table (section, table)
+- [6] → Recent Orders Table (section, table)
+- [7] → Quick Actions Sidebar (aside, group)
+- [8] → Page Footer (footer, group)
 
-5. **Be thorough.** Every visible region a QA engineer might want to test should appear. Navigation, main content, sidebars, forms, tables, toolbars, tab panels, card lists, footers — all count. A typical page has 4-15 groups.
-
-6. **Named generic containers ARE meaningful.** If a node has role "generic" but has a name (e.g. generic "Sidebar"), it IS a meaningful section — include it. Only skip UNNAMED generic/group nodes that are pure structural wrappers with no distinct purpose.
-
-7. **Look for sections with headings.** If a container holds a heading followed by content (e.g. a group containing heading "Recent Activity" + list), that container is likely a meaningful section. Include it.
-
-8. **Look for sections the screenshot reveals.** If the screenshot shows a distinct visual region (card grid, sidebar panel, statistics bar, action toolbar) that the ARIA tree represents as a generic container or a group — include it. Use the screenshot to catch sections that lack ARIA landmarks.
+Note: [1] and [3] are structural wrappers — skip them because they just contain other meaningful groups. But [7] is meaningful because it has its own heading + interactivity.
 
 ## Disambiguating duplicate elements
 
-When there are MULTIPLE elements of the same type (e.g. multiple tables, multiple forms, multiple navigation menus), you MUST give each one a UNIQUE label that describes its specific content:
+When there are MULTIPLE elements of the same type (e.g. multiple tables, multiple forms), give each a UNIQUE label based on its content:
+- Look at heading text, aria-label, id, column headers
+- "Products Table" vs "Orders Table" — NOT "Table 1" and "Table 2"
 
-- Two tables → "Products Table" and "Orders Table" (NOT "Table 1" and "Table 2")
-- Two forms → "Login Form" and "Search Form" (NOT "Form" and "Form")
-- Two nav menus → "Main Navigation" and "User Menu"
+## ARIA snapshot correlation
 
-Look at each element's children (column headers, form labels, links) to determine what makes it unique.
+Use the ARIA snapshot to find semantic roles and accessible names. If a DOM container [cid] maps to a node in the ARIA tree, copy its role and name for the accessibilityRole and accessibilityName fields. If there's no clear ARIA match, use the role attribute from the DOM summary (or empty string).
 
 ## Labeling
 
-- label: Short name for the group (2-5 words). Name by content/purpose:
-  - Table of products → "Products Table"
-  - Navigation with site links → "Main Navigation"
-  - Form for logging in → "Login Form"
-  - Footer with copyright → "Page Footer"
+- containerIndex: the [cid] from the DOM summary
+- label: short name (2-5 words) by content/purpose
 - groupType: semantic type — one of [nav, header, footer, main, aside, section, fieldset, form, region, toolbar, tablist, menu, menubar, details, generic]
-- wrapperType: code generation hint — one of [group, table, dialog, toast, datePicker]
-  - Use "table" for tables, "dialog" for dialogs/modals, "toast" for live regions/notifications, "datePicker" for date pickers, "group" for everything else
+- wrapperType: code generation hint — "table" for tables, "dialog" for dialogs/modals, "toast" for live regions/notifications, "datePicker" for date pickers, "group" for everything else
 - description: one sentence about what the group contains/does
-- accessibilityRole: the EXACT role from the ARIA tree node
-- accessibilityName: the EXACT quoted name from the ARIA tree node (empty string if none)
+- accessibilityRole: ARIA role (from ARIA tree or role attribute)
+- accessibilityName: accessible name (from ARIA tree, aria-label, or heading)
 
 ## Page naming
 
-pageName should reflect the page's primary purpose in 1-3 kebab-case words (e.g. "login", "device-list", "dashboard"). Do NOT vary the name based on transient state — a page with a modal open is still the same page. Use the URL path and main content heading to determine the name, not the current UI state.
+pageName should reflect the page's primary purpose in 1-3 kebab-case words (e.g. "login", "device-list", "dashboard"). Base it on the URL path and main content heading, not transient UI state.
 
 ## Naming consistency
 
-When previously discovered pages are provided, reuse the same label for shared elements (e.g. navigation, header) across pages. Give DISTINCT labels to different elements — never call two different things by the same name.
+When previously discovered pages are provided, reuse the same label for shared elements (navigation, header) across pages. Give DISTINCT labels to different elements.
 
 ## Output
 
-Return a JSON object with "pageName" (short kebab-case, 1-3 words based on page purpose) and "groups" array.
+Return a JSON object with "pageName" and "groups" array.
 Return ONLY the JSON object. No markdown, no explanation, no code fences.`;
 
 // ── Message builders ────────────────────────────────────────
 
 /**
  * Build the user message content for the AI.
- * Returns text (with embedded ARIA snapshot) and the base64 screenshot.
+ * Returns text (with DOM summary + ARIA snapshot) and the base64 screenshot.
  */
 export function buildUserMessage(
   screenshot: Buffer,
+  domSummary: string,
   ariaSnapshot: string,
   url: string,
   previousPages?: AiPageSummary[],
@@ -194,15 +199,19 @@ export function buildUserMessage(
     contextSection = `\n## Previously discovered pages\n\nThe following pages and groups have already been identified in this application. Use the same labels for shared elements (e.g. navigation, header) and distinct labels for different elements.\n\n${entries.join("\n\n")}\n`;
   }
 
-  const text = `Analyze this web page's accessibility tree and identify all container-level UI groups.
+  const text = `Analyze this web page and identify all meaningful container-level UI sections for a page object.
 
 Page URL: ${url}
 ${contextSection}
-## ARIA Snapshot (YAML) — this is the complete accessibility tree
+## DOM Container Summary (PRIMARY — use [cid] numbers to identify groups)
+
+${domSummary}
+
+## ARIA Snapshot (SUPPLEMENTARY — use for semantic roles and accessible names)
 
 ${ariaSnapshot}
 
-Use the ARIA tree above as your primary source. The screenshot provides visual context. Identify every meaningful container-level group and return the result as a JSON object with a "groups" array.`;
+The screenshot provides visual context. Identify every meaningful section and return the result as a JSON object with "pageName" and "groups" array. Each group MUST include a "containerIndex" matching a [cid] from the DOM summary.`;
 
   const imageBase64 = screenshot.toString("base64");
 

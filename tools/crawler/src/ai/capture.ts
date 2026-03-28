@@ -9,23 +9,29 @@
 import type { Page } from "playwright";
 import type { AiPageInput } from "./types.js";
 import { safePathname } from "../naming.js";
+import { captureDomTree, formatDomSummary } from "./dom-capture.js";
 
 /**
- * Capture screenshot and accessibility tree from a live page.
+ * Capture screenshot, accessibility tree, and DOM container summary.
  *
- * Both operations run in parallel for speed. The screenshot is
- * a full-page PNG; the ARIA snapshot is a compact YAML representation
- * from Playwright's `locator.ariaSnapshot()` API.
+ * All three operations contribute different information:
+ * - Screenshot: visual context for the AI
+ * - ARIA snapshot: semantic roles and names for accessibility-aware elements
+ * - DOM summary: structural containers with visual metadata (borders,
+ *   dimensions, headings, interactivity) — catches sections that lack
+ *   ARIA landmarks. Each node gets a data-pw-cid for mapper resolution.
  */
 export async function capturePageContext(page: Page): Promise<AiPageInput> {
-  const [screenshot, ariaSnapshot] = await Promise.all([
+  const [screenshot, ariaSnapshot, domTree] = await Promise.all([
     page.screenshot({ fullPage: true, type: "png" }),
     page.locator("body").ariaSnapshot(),
+    captureDomTree(page),
   ]);
 
   return {
     screenshot,
     accessibilityTree: ariaSnapshot,
+    domSummary: formatDomSummary(domTree),
     url: safePathname(page.url()),
   };
 }

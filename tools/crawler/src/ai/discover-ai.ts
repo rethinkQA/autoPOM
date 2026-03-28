@@ -11,6 +11,7 @@ import type { ManifestGroup } from "../types.js";
 import type { AiProvider } from "./types.js";
 import type { AiPageSummary } from "./types.js";
 import { capturePageContext } from "./capture.js";
+import { cleanupCapture } from "./dom-capture.js";
 import { mapGroupsToSelectors } from "./dom-mapper.js";
 
 export interface AiDiscoverOptions {
@@ -62,16 +63,19 @@ export async function discoverGroupsWithAi(
     context.previousPages = options.previousPages;
   }
 
-  console.error(`  🤖 ARIA snapshot (${context.accessibilityTree.length} chars):\n${context.accessibilityTree.slice(0, 300)}…`);
+  console.error(`  🤖 DOM summary (${context.domSummary.length} chars), ARIA snapshot (${context.accessibilityTree.length} chars)`);
 
   // 2. Send to AI provider
   const result = await provider.analyzePageGroups(context);
 
   console.error(`  🤖 AI found ${result.groups.length} group(s) (page: "${result.pageName}") — mapping to DOM…`);
 
-  // 3. Map AI groups to DOM selectors via getByRole
+  // 3. Map AI groups to DOM selectors via data-pw-cid (+ getByRole fallback)
   const filterInvisible = options?.filterInvisible ?? true;
   const groups = await mapGroupsToSelectors(page, result.groups, pass, filterInvisible);
+
+  // 4. Clean up temporary data-pw-cid attributes
+  await cleanupCapture(page);
 
   console.error(`  🤖 Mapped ${groups.length}/${result.groups.length} group(s) to selectors.`);
 

@@ -49,6 +49,9 @@ export interface AiPageInput {
   /** Playwright ARIA snapshot (YAML string from locator.ariaSnapshot()). */
   accessibilityTree: string;
 
+  /** Pruned DOM container tree (formatted text from dom-capture). */
+  domSummary: string;
+
   /** The page URL path (no origin). */
   url: string;
 
@@ -83,6 +86,9 @@ export interface AiDiscoveredGroup {
 
   /** The accessibility name that matches this group in the a11y tree. */
   accessibilityName?: string;
+
+  /** The container index (data-pw-cid) from the DOM summary. */
+  containerIndex?: number;
 }
 
 
