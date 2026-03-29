@@ -5,7 +5,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { labelToPropertyName, deduplicateNames, inferRouteName } from "../../src/naming.js";
+import { labelToPropertyName, deduplicateNames, inferRouteName, normalizeRoute } from "../../src/naming.js";
 
 // ── labelToPropertyName ─────────────────────────────────────
 
@@ -132,5 +132,65 @@ test.describe("inferRouteName", () => {
 
   test("returns 'page' for invalid URL", () => {
     expect(inferRouteName("not-a-url")).toBe("page");
+  });
+});
+
+// ── normalizeRoute ──────────────────────────────────────────
+
+test.describe("normalizeRoute", () => {
+  test("preserves static routes", () => {
+    expect(normalizeRoute("http://localhost:3000/devices").page).toBe("/devices");
+  });
+
+  test("collapses numeric IDs to :id", () => {
+    expect(normalizeRoute("http://localhost:3000/devices/123").page).toBe("/devices/:id");
+  });
+
+  test("collapses UUIDs to :id", () => {
+    expect(normalizeRoute("http://localhost:3000/users/550e8400-e29b-41d4-a716-446655440000").page).toBe("/users/:id");
+  });
+
+  test("strips action suffix after dynamic segment — edit", () => {
+    expect(normalizeRoute("http://localhost:3000/devices/123/edit").page).toBe("/devices/:id");
+  });
+
+  test("strips action suffix after dynamic segment — delete", () => {
+    expect(normalizeRoute("http://localhost:3000/devices/123/delete").page).toBe("/devices/:id");
+  });
+
+  test("strips action suffix after dynamic segment — settings", () => {
+    expect(normalizeRoute("http://localhost:3000/devices/123/settings").page).toBe("/devices/:id");
+  });
+
+  test("strips action suffix after dynamic segment — details", () => {
+    expect(normalizeRoute("http://localhost:3000/users/456/details").page).toBe("/users/:id");
+  });
+
+  test("does NOT strip action suffix without dynamic segment", () => {
+    expect(normalizeRoute("http://localhost:3000/admin/settings").page).toBe("/admin/settings");
+  });
+
+  test("does NOT strip non-action trailing segment", () => {
+    expect(normalizeRoute("http://localhost:3000/devices/123/photos").page).toBe("/devices/:id/photos");
+  });
+
+  test("handles hash-based routing", () => {
+    expect(normalizeRoute("http://localhost:3000/#/devices/123/edit").page).toBe("/devices/:id");
+  });
+
+  test("strips query params from hash routes", () => {
+    expect(normalizeRoute("http://localhost:3000/#/devices?tab=info").page).toBe("/devices");
+  });
+
+  test("strips query params from regular routes", () => {
+    expect(normalizeRoute("http://localhost:3000/devices?tab=info").page).toBe("/devices");
+  });
+
+  test("returns / for root", () => {
+    expect(normalizeRoute("http://localhost:3000/").page).toBe("/");
+  });
+
+  test("nested dynamic segments with action suffix", () => {
+    expect(normalizeRoute("http://localhost:3000/org/42/users/789/edit").page).toBe("/org/:id/users/:id");
   });
 });

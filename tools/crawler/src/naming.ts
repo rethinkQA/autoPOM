@@ -254,11 +254,54 @@ function isDynamicSegment(segment: string): boolean {
  *
  * Works generically with any URL structure — no app-specific patterns.
  *
+// ── Action/mode suffix collapsing ────────────────────────────
+
+/**
+ * URL path segments that represent a mode or action on a resource,
+ * not a distinct page. When a route template contains at least one
+ * dynamic segment (`:id`), trailing action suffixes are stripped so
+ * that e.g. `/devices/:id/edit` collapses to `/devices/:id`.
+ *
+ * Only applied when the route has a dynamic segment — this prevents
+ * `/admin/settings` from incorrectly collapsing to `/admin`.
+ */
+const ACTION_SUFFIXES = new Set([
+  // CRUD actions
+  "edit", "modify", "update",
+  "new", "create", "add",
+  "delete", "remove", "destroy",
+  // View modes
+  "view", "details", "detail", "info", "overview", "summary", "preview",
+  // Settings / config
+  "settings", "config", "configure", "preferences",
+  // Common sub-views that are modes of a resource
+  "manage", "review", "approve", "reject", "assign", "clone", "copy",
+]);
+
+/**
+ * Normalize a URL into a route template.
+ *
+ * Collapses dynamic segments (numeric IDs, UUIDs, hashes) into `:id`
+ * placeholders so that `/devices/123` and `/devices/456` map to the
+ * same route template `/devices/:id`.
+ *
+ * When the route contains dynamic segments, trailing action/mode suffixes
+ * (edit, delete, settings, etc.) are also collapsed so `/devices/:id/edit`
+ * and `/devices/:id` are treated as the same page in different modes.
+ *
+ * Returns `{ page, pathname }` where:
+ *   - `page`     = the template with dynamic segments collapsed (used for grouping)
+ *   - `pathname` = the original pathname (used for manifest metadata)
+ *
+ * Works generically with any URL structure — no app-specific patterns.
+ *
  * Examples:
  *   "/devices"              → { page: "/devices" }
  *   "/devices/123"          → { page: "/devices/:id" }
- *   "/devices/123/edit"     → { page: "/devices/:id/edit" }
+ *   "/devices/123/edit"     → { page: "/devices/:id" }
+ *   "/devices/123/settings" → { page: "/devices/:id" }
  *   "/admin/buildings"      → { page: "/admin/buildings" }
+ *   "/admin/settings"       → { page: "/admin/settings" }  (no :id → kept)
  *   "/users/550e8400-e29b-41d4-a716-446655440000" → { page: "/users/:id" }
  *   "/"                     → { page: "/" }
  */
@@ -286,6 +329,17 @@ export function normalizeRoute(url: string): { page: string; pathname: string } 
   // Split, collapse dynamic segments, rejoin
   const segments = clean.split("/").filter((s) => s.length > 0);
   const normalized = segments.map((s) => (isDynamicSegment(s) ? ":id" : s));
+
+  // Collapse trailing action/mode suffixes when the route has dynamic segments.
+  // e.g. /devices/:id/edit → /devices/:id  (edit is a mode, not a page)
+  // But: /admin/settings → /admin/settings (no :id, so "settings" IS the page)
+  if (normalized.includes(":id") && normalized.length > 1) {
+    const last = normalized[normalized.length - 1];
+    if (ACTION_SUFFIXES.has(last.toLowerCase())) {
+      normalized.pop();
+    }
+  }
+
   const page = "/" + normalized.join("/");
 
   return { page, pathname: clean || "/" };

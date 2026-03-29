@@ -116,7 +116,7 @@ The `framework/` directory contains a **Playwright-based element interaction lib
 - **Auto-detection** — handler registry classifies elements (checkbox, select, radio group, etc.) automatically
 - **Group element** — `write()`, `read()`, `writeAll()`, `readAll()`, `click()`, `find()` for any container
 - **Typed wrappers** — `table.sort()`, `stepper.increment()`, `dialog.close()` for rich behaviour
-- **1,739 tests passing** — framework: 1,064 integration (7 apps) + 265 unit; crawler: 329 integration (7 apps) + 81 unit
+- **1,753 tests passing** — framework: 1,064 integration (7 apps) + 265 unit; crawler: 329 integration (7 apps) + 95 unit
 
 See [`framework/README.md`](framework/README.md) for full API documentation.
 
