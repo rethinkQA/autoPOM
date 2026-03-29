@@ -798,9 +798,13 @@ function emitPageObjectWithShared(
     factories.add(WRAPPER_TO_FACTORY[g.wrapperType]);
   }
 
+  // Collect shared component prop names so page-specific names avoid them
+  const sharedPropNames = new Set(sharedOnThisPage.map((comp) => comp.propName));
+
   const names = deduplicateNames(
     pageSpecific.map((g) => g.label),
     options?.propertyNameOverrides,
+    sharedPropNames,
   );
 
   const lines: string[] = [];

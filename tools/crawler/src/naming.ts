@@ -89,13 +89,17 @@ export function labelToPropertyName(label: string): string {
 /**
  * Deduplicate property names by appending numeric suffixes.
  * Returns an array of unique property names indexed by position.
+ *
+ * @param reservedNames Names already in use (e.g. shared component props) that
+ *   the output must avoid.
  */
 export function deduplicateNames(
   labels: string[],
   overrides?: Record<string, string>,
+  reservedNames?: Iterable<string>,
 ): string[] {
   const result: string[] = [];
-  const usedNames = new Set<string>();
+  const usedNames = new Set<string>(reservedNames);
 
   for (const label of labels) {
     // Check for override first

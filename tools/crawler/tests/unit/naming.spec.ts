@@ -105,6 +105,17 @@ test.describe("deduplicateNames", () => {
     expect(result[0]).toBe("modal");
     expect(result[1]).toBe("toastMsg");
   });
+
+  test("avoids reserved names", () => {
+    const result = deduplicateNames(
+      ["Navigation", "Footer"],
+      undefined,
+      ["navigation"],
+    );
+    // "Navigation" → "navigation" collides with reserved → gets suffix
+    expect(result[0]).toBe("navigation2");
+    expect(result[1]).toBe("footer");
+  });
 });
 
 // ── inferRouteName ──────────────────────────────────────────
