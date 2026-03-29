@@ -571,60 +571,10 @@ async function runRecord(args: RecordArgs): Promise<void> {
     // This avoids hardcoded action suffix lists; the system determines
     // page identity from the actual content structure.
 
-    /** Fingerprint a set of groups into a Set of shape keys for overlap comparison. */
-    function groupFingerprints(groups: ManifestGroup[]): Set<string> {
-      const fps = new Set<string>();
-      // Count occurrences of each type combo so pages with different
-      // numbers of sections/tables/etc. produce distinct fingerprints,
-      // while staying immune to AI label variation.
-      const counts = new Map<string, number>();
-      for (const g of groups) {
-        const base = `${g.groupType}::${g.wrapperType}`;
-        const n = (counts.get(base) ?? 0) + 1;
-        counts.set(base, n);
-        fps.add(`${base}#${n}`);
-      }
-      return fps;
-    }
-
-    /** Compute overlap ratio (Jaccard similarity) between two fingerprint sets. */
-    function shapeOverlap(a: Set<string>, b: Set<string>): number {
-      if (a.size === 0 && b.size === 0) return 1;
-      if (a.size === 0 || b.size === 0) return 0;
-      let intersection = 0;
-      for (const fp of a) {
-        if (b.has(fp)) intersection++;
-      }
-      const union = new Set([...a, ...b]).size;
-      return intersection / union;
-    }
-
-    /**
-     * Find an existing page whose shape overlaps ≥40% with the given groups.
-     * Returns the route template key of the matching page, or null.
-     */
-    function findMatchingPage(groups: ManifestGroup[]): string | null {
-      const newFps = groupFingerprints(groups);
-      let bestKey: string | null = null;
-      let bestOverlap = 0;
-
-      for (const [routeKey, entry] of pageShapes) {
-        const overlap = shapeOverlap(newFps, entry.fingerprints);
-        if (overlap > bestOverlap) {
-          bestOverlap = overlap;
-          bestKey = routeKey;
-        }
-      }
-
-      return bestOverlap >= 0.4 ? bestKey : null;
-    }
-
     /** Collected results: array of { page (template), pageName (AI-chosen), pathname, groups, scanIndex } */
     const aiScans: { page: string; pageName: string; pathname: string; groups: ManifestGroup[]; scanIndex: number }[] = [];
     /** Track how many scans each route template has had. */
     const scanCounts = new Map<string, number>();
-    /** Track shape fingerprints per page for structural matching. */
-    const pageShapes = new Map<string, { fingerprints: Set<string> }>();
     /** Map AI-chosen pageName → effective route key (for merging URL mutations). */
     const pageNameToKey = new Map<string, string>();
     let aiAnalyzing = false; // prevent overlapping analysis
@@ -640,14 +590,6 @@ async function runRecord(args: RecordArgs): Promise<void> {
       // Auto-scans skip if this route template was already analyzed;
       // manual (force) always runs (for hover menus, edit mode, etc.)
       if (!force && exactCount > 0) return;
-
-      // Also skip auto-scans if a structurally matching page was already seen
-      // (prevents re-analyzing /devices/:id/edit when /devices/:id is known)
-      if (!force && pageShapes.size > 0) {
-        // We don't have groups yet — but we can check if this exact template
-        // was already merged into another page via shape matching
-        if (scanCounts.has(routeTemplate)) return;
-      }
 
       aiAnalyzing = true;
 
@@ -687,12 +629,10 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
         // Determine the effective page key:
         // 1. Exact route template match → merge under same key
-        // 2. AI pageName matches a previously seen page → same page, different state
-        // 3. Shape overlap ≥70% with existing page → merge under that key
-        // 4. Otherwise → new page
+        // 2. AI pageName matches a previously seen page → same page, different URL state
+        // 3. Otherwise → new page
         let effectiveKey = routeTemplate;
         const pageNameKey = pageNameToKey.get(pageName);
-        const matchedKey = groups.length > 0 ? findMatchingPage(groups) : null;
 
         if (exactCount > 0) {
           // Already seen this exact route template — just another scan
@@ -701,10 +641,6 @@ async function runRecord(args: RecordArgs): Promise<void> {
           // AI returned the same pageName as a previous scan → URL mutation of same page
           effectiveKey = pageNameKey;
           console.error(`  ↳ pageName "${pageName}" matches ${pageNameKey} — merging URL states`);
-        } else if (matchedKey) {
-          // Different URL but same structure → same page in different mode
-          effectiveKey = matchedKey;
-          console.error(`  ↳ Shape matches ${matchedKey} — merging`);
         }
 
         const count = scanCounts.get(effectiveKey) ?? 0;
@@ -721,12 +657,6 @@ async function runRecord(args: RecordArgs): Promise<void> {
         if (!pageNameToKey.has(pageName)) {
           pageNameToKey.set(pageName, effectiveKey);
         }
-
-        // Update the page's shape fingerprints (union of all scans)
-        const existingFps = pageShapes.get(effectiveKey)?.fingerprints ?? new Set<string>();
-        const newFps = groupFingerprints(groups);
-        for (const fp of newFps) existingFps.add(fp);
-        pageShapes.set(effectiveKey, { fingerprints: existingFps });
 
         const label = scanIndex > 1 ? `${effectiveKey} (scan ${scanIndex})` : effectiveKey;
         console.error(`  ✓ ${label} — ${groups.length} group(s) found`);
