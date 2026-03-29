@@ -351,9 +351,13 @@ export async function captureCleanedDom(page: Page): Promise<string> {
       "figure", "search", "menu",
     ]);
 
-    // Container-level roles that must never be collapsed (keep minimal to avoid DOM bloat)
+    // Container-level roles that must never be collapsed
     const NEVER_COLLAPSE_ROLES = new Set([
       "table", "grid", "treegrid",
+      "region", "navigation", "banner", "contentinfo", "complementary",
+      "group", "tabpanel", "toolbar", "tablist", "listbox", "tree",
+      "radiogroup", "dialog", "alertdialog", "feed", "log", "search",
+      "application",
     ]);
 
     /** Check if an element should never be collapsed as a sibling run. */
@@ -362,6 +366,13 @@ export async function captureCleanedDom(page: Page): Promise<string> {
       if (NEVER_COLLAPSE_TAGS.has(tag)) return true;
       const role = el.getAttribute("role");
       if (role && NEVER_COLLAPSE_ROLES.has(role)) return true;
+      // Custom elements (web components)
+      if (tag.includes("-")) return true;
+      // Labeled by the developer — identity signals
+      if (el.getAttribute("aria-label") || el.getAttribute("aria-labelledby")) return true;
+      if (el.getAttribute("data-testid") || el.getAttribute("data-test") || el.getAttribute("data-cy")) return true;
+      // Contains a direct heading child — it's a named section
+      if (el.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6")) return true;
       return false;
     }
 
@@ -461,7 +472,18 @@ export async function captureCleanedDom(page: Page): Promise<string> {
         while (j < childElements.length && childElements[j].tagName.toLowerCase() === firstTag) j++;
         const runLen = j - i;
 
-        if (runLen > COLLAPSE_AFTER && !shouldNeverCollapse(childElements[i])) {
+        // Check if ANY element in the run has label signals
+        let anyLabeled = false;
+        if (runLen > COLLAPSE_AFTER) {
+          for (let k = i; k < j; k++) {
+            if (shouldNeverCollapse(childElements[k])) {
+              anyLabeled = true;
+              break;
+            }
+          }
+        }
+
+        if (runLen > COLLAPSE_AFTER && !anyLabeled) {
           // Show first 2, collapse the rest (only for repetitive leaf-ish elements)
           for (let k = i; k < i + 2; k++) {
             inner += serialize(childElements[k], depth + 1);

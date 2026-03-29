@@ -114,6 +114,22 @@ Do NOT include:
 - Extremely deep structural nodes that don't represent a distinct section
 - Decorative containers with no functional content
 
+## Be exhaustive — most things on pages ARE labeled
+
+Your primary job is to find EVERY section, not just the obvious ones. Developers label their UI regions — you need to find those labels:
+
+- **aria-label / aria-labelledby**: ANY element with these attributes is explicitly named — the developer intended it as a distinct region. ALWAYS report it.
+- **Heading children**: ANY element with an \`<h1>\`–\`<h6>\` inside it is a named section. The heading text is the label. Look for headings at EVERY level — \`<h3>\`, \`<h4>\`, \`<h5>\` sections are just as important as \`<h1>\`/\`<h2>\`.
+- **id attributes**: Elements with meaningful \`id\` values (e.g. \`id="device-details"\`, \`id="user-permissions"\`) are named regions. Use the id to derive the label.
+- **title attributes**: Elements with \`title\` are labeled regions.
+- **Tab panels**: \`role="tabpanel"\` elements — each is a distinct section. Include the associated \`role="tablist"\` as well.
+- **Card / tile layouts**: Repeated bounded elements each with a heading — the parent container is a section.
+- **Definition lists**: \`<dl>\` elements are key-value detail sections.
+- **Toolbar rows**: Rows of action buttons, filters, dropdowns grouped together.
+- **Details / accordion**: \`<details>\` elements with \`<summary>\` children.
+
+When in doubt, INCLUDE the section. It is better to report one extra section the SDET can remove than to miss a section they need to write tests for.
+
 ## Using data-pw-cid
 
 Every block-level element in the cleaned DOM has a \`data-pw-cid="N"\` attribute. When you identify a group, set \`containerIndex\` to that element's cid number. This is how we find the exact DOM element later.
