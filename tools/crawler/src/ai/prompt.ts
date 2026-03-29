@@ -220,6 +220,15 @@ When previously discovered pages are provided, reuse the same label for shared e
 
 Give DISTINCT labels to different elements — never call two different things by the same name.
 
+## No duplicates — one entry per DOM region
+
+Each physical region of the page should appear EXACTLY ONCE in your output. Do not create multiple entries for the same section:
+- If a \`<section>\` contains a \`<table>\`, return the TABLE (wrapperType: "table"), NOT both the section AND the table — the table IS the section
+- If a heading + table are wrapped in a \`<div>\`, return one entry for the table (using the heading for the label), not separate entries for the div and the table
+- If a \`<section>\` or \`<div>\` has a heading and content, return ONE entry for that region — not one for the heading area and another for the content area
+- Pick the most semantically meaningful element: prefer \`<table>\` over its parent \`<section>\`, prefer \`<form>\` over its parent \`<div>\`
+- NEVER return two groups with the same containerIndex (data-pw-cid)
+
 ## Tables and grids — EVERY one matters
 
 Every table or grid in the DOM is a meaningful section. This includes:

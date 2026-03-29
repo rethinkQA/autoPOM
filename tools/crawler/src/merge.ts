@@ -78,10 +78,15 @@ export function mergeManifest(
   }
 
   const merged = new Map<string, ManifestGroup>();
+  // Secondary index: selector → merge key, for deduplicating groups that
+  // point to the same DOM element but got different labels across scans.
+  const selectorIndex = new Map<string, string>();
 
   // Start with all existing groups
   for (const group of existing.groups) {
-    merged.set(mergeKey(group), group);
+    const key = mergeKey(group);
+    merged.set(key, group);
+    if (group.selector) selectorIndex.set(group.selector, key);
   }
 
   // Merge new groups: update existing, append new
@@ -107,6 +112,12 @@ export function mergeManifest(
         ...(existingGroup.triggeredBy ? { triggeredBy: existingGroup.triggeredBy } : {}),
       });
     } else {
+      // Check if another group already claims this selector (same DOM element,
+      // different label across scans). Keep the first label — skip the duplicate.
+      if (group.selector && selectorIndex.has(group.selector)) {
+        continue;
+      }
+
       // Append: new group discovered in this pass.
       // Preserve discoveredIn if it's a recorder tag (e.g. "record"),
       // otherwise stamp with the current pass number.
@@ -116,6 +127,7 @@ export function mergeManifest(
         discoveredIn: isRecorderTag ? group.discoveredIn : `pass-${pass}`,
         lastSeen: now,
       });
+      if (group.selector) selectorIndex.set(group.selector, key);
     }
   }
 
