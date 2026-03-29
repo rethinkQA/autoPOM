@@ -19,6 +19,7 @@ import type { Page } from "playwright";
 import type { ManifestGroup } from "./types.js";
 import { discoverGroups, discoverToasts, GROUP_SELECTOR } from "./discover.js";
 import { safePathname } from "./naming.js";
+import { injectNavigationInterceptor } from "./navigation.js";
 
 /** Groups discovered on a single page URL. */
 export interface PageRecording {
@@ -296,9 +297,10 @@ export class DomRecorder {
       // 2. Update current path to the new page.
       this.currentPathname = safePathname(this.page.url());
 
-      // 3. Re-inject INIT_SCRIPT into the new page.
+      // 3. Re-inject INIT_SCRIPT and SPA interceptor into the new page.
       try {
         await this.page.evaluate(INIT_SCRIPT);
+        await injectNavigationInterceptor(this.page);
       } catch {
         // Page may still be loading — will retry on next navigation or harvest.
       }
@@ -310,6 +312,23 @@ export class DomRecorder {
     };
 
     this.page.on("domcontentloaded", this.onNavigation);
+
+    // ── SPA navigation interception ──────────────────────────
+    // SPAs use pushState/replaceState instead of full-page loads.
+    // Expose a callback and inject the History API interceptor.
+    let navDebounce: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await this.page.exposeFunction("__pwRouteChanged", (_url: string) => {
+        // Debounce: let DOM settle before finalizing
+        clearTimeout(navDebounce);
+        navDebounce = setTimeout(() => {
+          if (this.onNavigation) void this.onNavigation();
+        }, 1000);
+      });
+    } catch {
+      // __pwRouteChanged may already be exposed (e.g. if page was reused) — OK
+    }
+    await injectNavigationInterceptor(this.page);
   }
 
   /** Snapshot initial groups on the current page so we can diff later. */
