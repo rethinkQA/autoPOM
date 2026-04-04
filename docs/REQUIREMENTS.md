@@ -332,6 +332,11 @@ These items are explicitly deferred but documented for future planning:
 
 | Item | Notes |
 |------|-------|
+| Repo split | Separate `playwright-elements` (runtime framework, npm package) from `autoPOM` (crawler/recorder/emitter tool). Fixture apps and dev scripts stay in the current repo. |
+| `captureTraffic()` helper | Framework helper that wraps a UI action, captures all API requests/responses during it, and returns them for assertion (payload validation, call order, response schema). Extends the `networkSettleMiddleware` pattern to expose captured traffic instead of discarding it. |
+| `--observe-network` default | Make API dependency observation the default during crawls so every manifest includes `apiDependencies` and every generated page object emits `waitForReady()`. |
+| Interaction → endpoint attribution | Extend crawler's API observation to attribute which UI action triggered which endpoint. Surface in manifest metadata and as comments in generated page objects. |
+| Agent-driven test generation | AI agent generates `.spec.ts` files from manifest + generated POM. The typed page object provides the structured API contract; the agent doesn't need raw HTML. |
 | API mocking targets | Apps that consume a mock REST/GraphQL backend (MSW or similar) |
 | Authentication UI | Login form, protected route patterns |
 | Mobile-responsive targets | Viewport-specific behavior for mobile testing |

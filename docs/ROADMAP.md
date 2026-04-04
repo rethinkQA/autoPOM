@@ -39,19 +39,43 @@ All phases below are complete. The full historical checklists are preserved in [
 
 Candidate goals for the next iteration, roughly prioritized. No target dates — this is a directional guide, not a commitment.
 
+### Product architecture
+
+| Decision | Detail |
+|----------|--------|
+| **Repo split** | Separate `playwright-elements` (framework runtime) from `autoPOM` (crawler + recorder + AI discovery + emitter). The framework is the published npm package that generated page objects import. autoPOM is the tool that generates those page objects. The fixture apps, shared data, and dev scripts remain in the current repo as the integration test workspace. |
+| **autoPOM = crawler + recorder** | The crawl, record, and generate CLI modes are the autoPOM product. They depend on `playwright-elements` at runtime (generated code imports from it). |
+| **playwright-elements = runtime framework** | `By`, `group()`, `table()`, `dialog()`, `write()`, `read()`, `click()`, `networkSettleMiddleware()`, handler registry, adapters. Published as an npm package consumers install in their test projects. |
+
+### API traffic capture & validation
+
 | Priority | Goal | Rationale |
 |----------|------|-----------|
-| 1 | **Public npm publish** | Remove `"private": true` from `framework/package.json` and `tools/crawler/package.json`. Add `CHANGELOG.md`, publish workflow, and semver tagging. Pre-requisite for external adoption. |
-| 2 | **HTMX app** (Phase 6) | Deferred from v0.1. HTMX represents a fundamentally different interaction model (server-driven HTML swaps) that the framework hasn't been validated against. See REQUIREMENTS.md §5 and §9. |
-| 3 | **API mocking targets** | Apps that consume a mock REST/GraphQL backend (MSW or similar). Validates the `networkSettleMiddleware` against real async data flows instead of `setTimeout` simulations. See REQUIREMENTS.md §9. |
-| 4 | **Cross-browser CI stabilization** | The weekly Firefox/WebKit CI job (P2-39) is in place but may surface failures. Stabilizing cross-browser support strengthens the framework's core thesis of cross-technology compatibility. |
-| 5 | **Authentication UI patterns** | Login forms, protected routes, session management. A common real-world pattern that the framework doesn't currently exercise. See REQUIREMENTS.md §9. |
+| 1 | **`captureTraffic()` helper** | Wrap an action, collect all API requests/responses that occur during it, return them for assertion. The `networkSettleMiddleware` already tracks in-flight requests but discards them after settling — this would expose the captured traffic. Enables: payload validation, call count assertions, call order verification, response schema checks. |
+| 2 | **`--observe-network` on by default** | Manifest `apiDependencies` should always be populated so generated page objects always include `waitForReady()`. Currently opt-in — most users won't know to enable it. |
+| 3 | **Interaction → endpoint attribution** | The crawler already classifies API calls as `"page-load"` vs `"interaction"`. Extend to attribute which UI action triggered which endpoint (e.g., "clicking Save triggers PUT /api/devices/*"). Surfaced in manifest metadata and as comments in generated page objects. |
+
+### Test generation via AI agents
+
+| Priority | Goal | Rationale |
+|----------|------|-----------|
+| 4 | **Agent-driven test generation** | An AI agent can generate `.spec.ts` test files from the manifest + generated page object. The POM provides the structured API contract (section names, types, selectors). The manifest provides `apiDependencies` and `triggeredBy` metadata. The agent doesn't need to see raw HTML — just the typed page object interface. No scaffold generator needed — the agent generates complete test logic from acceptance criteria + POM. |
+
+### Existing v0.2 candidates
+
+| Priority | Goal | Rationale |
+|----------|------|-----------|
+| 5 | **Public npm publish** | Remove `"private": true` from `framework/package.json` and `tools/crawler/package.json`. Add `CHANGELOG.md`, publish workflow, and semver tagging. Pre-requisite for external adoption. |
+| 6 | **HTMX app** (Phase 6) | Deferred from v0.1. HTMX represents a fundamentally different interaction model (server-driven HTML swaps) that the framework hasn't been validated against. See REQUIREMENTS.md §5 and §9. |
+| 7 | **API mocking targets** | Apps that consume a mock REST/GraphQL backend (MSW or similar). Validates the `networkSettleMiddleware` against real async data flows instead of `setTimeout` simulations. See REQUIREMENTS.md §9. |
+| 8 | **Cross-browser CI stabilization** | The weekly Firefox/WebKit CI job (P2-39) is in place but may surface failures. Stabilizing cross-browser support strengthens the framework's core thesis of cross-technology compatibility. |
+| 9 | **Authentication UI patterns** | Login forms, protected routes, session management. A common real-world pattern that the framework doesn't currently exercise. See REQUIREMENTS.md §9. |
 
 ### Decision criteria
 
 An item moves from "candidate" to "active" when:
 - It has a clear owner or contributor willing to drive it
-- It doesn't destabilize the existing 1,716-test safety net
+- It doesn't destabilize the existing 1,754-test safety net
 - It addresses a gap that blocks adoption or reduces framework credibility
 
 ---
