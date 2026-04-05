@@ -547,7 +547,24 @@ async function runRecord(args: RecordArgs): Promise<void> {
     const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
     const page = await context.newPage();
 
+    // ── Network observation (AI mode only) ───────────────────
+    // In heuristic mode, DomRecorder manages its own NetworkObserver.
+    // In AI mode, we need a standalone observer since there's no DomRecorder.
+    // IMPORTANT: Start BEFORE page.goto() so initial page-load API calls are captured.
+    let networkObserver: NetworkObserver | null = null;
+    let networkInteractionTimestamp = 0;
+    let actionClearTimer: ReturnType<typeof setTimeout> | null = null;
+    const apiDepsByRoute = new Map<string, ApiDependency[]>();
+    let currentRoute = safePathname(args.url); // use args.url; page hasn't navigated yet
+
+    if (args.aiProvider) {
+      networkObserver = new NetworkObserver(page);
+      networkObserver.start();
+      console.error("  📡 Network observer started (before navigation)");
+    }
+
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
+    currentRoute = safePathname(page.url()); // update after redirects
 
     // Resolve AI provider if requested
     let aiProvider: AiProvider | undefined;
@@ -561,18 +578,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
       });
     }
 
-    // ── Network observation (AI mode only) ───────────────────
-    // In heuristic mode, DomRecorder manages its own NetworkObserver.
-    // In AI mode, we need a standalone observer since there's no DomRecorder.
-    let networkObserver: NetworkObserver | null = null;
-    let networkInteractionTimestamp = 0;
-    let actionClearTimer: ReturnType<typeof setTimeout> | null = null;
-    const apiDepsByRoute = new Map<string, ApiDependency[]>();
-    let currentRoute = safePathname(page.url());
-
     if (aiProvider) {
-      networkObserver = new NetworkObserver(page);
-      networkObserver.start();
 
       // Bridge browser clicks to NetworkObserver for attribution.
       try {
@@ -616,6 +622,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
       if (actionClearTimer) { clearTimeout(actionClearTimer); actionClearTimer = null; }
       networkObserver.clearAction();
       const deps = networkObserver.stop(networkInteractionTimestamp || undefined);
+      const prevRoute = currentRoute;
       if (deps.length > 0) {
         const existing = apiDepsByRoute.get(currentRoute) ?? [];
         const seen = new Map<string, ApiDependency>();
@@ -629,6 +636,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
       networkObserver = new NetworkObserver(page);
       networkObserver.start();
       networkInteractionTimestamp = 0;
+      console.error(`  📡 Network: rotated for "${prevRoute}" → ${deps.length} dep(s), now watching "${currentRoute}"`);
     }
 
     // Re-inject click listener and rotate observer on navigation (AI mode)
@@ -746,6 +754,9 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
       await page.exposeFunction("__pwRouteChanged", (url: string) => {
         clearTimeout(navDebounce);
+        // Rotate network observer immediately on SPA navigation so deps
+        // are attributed to the route they were captured on.
+        rotateNetworkObserver();
         navDebounce = setTimeout(() => void analyzeCurrentPage(), 1500);
       });
     }
@@ -853,6 +864,16 @@ async function runRecord(args: RecordArgs): Promise<void> {
     // Finalize the last page's network observer
     rotateNetworkObserver();
 
+    // Debug: dump what the network observer captured
+    if (apiDepsByRoute.size > 0) {
+      console.error(`  📡 Network deps by route:`);
+      for (const [route, deps] of apiDepsByRoute) {
+        console.error(`    "${route}" → ${deps.length} dep(s): ${deps.map(d => `${d.method} ${d.pattern}`).join(", ")}`);
+      }
+    } else if (args.aiProvider) {
+      console.error("  📡 Network: no API dependencies captured (observer may have started too late or app made no XHR/fetch calls)");
+    }
+
     let pages: PageRecording[] = [];
 
     if (aiProvider) {
@@ -910,6 +931,21 @@ async function runRecord(args: RecordArgs): Promise<void> {
         // Also add the route template in case deps were stored under it
         pathnames.add(safePathname(scan.pathname));
         pageNameToPathnames.set(scan.pageName, pathnames);
+      }
+
+      // Also add route template keys — rotateNetworkObserver uses safePathname(page.url())
+      // which may differ from normalizeRoute().pathname after redirects
+      for (const scan of aiScans) {
+        const pathnames = pageNameToPathnames.get(scan.pageName)!;
+        pathnames.add(scan.page); // route template like "/contactList"
+      }
+
+      // Debug: show the mapping
+      if (apiDepsByRoute.size > 0) {
+        console.error("  📡 Page name → URL pathname mapping:");
+        for (const [name, paths] of pageNameToPathnames) {
+          console.error(`    "${name}" → [${Array.from(paths).join(", ")}]`);
+        }
       }
 
       for (const recording of pages) {
