@@ -27,6 +27,11 @@ export class NetworkObserver {
   private navigationTimestamp = 0;
   private handler: ((response: Response) => void) | null = null;
   private started = false;
+  /** Currently active action label — set by `setAction()`, cleared by `clearAction()`. */
+  private currentAction: string | null = null;
+  /** Maps timestamp ranges to action labels for attribution. */
+  private actionLog: Array<{ label: string; start: number; end: number }> = [];
+  private actionStart = 0;
 
   constructor(private readonly page: Page) {}
 
@@ -60,6 +65,40 @@ export class NetworkObserver {
   }
 
   /**
+   * Mark the start of a user action. API calls observed between
+   * `setAction()` and `clearAction()` will be attributed to this label.
+   *
+   * @param label  Description of the action (e.g. "click → Save button").
+   */
+  setAction(label: string): void {
+    // Close any previous action that wasn't explicitly cleared
+    if (this.currentAction) {
+      this.actionLog.push({
+        label: this.currentAction,
+        start: this.actionStart,
+        end: Date.now(),
+      });
+    }
+    this.currentAction = label;
+    this.actionStart = Date.now();
+  }
+
+  /**
+   * Mark the end of a user action. Subsequent API calls will be
+   * classified as page-load (no attribution) until the next `setAction()`.
+   */
+  clearAction(): void {
+    if (this.currentAction) {
+      this.actionLog.push({
+        label: this.currentAction,
+        start: this.actionStart,
+        end: Date.now(),
+      });
+      this.currentAction = null;
+    }
+  }
+
+  /**
    * Stop observing and return collected API dependencies.
    *
    * @param interactionTimestamp If provided, requests after this time
@@ -69,6 +108,16 @@ export class NetworkObserver {
     if (this.handler) {
       this.page.off("response", this.handler);
       this.handler = null;
+    }
+
+    // Close any open action
+    if (this.currentAction) {
+      this.actionLog.push({
+        label: this.currentAction,
+        start: this.actionStart,
+        end: Date.now(),
+      });
+      this.currentAction = null;
     }
 
     // Deduplicate by URL pattern + method
@@ -83,13 +132,28 @@ export class NetworkObserver {
           ? "interaction"
           : "page-load";
 
+      // Attribute to an action if the request falls within an action's time window.
+      // Iterate in reverse so the most recent (most specific) action wins when
+      // grace periods overlap.
+      let triggeredBy: string | undefined;
+      if (timing === "interaction") {
+        for (let i = this.actionLog.length - 1; i >= 0; i--) {
+          const action = this.actionLog[i];
+          if (r.timestamp >= action.start && r.timestamp <= action.end + 2000) {
+            triggeredBy = action.label;
+            break;
+          }
+        }
+      }
+
       if (!seen.has(key)) {
-        seen.set(key, { pattern, method: r.method, timing });
+        seen.set(key, { pattern, method: r.method, timing, ...(triggeredBy ? { triggeredBy } : {}) });
       }
     }
 
     // P3-308: Clear state so the observer can be reused.
     this.responses = [];
+    this.actionLog = [];
 
     return Array.from(seen.values());
   }

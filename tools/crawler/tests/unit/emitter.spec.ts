@@ -327,6 +327,48 @@ test.describe("emitPageObject — waitForReady", () => {
   });
 });
 
+// ── Interaction endpoint comments ───────────────────────────
+
+test.describe("emitPageObject — interaction endpoint comments", () => {
+  test("emits JSDoc comment for interaction deps with triggeredBy", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/items", method: "GET", timing: "page-load" },
+        { pattern: "/api/items", method: "DELETE", timing: "interaction", triggeredBy: "click → Delete" },
+        { pattern: "/api/save", method: "PUT", timing: "interaction", triggeredBy: "click → Save" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain("Interaction API endpoints");
+    expect(result).toContain("DELETE /api/items ← click → Delete");
+    expect(result).toContain("PUT /api/save ← click → Save");
+    expect(result).toContain("captureTraffic()");
+  });
+
+  test("omits interaction comments when no triggeredBy present", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/items", method: "GET", timing: "page-load" },
+        { pattern: "/api/items", method: "POST", timing: "interaction" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).not.toContain("Interaction API endpoints");
+    expect(result).not.toContain("captureTraffic()");
+  });
+
+  test("omits interaction comments when no API dependencies", () => {
+    const manifest = makeManifest([]);
+    const result = emitPageObject(manifest);
+
+    expect(result).not.toContain("Interaction API endpoints");
+  });
+});
+
 // ── computeShape ────────────────────────────────────────────
 
 test.describe("computeShape", () => {

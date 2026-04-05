@@ -36,8 +36,9 @@ export async function crawlPage(
 
   // Start network observation BEFORE waiting for load state so we
   // capture as many in-flight requests as possible.
+  // Defaults to true — opt out with observeNetwork: false.
   let networkObserver: NetworkObserver | undefined;
-  if (options?.observeNetwork) {
+  if (options?.observeNetwork !== false) {
     networkObserver = new NetworkObserver(page);
     networkObserver.start();
   }

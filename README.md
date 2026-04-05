@@ -92,7 +92,7 @@ test_app/
 │   └── lit-app/             ← Lit web components
 ├── framework/               ← Playwright element interaction library
 │   ├── src/                 ← By class, handler registry, group element, typed wrappers
-│   ├── tests/               ← 1,064 integration + 265 unit tests
+│   ├── tests/               ← 1,064 integration + 276 unit tests
 │   └── playwright.config.ts
 ├── tools/crawler/           ← Runtime page crawler + page object emitter
 ├── docs/
@@ -116,7 +116,7 @@ The `framework/` directory contains a **Playwright-based element interaction lib
 - **Auto-detection** — handler registry classifies elements (checkbox, select, radio group, etc.) automatically
 - **Group element** — `write()`, `read()`, `writeAll()`, `readAll()`, `click()`, `find()` for any container
 - **Typed wrappers** — `table.sort()`, `stepper.increment()`, `dialog.close()` for rich behaviour
-- **1,754 tests passing** — framework: 1,064 integration (7 apps) + 265 unit; crawler: 329 integration (7 apps) + 96 unit
+- **1,772 tests passing** — framework: 1,064 integration (7 apps) + 276 unit; crawler: 329 integration (7 apps) + 103 unit
 
 See [`framework/README.md`](framework/README.md) for full API documentation.
 

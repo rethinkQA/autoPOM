@@ -31,7 +31,7 @@ All phases below are complete. The full historical checklists are preserved in [
 | — | Network Settle Middleware (auto-wait for in-flight HTTP) | ✅ Complete |
 | 14 | Crawler Record Mode (DOM Flight Recorder) | ✅ Complete |
 
-**Current test count:** 1,754 tests (1,064 framework integration + 265 unit + 329 crawler integration + 96 crawler unit), all passing.
+**Current test count:** 1,772 tests (1,064 framework integration + 276 unit + 329 crawler integration + 103 crawler unit), all passing.
 
 ---
 
@@ -75,7 +75,7 @@ Candidate goals for the next iteration, roughly prioritized. No target dates —
 
 An item moves from "candidate" to "active" when:
 - It has a clear owner or contributor willing to drive it
-- It doesn't destabilize the existing 1,754-test safety net
+- It doesn't destabilize the existing 1,772-test safety net
 - It addresses a gap that blocks adoption or reduces framework credibility
 
 ---

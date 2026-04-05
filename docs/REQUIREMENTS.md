@@ -321,7 +321,7 @@ This library is considered **complete for v0.1** when:
 - [x] Each app has a local `README.md` documenting the technology, start command, and any caveats
 - [x] All 7 apps can be started simultaneously via a root-level `start:all` script
 - [x] Framework library (§11) is implemented and validated against vanilla-html
-- [x] All 7 apps migrated to idiomatic component libraries (Phase 10) — 1,064/1,064 integration tests + 265 unit tests passing
+- [x] All 7 apps migrated to idiomatic component libraries (Phase 10) — 1,064/1,064 integration tests + 276 unit tests passing
 - [x] Framework handles genuinely different DOM structures across 6 component libraries — library-specific logic is isolated in adapters (DatePickerAdapter, SelectAdapter) while detection uses generic ARIA/role-based strategies
 
 ---

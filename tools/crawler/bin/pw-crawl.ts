@@ -123,7 +123,7 @@ function parseCrawlArgs(argv: string[]): CrawlArgs {
     mode: "crawl",
     url: "",
     pass: 1,
-    observeNetwork: false,
+    observeNetwork: true,
     headless: true,
     ignoreHTTPSErrors: false,
     help: false,
@@ -153,6 +153,9 @@ function parseCrawlArgs(argv: string[]): CrawlArgs {
         break;
       case "--observe-network":
         args.observeNetwork = true;
+        break;
+      case "--no-observe-network":
+        args.observeNetwork = false;
         break;
       case "--headed":
         args.headless = false;
@@ -319,7 +322,8 @@ Options:
   --pass <n>               Pass number for append-only merge (default: 1)
   --scope <selector>       Limit crawl to elements within this CSS selector
   --diff <file>            Compare current DOM against existing manifest
-  --observe-network        Capture API dependencies during crawl
+  --observe-network        Capture API dependencies during crawl (default: on)
+  --no-observe-network     Disable API dependency capture
   --headed                 Run browser in headed mode (visible)
   --ignore-https-errors    Skip TLS certificate validation
   --ai-provider <name>     Use AI discovery (openai, anthropic, ollama)

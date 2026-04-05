@@ -325,6 +325,24 @@ export function emitPageObject(
     lines.push(emitWaitForReadyFunction(manifest.apiDependencies, generatedMarkers));
   }
 
+  // Emit interaction endpoint comments if API dependencies with triggeredBy exist
+  if (manifest.apiDependencies) {
+    const interactionDeps = manifest.apiDependencies.filter(
+      (d) => d.timing === "interaction" && d.triggeredBy,
+    );
+    if (interactionDeps.length > 0) {
+      lines.push(``);
+      lines.push(`/**`);
+      lines.push(` * Interaction API endpoints — triggered by user actions:`);
+      for (const dep of interactionDeps) {
+        lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
+      }
+      lines.push(` *`);
+      lines.push(` * Use captureTraffic() to assert on these during tests.`);
+      lines.push(` */`);
+    }
+  }
+
   lines.push(``);
   return lines.join("\n");
 }

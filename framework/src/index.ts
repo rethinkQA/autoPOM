@@ -148,3 +148,12 @@ export {
   flatpickrAdapter,
   createFlatpickrAdapter,
 } from "./adapters/index.js";
+
+// ── Network traffic capture ─────────────────────────────────
+
+export { captureTraffic } from "./capture-traffic.js";
+export type {
+  CapturedRequest,
+  CapturedTraffic,
+  CaptureTrafficOptions,
+} from "./capture-traffic.js";

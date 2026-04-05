@@ -77,6 +77,9 @@ export interface ApiDependency {
 
   /** When the request fires relative to navigation. */
   timing: ApiTiming;
+
+  /** Description of the UI action that triggered this API call (record mode only). */
+  triggeredBy?: string;
 }
 
 // ── Manifest ────────────────────────────────────────────────
@@ -113,7 +116,7 @@ export interface CrawlOptions {
   /** Pass number for append-only merge (default: 1). */
   pass?: number;
 
-  /** Whether to observe network requests (default: false). */
+  /** Whether to observe network requests (default: true). */
   observeNetwork?: boolean;
 
   /** AI provider instance for AI-powered discovery (optional). */

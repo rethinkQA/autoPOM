@@ -18,7 +18,7 @@ test_app/
 │   └── lit-app/             ← Lit 3 + Shoelace (Vite, port 3007)
 ├── framework/               ← Playwright element interaction library
 │   ├── src/                 ← By, handler registry, group, typed wrappers, adapters
-│   └── tests/               ← 1,064 integration + 265 unit tests
+│   └── tests/               ← 1,064 integration + 276 unit tests
 ├── tools/crawler/           ← Runtime page crawler + page object emitter
 ├── shared/                  ← Shared data & logic (TypeScript)
 ├── docs/                    ← Requirements, roadmap, this file
