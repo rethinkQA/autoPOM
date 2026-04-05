@@ -28,9 +28,10 @@ import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName, safePathname, normalizeRoute } from "../src/naming.js";
 import { DomRecorder } from "../src/recorder.js";
 import { injectNavigationInterceptor } from "../src/navigation.js";
+import { NetworkObserver } from "../src/network.js";
 import type { PageRecording } from "../src/recorder.js";
 import { mergeManifest } from "../src/merge.js";
-import type { CrawlerManifest, ManifestGroup } from "../src/types.js";
+import type { ApiDependency, CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
 import type { AiProviderName, AiProvider, AiPageSummary } from "../src/ai/types.js";
 
@@ -548,6 +549,91 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
+    // ── Network observation (both AI and heuristic modes) ────
+    // Track API calls per page for apiDependencies in manifests.
+    let networkObserver = new NetworkObserver(page);
+    networkObserver.start();
+    let networkInteractionTimestamp = 0;
+    let actionClearTimer: ReturnType<typeof setTimeout> | null = null;
+    const apiDepsByRoute = new Map<string, ApiDependency[]>();
+    let currentRoute = safePathname(page.url());
+
+    // Bridge browser clicks to NetworkObserver for attribution.
+    try {
+      await page.exposeFunction("__pwNetworkAction", (description: string) => {
+        if (actionClearTimer) clearTimeout(actionClearTimer);
+        networkObserver.setAction(description);
+        if (!networkInteractionTimestamp) networkInteractionTimestamp = Date.now();
+        actionClearTimer = setTimeout(() => {
+          networkObserver.clearAction();
+          actionClearTimer = null;
+        }, 2000);
+      });
+    } catch {
+      // May already be exposed
+    }
+
+    // Inject a click listener that bridges to Node
+    await page.evaluate(() => {
+      document.addEventListener("click", (e) => {
+        const target = e.target;
+        if (!(target instanceof Element)) return;
+        const text = target.textContent?.trim().slice(0, 60) || "";
+        const tag = target.tagName.toLowerCase();
+        const ariaLabel = target.getAttribute("aria-label") || "";
+        const desc = ariaLabel
+          ? `click on "${ariaLabel}"`
+          : text
+            ? `click on "${text}" (${tag})`
+            : `click on ${tag}`;
+        if (typeof (window as any).__pwNetworkAction === "function") {
+          (window as any).__pwNetworkAction(desc);
+        }
+      }, { capture: true });
+    });
+
+    /** Stop observer for current route, store deps, start fresh. */
+    function rotateNetworkObserver(): void {
+      if (actionClearTimer) { clearTimeout(actionClearTimer); actionClearTimer = null; }
+      networkObserver.clearAction();
+      const deps = networkObserver.stop(networkInteractionTimestamp || undefined);
+      if (deps.length > 0) {
+        const existing = apiDepsByRoute.get(currentRoute) ?? [];
+        const seen = new Map<string, ApiDependency>();
+        for (const d of [...existing, ...deps]) {
+          const key = `${d.method}:${d.pattern}`;
+          if (!seen.has(key)) seen.set(key, d);
+        }
+        apiDepsByRoute.set(currentRoute, Array.from(seen.values()));
+      }
+      currentRoute = safePathname(page.url());
+      networkObserver = new NetworkObserver(page);
+      networkObserver.start();
+      networkInteractionTimestamp = 0;
+    }
+
+    // Re-inject click listener and rotate observer on navigation
+    page.on("domcontentloaded", () => {
+      rotateNetworkObserver();
+      page.evaluate(() => {
+        document.addEventListener("click", (e) => {
+          const target = e.target;
+          if (!(target instanceof Element)) return;
+          const text = target.textContent?.trim().slice(0, 60) || "";
+          const tag = target.tagName.toLowerCase();
+          const ariaLabel = target.getAttribute("aria-label") || "";
+          const desc = ariaLabel
+            ? `click on "${ariaLabel}"`
+            : text
+              ? `click on "${text}" (${tag})`
+              : `click on ${tag}`;
+          if (typeof (window as any).__pwNetworkAction === "function") {
+            (window as any).__pwNetworkAction(desc);
+          }
+        }, { capture: true });
+      }).catch(() => {});
+    });
+
     // Resolve AI provider if requested
     let aiProvider: AiProvider | undefined;
     if (args.aiProvider) {
@@ -755,6 +841,9 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     console.error("\n  ⏳ Saving recorded elements…");
 
+    // Finalize the last page's network observer
+    rotateNetworkObserver();
+
     let pages: PageRecording[] = [];
 
     if (aiProvider) {
@@ -798,6 +887,38 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     const totalGroups = pages.reduce((n, p) => n + p.groups.length, 0);
     console.error(`  ✓ Recorded ${totalGroups} group(s) across ${pages.length} page(s)`);
+
+    // Attach API dependencies from network observation to each page
+    for (const recording of pages) {
+      // Try matching by pathname or route name
+      const deps = apiDepsByRoute.get(recording.pathname)
+        ?? apiDepsByRoute.get(safePathname(recording.pathname));
+      if (deps && deps.length > 0) {
+        const existing = recording.apiDependencies ?? [];
+        const seen = new Map<string, ApiDependency>();
+        for (const d of [...existing, ...deps]) {
+          const key = `${d.method}:${d.pattern}`;
+          if (!seen.has(key)) seen.set(key, d);
+        }
+        recording.apiDependencies = Array.from(seen.values());
+      }
+    }
+
+    // Also attach deps for routes that didn't match a page (e.g. AI page names differ from pathnames)
+    if (aiProvider) {
+      for (const [route, deps] of apiDepsByRoute) {
+        const alreadyAttached = pages.some(p => (p.apiDependencies?.length ?? 0) > 0);
+        if (!alreadyAttached && deps.length > 0 && pages.length > 0) {
+          // Attach to the first page as fallback
+          pages[0].apiDependencies = [...(pages[0].apiDependencies ?? []), ...deps];
+        }
+      }
+    }
+
+    const totalDeps = pages.reduce((n, p) => n + (p.apiDependencies?.length ?? 0), 0);
+    if (totalDeps > 0) {
+      console.error(`  ✓ Captured ${totalDeps} API dependency(ies)`);
+    }
 
     if (args.output) {
       // Write one manifest per page into the output directory.
