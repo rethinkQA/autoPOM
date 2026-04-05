@@ -549,51 +549,70 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
-    // ── Network observation (both AI and heuristic modes) ────
-    // Track API calls per page for apiDependencies in manifests.
-    let networkObserver = new NetworkObserver(page);
-    networkObserver.start();
+    // Resolve AI provider if requested
+    let aiProvider: AiProvider | undefined;
+    if (args.aiProvider) {
+      const { createAiProvider } = await import("../src/ai/provider.js");
+      aiProvider = await createAiProvider({
+        provider: args.aiProvider,
+        model: args.aiModel,
+        apiKey: args.aiKey,
+        baseUrl: args.aiBaseUrl,
+      });
+    }
+
+    // ── Network observation (AI mode only) ───────────────────
+    // In heuristic mode, DomRecorder manages its own NetworkObserver.
+    // In AI mode, we need a standalone observer since there's no DomRecorder.
+    let networkObserver: NetworkObserver | null = null;
     let networkInteractionTimestamp = 0;
     let actionClearTimer: ReturnType<typeof setTimeout> | null = null;
     const apiDepsByRoute = new Map<string, ApiDependency[]>();
     let currentRoute = safePathname(page.url());
 
-    // Bridge browser clicks to NetworkObserver for attribution.
-    try {
-      await page.exposeFunction("__pwNetworkAction", (description: string) => {
-        if (actionClearTimer) clearTimeout(actionClearTimer);
-        networkObserver.setAction(description);
-        if (!networkInteractionTimestamp) networkInteractionTimestamp = Date.now();
-        actionClearTimer = setTimeout(() => {
-          networkObserver.clearAction();
-          actionClearTimer = null;
-        }, 2000);
+    if (aiProvider) {
+      networkObserver = new NetworkObserver(page);
+      networkObserver.start();
+
+      // Bridge browser clicks to NetworkObserver for attribution.
+      try {
+        await page.exposeFunction("__pwNetworkAction", (description: string) => {
+          if (!networkObserver) return;
+          if (actionClearTimer) clearTimeout(actionClearTimer);
+          networkObserver.setAction(description);
+          if (!networkInteractionTimestamp) networkInteractionTimestamp = Date.now();
+          actionClearTimer = setTimeout(() => {
+            networkObserver?.clearAction();
+            actionClearTimer = null;
+          }, 2000);
+        });
+      } catch {
+        // May already be exposed
+      }
+
+      // Inject a click listener that bridges to Node
+      await page.evaluate(() => {
+        document.addEventListener("click", (e) => {
+          const target = e.target;
+          if (!(target instanceof Element)) return;
+          const text = target.textContent?.trim().slice(0, 60) || "";
+          const tag = target.tagName.toLowerCase();
+          const ariaLabel = target.getAttribute("aria-label") || "";
+          const desc = ariaLabel
+            ? `click on "${ariaLabel}"`
+            : text
+              ? `click on "${text}" (${tag})`
+              : `click on ${tag}`;
+          if (typeof (window as any).__pwNetworkAction === "function") {
+            (window as any).__pwNetworkAction(desc);
+          }
+        }, { capture: true });
       });
-    } catch {
-      // May already be exposed
     }
 
-    // Inject a click listener that bridges to Node
-    await page.evaluate(() => {
-      document.addEventListener("click", (e) => {
-        const target = e.target;
-        if (!(target instanceof Element)) return;
-        const text = target.textContent?.trim().slice(0, 60) || "";
-        const tag = target.tagName.toLowerCase();
-        const ariaLabel = target.getAttribute("aria-label") || "";
-        const desc = ariaLabel
-          ? `click on "${ariaLabel}"`
-          : text
-            ? `click on "${text}" (${tag})`
-            : `click on ${tag}`;
-        if (typeof (window as any).__pwNetworkAction === "function") {
-          (window as any).__pwNetworkAction(desc);
-        }
-      }, { capture: true });
-    });
-
-    /** Stop observer for current route, store deps, start fresh. */
+    /** Stop observer for current route, store deps, start fresh (AI mode only). */
     function rotateNetworkObserver(): void {
+      if (!networkObserver) return;
       if (actionClearTimer) { clearTimeout(actionClearTimer); actionClearTimer = null; }
       networkObserver.clearAction();
       const deps = networkObserver.stop(networkInteractionTimestamp || undefined);
@@ -612,37 +631,27 @@ async function runRecord(args: RecordArgs): Promise<void> {
       networkInteractionTimestamp = 0;
     }
 
-    // Re-inject click listener and rotate observer on navigation
-    page.on("domcontentloaded", () => {
-      rotateNetworkObserver();
-      page.evaluate(() => {
-        document.addEventListener("click", (e) => {
-          const target = e.target;
-          if (!(target instanceof Element)) return;
-          const text = target.textContent?.trim().slice(0, 60) || "";
-          const tag = target.tagName.toLowerCase();
-          const ariaLabel = target.getAttribute("aria-label") || "";
-          const desc = ariaLabel
-            ? `click on "${ariaLabel}"`
-            : text
-              ? `click on "${text}" (${tag})`
-              : `click on ${tag}`;
-          if (typeof (window as any).__pwNetworkAction === "function") {
-            (window as any).__pwNetworkAction(desc);
-          }
-        }, { capture: true });
-      }).catch(() => {});
-    });
-
-    // Resolve AI provider if requested
-    let aiProvider: AiProvider | undefined;
-    if (args.aiProvider) {
-      const { createAiProvider } = await import("../src/ai/provider.js");
-      aiProvider = await createAiProvider({
-        provider: args.aiProvider,
-        model: args.aiModel,
-        apiKey: args.aiKey,
-        baseUrl: args.aiBaseUrl,
+    // Re-inject click listener and rotate observer on navigation (AI mode)
+    if (aiProvider) {
+      page.on("domcontentloaded", () => {
+        rotateNetworkObserver();
+        page.evaluate(() => {
+          document.addEventListener("click", (e) => {
+            const target = e.target;
+            if (!(target instanceof Element)) return;
+            const text = target.textContent?.trim().slice(0, 60) || "";
+            const tag = target.tagName.toLowerCase();
+            const ariaLabel = target.getAttribute("aria-label") || "";
+            const desc = ariaLabel
+              ? `click on "${ariaLabel}"`
+              : text
+                ? `click on "${text}" (${tag})`
+                : `click on ${tag}`;
+            if (typeof (window as any).__pwNetworkAction === "function") {
+              (window as any).__pwNetworkAction(desc);
+            }
+          }, { capture: true });
+        }).catch(() => {});
       });
     }
 
@@ -889,31 +898,54 @@ async function runRecord(args: RecordArgs): Promise<void> {
     console.error(`  ✓ Recorded ${totalGroups} group(s) across ${pages.length} page(s)`);
 
     // Attach API dependencies from network observation to each page
-    for (const recording of pages) {
-      // Try matching by pathname or route name
-      const deps = apiDepsByRoute.get(recording.pathname)
-        ?? apiDepsByRoute.get(safePathname(recording.pathname));
-      if (deps && deps.length > 0) {
-        const existing = recording.apiDependencies ?? [];
-        const seen = new Map<string, ApiDependency>();
-        for (const d of [...existing, ...deps]) {
-          const key = `${d.method}:${d.pattern}`;
-          if (!seen.has(key)) seen.set(key, d);
-        }
-        recording.apiDependencies = Array.from(seen.values());
-      }
-    }
-
-    // Also attach deps for routes that didn't match a page (e.g. AI page names differ from pathnames)
     if (aiProvider) {
+      // In AI mode, recording.pathname is the AI pageName (e.g. "Login"),
+      // but apiDepsByRoute keys are URL pathnames (e.g. "/").
+      // Build a mapping: AI pageName → URL pathnames from aiScans.
+      const pageNameToPathnames = new Map<string, Set<string>>();
+      for (const scan of aiScans) {
+        // mergedByRoute sets pathname = scan.pageName, keyed by scan.page (route template)
+        const pathnames = pageNameToPathnames.get(scan.pageName) ?? new Set<string>();
+        pathnames.add(scan.pathname);
+        // Also add the route template in case deps were stored under it
+        pathnames.add(safePathname(scan.pathname));
+        pageNameToPathnames.set(scan.pageName, pathnames);
+      }
+
+      for (const recording of pages) {
+        const urlPathnames = pageNameToPathnames.get(recording.pathname) ?? new Set<string>();
+        const collectedDeps: ApiDependency[] = [];
+        for (const urlPath of urlPathnames) {
+          const deps = apiDepsByRoute.get(urlPath);
+          if (deps) collectedDeps.push(...deps);
+        }
+        if (collectedDeps.length > 0) {
+          const existing = recording.apiDependencies ?? [];
+          const seen = new Map<string, ApiDependency>();
+          for (const d of [...existing, ...collectedDeps]) {
+            const key = `${d.method}:${d.pattern}`;
+            if (!seen.has(key)) seen.set(key, d);
+          }
+          recording.apiDependencies = Array.from(seen.values());
+        }
+      }
+
+      // Fallback: attach any unmatched deps to their closest page
+      const attachedRoutes = new Set<string>();
+      for (const recording of pages) {
+        const urlPathnames = pageNameToPathnames.get(recording.pathname);
+        if (urlPathnames) for (const p of urlPathnames) attachedRoutes.add(p);
+      }
       for (const [route, deps] of apiDepsByRoute) {
-        const alreadyAttached = pages.some(p => (p.apiDependencies?.length ?? 0) > 0);
-        if (!alreadyAttached && deps.length > 0 && pages.length > 0) {
-          // Attach to the first page as fallback
-          pages[0].apiDependencies = [...(pages[0].apiDependencies ?? []), ...deps];
+        if (attachedRoutes.has(route) || deps.length === 0) continue;
+        if (pages.length > 0) {
+          const target = pages[pages.length - 1]; // attach to last page as fallback
+          const existing = target.apiDependencies ?? [];
+          target.apiDependencies = [...existing, ...deps];
         }
       }
     }
+    // In heuristic mode, DomRecorder already attaches apiDependencies to each PageRecording.
 
     const totalDeps = pages.reduce((n, p) => n + (p.apiDependencies?.length ?? 0), 0);
     if (totalDeps > 0) {
