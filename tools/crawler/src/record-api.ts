@@ -37,8 +37,14 @@ export async function recordPage(
     interactError = err;
   }
 
-  const groups = await recorder.harvest();
+  const pages = await recorder.harvestByPage();
   await recorder.stop();
+
+  // Flatten groups for mergeManifest
+  const groups = pages.flatMap(p => p.groups);
+
+  // Collect all apiDependencies across pages
+  const allApiDeps = pages.flatMap(p => p.apiDependencies ?? []);
 
   const path = safePathname(page.url());
   const pass = (options?.existing?.passCount ?? 0) + 1;
@@ -49,6 +55,17 @@ export async function recordPage(
     pass,
     options?.scope ?? null,
   );
+
+  // Attach API dependencies to the manifest
+  if (allApiDeps.length > 0) {
+    const existing = result.apiDependencies ?? [];
+    const seen = new Map<string, (typeof allApiDeps)[0]>();
+    for (const d of [...existing, ...allApiDeps]) {
+      const key = `${d.method}:${d.pattern}`;
+      if (!seen.has(key)) seen.set(key, d);
+    }
+    result.apiDependencies = Array.from(seen.values());
+  }
 
   if (interactError) throw interactError;
 

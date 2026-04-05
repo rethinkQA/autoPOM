@@ -16,10 +16,11 @@
  */
 
 import type { Page } from "playwright";
-import type { ManifestGroup } from "./types.js";
+import type { ManifestGroup, ApiDependency } from "./types.js";
 import { discoverGroups, discoverToasts, GROUP_SELECTOR } from "./discover.js";
 import { safePathname } from "./naming.js";
 import { injectNavigationInterceptor } from "./navigation.js";
+import { NetworkObserver } from "./network.js";
 
 /** Groups discovered on a single page URL. */
 export interface PageRecording {
@@ -27,6 +28,8 @@ export interface PageRecording {
   pathname: string;
   /** Groups discovered on this page. */
   groups: ManifestGroup[];
+  /** API dependencies observed on this page (if network observation was active). */
+  apiDependencies?: ApiDependency[];
 }
 
 // ── Types for browser ↔ Node communication ──────────────────
@@ -233,6 +236,10 @@ const INIT_SCRIPT = /* js */ `
       timestamp: Date.now(),
       description: desc,
     });
+    // Bridge to Node for NetworkObserver action attribution
+    if (typeof window.__pwActionEvent === 'function') {
+      window.__pwActionEvent(desc);
+    }
   }, { capture: true });
 
   window.__pw_recorder_observer = mainObserver;
@@ -262,6 +269,16 @@ export class DomRecorder {
   /** Groups discovered on previously-visited pages (for the flat harvest() fallback). */
   private priorPageGroups: ManifestGroup[] = [];
 
+  // ── Network observation ───────────────────────────────────
+  /** Active network observer for the current page. */
+  private networkObserver: NetworkObserver | null = null;
+  /** Timestamp when interactions started on the current page (after initial load). */
+  private interactionTimestamp = 0;
+  /** Per-page API dependencies collected from completed pages. */
+  private apiDepsByPage = new Map<string, ApiDependency[]>();
+  /** Timer to auto-clear action attribution after a short window. */
+  private actionClearTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Bound handler reference so we can remove it in stop(). */
   private onNavigation: (() => Promise<void>) | null = null;
 
@@ -281,6 +298,35 @@ export class DomRecorder {
     // Track the initial page path
     this.currentPathname = safePathname(this.page.url());
 
+    // Start network observation for the initial page
+    this.startNetworkObserver();
+
+    // Expose Node-side action bridge so browser click events feed into
+    // NetworkObserver.setAction() for interaction → endpoint attribution.
+    try {
+      await this.page.exposeFunction("__pwActionEvent", (description: string) => {
+        if (this.networkObserver) {
+          // Clear any pending auto-clear timer
+          if (this.actionClearTimer) {
+            clearTimeout(this.actionClearTimer);
+          }
+          this.networkObserver.setAction(description);
+          // Mark the interaction timestamp on first action
+          if (!this.interactionTimestamp) {
+            this.interactionTimestamp = Date.now();
+          }
+          // Auto-clear after 2s — API calls triggered by this click
+          // should arrive within that window
+          this.actionClearTimer = setTimeout(() => {
+            this.networkObserver?.clearAction();
+            this.actionClearTimer = null;
+          }, 2000);
+        }
+      });
+    } catch {
+      // __pwActionEvent may already be exposed (e.g. if page was reused) — OK
+    }
+
     // P2-317: Inject MutationObserver FIRST so it captures any mutations
     // that occur during the snapshot.
     await this.page.evaluate(INIT_SCRIPT);
@@ -297,7 +343,10 @@ export class DomRecorder {
       // 2. Update current path to the new page.
       this.currentPathname = safePathname(this.page.url());
 
-      // 3. Re-inject INIT_SCRIPT and SPA interceptor into the new page.
+      // 3. Start a fresh network observer for the new page.
+      this.startNetworkObserver();
+
+      // 4. Re-inject INIT_SCRIPT and SPA interceptor into the new page.
       try {
         await this.page.evaluate(INIT_SCRIPT);
         await injectNavigationInterceptor(this.page);
@@ -305,7 +354,7 @@ export class DomRecorder {
         // Page may still be loading — will retry on next navigation or harvest.
       }
 
-      // 4. Snapshot new page's initial groups.
+      // 5. Snapshot new page's initial groups.
       await this.snapshotInitialGroups();
 
       console.error(`  ↳ Navigated to ${this.currentPathname}`);
@@ -331,6 +380,28 @@ export class DomRecorder {
     await injectNavigationInterceptor(this.page);
   }
 
+  // ── Network observation helpers ──────────────────────────────
+
+  /** Create and start a new NetworkObserver for the current page. */
+  private startNetworkObserver(): void {
+    this.networkObserver = new NetworkObserver(this.page);
+    this.networkObserver.start();
+    this.interactionTimestamp = 0;
+  }
+
+  /** Stop the active NetworkObserver and return its API dependencies. */
+  private stopNetworkObserver(): ApiDependency[] {
+    if (!this.networkObserver) return [];
+    if (this.actionClearTimer) {
+      clearTimeout(this.actionClearTimer);
+      this.actionClearTimer = null;
+    }
+    this.networkObserver.clearAction();
+    const deps = this.networkObserver.stop(this.interactionTimestamp || undefined);
+    this.networkObserver = null;
+    return deps;
+  }
+
   /** Snapshot initial groups on the current page so we can diff later. */
   private async snapshotInitialGroups(): Promise<void> {
     try {
@@ -353,13 +424,19 @@ export class DomRecorder {
    * Called on navigation away from a page.
    */
   private async finalizeCurrentPage(): Promise<void> {
-    try {
-      // Discover groups on the current DOM (before navigation destroys it).
-      // Note: by the time domcontentloaded fires for the new page, the old DOM
-      // is actually gone. We do our best — the new page's DOM is what we see.
-      // Instead, we'll discover on the NEW page in harvestCurrentPage().
-    } catch {
-      // Ignored — covered by harvestCurrentPage at the end.
+    // Stop network observer for this page and collect API dependencies.
+    const apiDeps = this.stopNetworkObserver();
+
+    // Store API deps for this page
+    if (apiDeps.length > 0) {
+      const existing = this.apiDepsByPage.get(this.currentPathname) ?? [];
+      // Deduplicate by method:pattern
+      const seen = new Map<string, ApiDependency>();
+      for (const d of [...existing, ...apiDeps]) {
+        const key = `${d.method}:${d.pattern}`;
+        if (!seen.has(key)) seen.set(key, d);
+      }
+      this.apiDepsByPage.set(this.currentPathname, Array.from(seen.values()));
     }
 
     // Flush browser globals into a completed recording.
@@ -416,6 +493,18 @@ export class DomRecorder {
    * including the current page (final discovery).
    */
   async harvestByPage(): Promise<PageRecording[]> {
+    // Stop the current page's network observer and collect its deps.
+    const currentApiDeps = this.stopNetworkObserver();
+    if (currentApiDeps.length > 0) {
+      const existing = this.apiDepsByPage.get(this.currentPathname) ?? [];
+      const seen = new Map<string, ApiDependency>();
+      for (const d of [...existing, ...currentApiDeps]) {
+        const key = `${d.method}:${d.pattern}`;
+        if (!seen.has(key)) seen.set(key, d);
+      }
+      this.apiDepsByPage.set(this.currentPathname, Array.from(seen.values()));
+    }
+
     // Discover groups on the current (final) page
     let currentGroups: ManifestGroup[] = [];
     try {
@@ -461,6 +550,14 @@ export class DomRecorder {
           pathname: this.currentPathname,
           groups: currentGroups,
         });
+      }
+    }
+
+    // Attach apiDependencies from the per-page map to each PageRecording
+    for (const [pathname, recording] of byPathname) {
+      const deps = this.apiDepsByPage.get(pathname);
+      if (deps && deps.length > 0) {
+        recording.apiDependencies = deps;
       }
     }
 
@@ -510,6 +607,7 @@ export class DomRecorder {
         visibility: "exploration" as const,
         discoveredIn: "record" as const,
       })),
+      apiDependencies: this.apiDepsByPage.get(p.pathname),
     }));
   }
 
@@ -519,6 +617,9 @@ export class DomRecorder {
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+
+    // Stop any active network observer
+    this.stopNetworkObserver();
 
     // Remove the navigation re-injection listener
     if (this.onNavigation) {

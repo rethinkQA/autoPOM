@@ -827,6 +827,17 @@ async function runRecord(args: RecordArgs): Promise<void> {
           args.scope ?? null,
         );
 
+        // Attach API dependencies from recording
+        if (recording.apiDependencies && recording.apiDependencies.length > 0) {
+          const existingDeps = manifest.apiDependencies ?? [];
+          const seen = new Map<string, (typeof existingDeps)[0]>();
+          for (const d of [...existingDeps, ...recording.apiDependencies]) {
+            const key = `${d.method}:${d.pattern}`;
+            if (!seen.has(key)) seen.set(key, d);
+          }
+          manifest.apiDependencies = Array.from(seen.values());
+        }
+
         await writeFile(filePath, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
         console.error(`  ✓ ${fileName} — ${recording.groups.length} group(s)`);
       }
@@ -834,9 +845,13 @@ async function runRecord(args: RecordArgs): Promise<void> {
       console.error(`\n  Manifests written to ${outputDir}/`);
     } else {
       // No output flag — write all pages as a single JSON array to stdout
-      const manifests = pages.map(recording =>
-        mergeManifest(null, recording.groups, recording.pathname, 1, args.scope ?? null),
-      );
+      const manifests = pages.map(recording => {
+        const m = mergeManifest(null, recording.groups, recording.pathname, 1, args.scope ?? null);
+        if (recording.apiDependencies && recording.apiDependencies.length > 0) {
+          m.apiDependencies = recording.apiDependencies;
+        }
+        return m;
+      });
       console.log(JSON.stringify(manifests, null, 2));
     }
   } finally {
