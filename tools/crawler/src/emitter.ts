@@ -352,6 +352,7 @@ export function emitPageObject(
 function emitWaitForReadyFunction(
   deps: ApiDependency[],
   generatedMarkers: boolean,
+  funcName = "waitForReady",
 ): string {
   const pageLoadDeps = deps.filter((d) => d.timing === "page-load");
 
@@ -367,7 +368,7 @@ function emitWaitForReadyFunction(
     lines.push(` * Generated from observed API calls — verify these patterns match your backend.`);
   }
   lines.push(` */`);
-  lines.push(`export async function waitForReady(page: Page) {`);
+  lines.push(`export async function ${funcName}(page: Page) {`);
 
   if (pageLoadDeps.length === 1) {
     const dep = pageLoadDeps[0];
@@ -646,6 +647,30 @@ export function emitTemplate(
         `export const ${funcName} = (page: Page) => ${template.name}(page);`,
       );
     }
+
+    // Emit waitForReady + interaction comments per-route
+    const emitWFR = options?.emitWaitForReady !== false &&
+      (rm.manifest.apiDependencies?.some(d => d.timing === "page-load") ?? false);
+    if (emitWFR && rm.manifest.apiDependencies) {
+      lines.push(``);
+      lines.push(emitWaitForReadyFunction(rm.manifest.apiDependencies, generatedMarkers, `${rm.route}WaitForReady`));
+    }
+    if (rm.manifest.apiDependencies) {
+      const interactionDeps = rm.manifest.apiDependencies.filter(
+        (d) => d.timing === "interaction" && d.triggeredBy,
+      );
+      if (interactionDeps.length > 0) {
+        lines.push(``);
+        lines.push(`/**`);
+        lines.push(` * Interaction API endpoints for ${rm.route} — triggered by user actions:`);
+        for (const dep of interactionDeps) {
+          lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
+        }
+        lines.push(` *`);
+        lines.push(` * Use captureTraffic() to assert on these during tests.`);
+        lines.push(` */`);
+      }
+    }
   }
 
   lines.push(``);
@@ -799,6 +824,8 @@ function emitPageObjectWithShared(
 ): string {
   const frameworkImport = options?.frameworkImport ?? "@playwright-elements/core";
   const generatedMarkers = options?.generatedMarkers !== false;
+  const emitWaitForReady = options?.emitWaitForReady !== false &&
+    (manifest.apiDependencies?.some(d => d.timing === "page-load") ?? false);
   const routeName = options?.routeName ?? inferRouteName(manifest.url);
 
   const groups = manifest.groups;
@@ -938,6 +965,31 @@ function emitPageObjectWithShared(
 
   lines.push(`  };`);
   lines.push(`}`);
+
+  // Emit waitForReady if API dependencies exist
+  if (emitWaitForReady && manifest.apiDependencies) {
+    lines.push(``);
+    lines.push(emitWaitForReadyFunction(manifest.apiDependencies, generatedMarkers));
+  }
+
+  // Emit interaction endpoint comments if API dependencies with triggeredBy exist
+  if (manifest.apiDependencies) {
+    const interactionDeps = manifest.apiDependencies.filter(
+      (d) => d.timing === "interaction" && d.triggeredBy,
+    );
+    if (interactionDeps.length > 0) {
+      lines.push(``);
+      lines.push(`/**`);
+      lines.push(` * Interaction API endpoints — triggered by user actions:`);
+      for (const dep of interactionDeps) {
+        lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
+      }
+      lines.push(` *`);
+      lines.push(` * Use captureTraffic() to assert on these during tests.`);
+      lines.push(` */`);
+    }
+  }
+
   lines.push(``);
   return lines.join("\n");
 }

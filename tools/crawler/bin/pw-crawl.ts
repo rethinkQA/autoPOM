@@ -920,24 +920,21 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     // Attach API dependencies from network observation to each page
     if (aiProvider) {
-      // In AI mode, recording.pathname is the AI pageName (e.g. "Login"),
-      // but apiDepsByRoute keys are URL pathnames (e.g. "/").
+      // In AI mode, recording.pathname is the AI pageName (e.g. "contact-list"),
+      // but apiDepsByRoute keys are URL pathnames (e.g. "/contactList").
       // Build a mapping: AI pageName → URL pathnames from aiScans.
       const pageNameToPathnames = new Map<string, Set<string>>();
       for (const scan of aiScans) {
-        // mergedByRoute sets pathname = scan.pageName, keyed by scan.page (route template)
         const pathnames = pageNameToPathnames.get(scan.pageName) ?? new Set<string>();
+        // scan.pathname = actual URL pathname (e.g. "/contactList")
         pathnames.add(scan.pathname);
-        // Also add the route template in case deps were stored under it
-        pathnames.add(safePathname(scan.pathname));
+        // scan.page = route template (e.g. "/contactList" or "/users/:id")
+        // rotateNetworkObserver stores deps under safePathname(page.url()),
+        // which is the actual pathname — but add the template too for safety
+        if (scan.page !== scan.pathname) {
+          pathnames.add(scan.page);
+        }
         pageNameToPathnames.set(scan.pageName, pathnames);
-      }
-
-      // Also add route template keys — rotateNetworkObserver uses safePathname(page.url())
-      // which may differ from normalizeRoute().pathname after redirects
-      for (const scan of aiScans) {
-        const pathnames = pageNameToPathnames.get(scan.pageName)!;
-        pathnames.add(scan.page); // route template like "/contactList"
       }
 
       // Debug: show the mapping
