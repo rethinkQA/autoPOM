@@ -50,7 +50,7 @@
     "docs:open": "typedoc && open docs/api/index.html"
   },
   "devDependencies": {
-    "@playwright/test": "~1.58.0",
+    "@playwright/test": "~1.59.1",
     "@types/node": "~20.19.0",
     "typedoc": "~0.28.17",
     "typescript": "~5.9.3"
