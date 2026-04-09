@@ -327,27 +327,29 @@ test.describe("emitPageObject — waitForReady", () => {
   });
 });
 
-// ── Interaction endpoint comments ───────────────────────────
+// ── submit() generation ─────────────────────────────────────
 
-test.describe("emitPageObject — interaction endpoint comments", () => {
-  test("emits JSDoc comment for interaction deps with triggeredBy", () => {
+test.describe("emitPageObject — submit() function", () => {
+  test("emits submit() for interaction deps with triggeredBy", () => {
     const manifest = makeManifest([], {
       apiDependencies: [
         { pattern: "/api/items", method: "GET", timing: "page-load" },
-        { pattern: "/api/items", method: "DELETE", timing: "interaction", triggeredBy: "click → Delete" },
-        { pattern: "/api/save", method: "PUT", timing: "interaction", triggeredBy: "click → Save" },
+        { pattern: "/api/items", method: "DELETE", timing: "interaction", triggeredBy: 'click on "Delete" (button)' },
+        { pattern: "/api/save", method: "PUT", timing: "interaction", triggeredBy: 'click on "Save" (button)' },
       ],
     });
 
     const result = emitPageObject(manifest);
 
-    expect(result).toContain("Interaction API endpoints");
-    expect(result).toContain("DELETE /api/items ← click → Delete");
-    expect(result).toContain("PUT /api/save ← click → Save");
-    expect(result).toContain("captureTraffic()");
+    expect(result).toContain("export async function submit(page: Page)");
+    expect(result).toContain('root.click("Delete")');
+    expect(result).toContain("captureTraffic");
+    // Interaction info preserved in JSDoc
+    expect(result).toContain("DELETE /api/items");
+    expect(result).toContain("PUT /api/save");
   });
 
-  test("omits interaction comments when no triggeredBy present", () => {
+  test("omits submit() when no triggeredBy present", () => {
     const manifest = makeManifest([], {
       apiDependencies: [
         { pattern: "/api/items", method: "GET", timing: "page-load" },
@@ -357,15 +359,117 @@ test.describe("emitPageObject — interaction endpoint comments", () => {
 
     const result = emitPageObject(manifest);
 
-    expect(result).not.toContain("Interaction API endpoints");
-    expect(result).not.toContain("captureTraffic()");
+    expect(result).not.toContain("export async function submit");
   });
 
-  test("omits interaction comments when no API dependencies", () => {
+  test("omits submit() when no API dependencies", () => {
     const manifest = makeManifest([]);
     const result = emitPageObject(manifest);
 
-    expect(result).not.toContain("Interaction API endpoints");
+    expect(result).not.toContain("export async function submit");
+  });
+
+  test("falls back to Submit label when triggeredBy format is unexpected", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/save", method: "POST", timing: "interaction", triggeredBy: "click → Save" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain('root.click("Submit")');
+  });
+
+  test("adds captureTraffic to imports when interaction deps exist", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/login", method: "POST", timing: "interaction", triggeredBy: 'click on "Sign In" (button)' },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain("captureTraffic");
+    // Should be in the import line
+    expect(result).toMatch(/import.*captureTraffic.*from/);
+  });
+
+  test("omits captureTraffic import when no interaction deps", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/items", method: "GET", timing: "page-load" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).not.toMatch(/import.*captureTraffic.*from/);
+  });
+
+  test("submit() uses body root and captureTraffic pattern", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/login", method: "POST", timing: "interaction", triggeredBy: 'click on "Log In" (button)' },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain('const root = group(By.css("body"), page)');
+    expect(result).toContain('return captureTraffic(page, () => root.click("Log In"))');
+  });
+
+  test("submit() JSDoc lists all interaction endpoints", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/save", method: "POST", timing: "interaction", triggeredBy: 'click on "Submit" (button)' },
+        { pattern: "/api/audit", method: "POST", timing: "interaction", triggeredBy: 'click on "Submit" (button)' },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain("POST /api/save");
+    expect(result).toContain("POST /api/audit");
+  });
+
+  test("submit() generated in multi-route standalone emit", () => {
+    const route1: RouteManifest = {
+      route: "login",
+      manifest: makeManifest([
+        makeGroup({ label: "Footer", selector: "footer", wrapperType: "group" }),
+      ], {
+        url: "http://localhost:3001/login",
+        apiDependencies: [
+          { pattern: "/auth/login", method: "POST", timing: "interaction", triggeredBy: 'click on "Sign In" (button)' },
+        ],
+      }),
+    };
+    const route2: RouteManifest = {
+      route: "dashboard",
+      manifest: makeManifest([
+        makeGroup({ label: "Nav", selector: "nav", wrapperType: "group" }),
+      ], {
+        url: "http://localhost:3001/dashboard",
+        apiDependencies: [
+          { pattern: "/api/data", method: "GET", timing: "page-load" },
+        ],
+      }),
+    };
+
+    const files = emitMultiRoute([route1, route2]);
+
+    // Login page should have submit()
+    const loginFile = files.get("login.ts")!;
+    expect(loginFile).toContain("export async function submit");
+    expect(loginFile).toContain('root.click("Sign In")');
+    expect(loginFile).toContain("captureTraffic");
+
+    // Dashboard page should NOT have submit()
+    const dashboardFile = files.get("dashboard.ts")!;
+    expect(dashboardFile).not.toContain("export async function submit");
+    expect(dashboardFile).not.toContain("captureTraffic");
   });
 });
 
@@ -557,6 +661,74 @@ test.describe("emitTemplate — varying labels", () => {
     expect(result).toMatch(/ordersPage.*=.*\(page.*\).*=>.*\{.*Label:.*"Orders Table"/);
     // Should NOT have bare comma-separated strings without property names
     expect(result).not.toMatch(/\{ "Products Table", "Orders Table" \}/);
+  });
+
+  test("emits submit function for route with interaction deps", () => {
+    const route1: RouteManifest = {
+      route: "login",
+      manifest: makeManifest([
+        makeGroup({ label: "Nav", selector: "nav", wrapperType: "group" }),
+        makeGroup({ label: "Login Form", selector: "form.login", wrapperType: "group" }),
+      ], {
+        url: "http://localhost:3001/login",
+        apiDependencies: [
+          { pattern: "/auth/login", method: "POST", timing: "interaction", triggeredBy: 'click on "Sign In" (button)' },
+        ],
+      }),
+    };
+    const route2: RouteManifest = {
+      route: "register",
+      manifest: makeManifest([
+        makeGroup({ label: "Nav", selector: "nav", wrapperType: "group" }),
+        makeGroup({ label: "Register Form", selector: "form.login", wrapperType: "group" }),
+      ], { url: "http://localhost:3001/register" }),
+    };
+
+    const { templates } = detectTemplates([route1, route2]);
+    expect(templates).toHaveLength(1);
+
+    const result = emitTemplate(templates[0], [route1, route2]);
+
+    // Should import captureTraffic
+    expect(result).toContain("captureTraffic");
+    // Should emit submit function for login route
+    expect(result).toContain("export async function loginSubmit");
+    expect(result).toContain('root.click("Sign In")');
+    // Register route should NOT have submit
+    expect(result).not.toContain("registerSubmit");
+  });
+
+  test("deduplicates config property names when multiple selectors share the same label", () => {
+    const route1: RouteManifest = {
+      route: "addContact",
+      manifest: makeManifest([
+        makeGroup({ label: "Add Contact", selector: "#add-contact", wrapperType: "group" }),
+        makeGroup({ label: "Add Contact", selector: "header", wrapperType: "group" }),
+        makeGroup({ label: "main content", selector: "div.main-content", wrapperType: "group" }),
+      ], { url: "http://localhost:3001/addContact" }),
+    };
+    const route2: RouteManifest = {
+      route: "editContact",
+      manifest: makeManifest([
+        makeGroup({ label: "Edit Contact", selector: "#add-contact", wrapperType: "group" }),
+        makeGroup({ label: "Edit Contact", selector: "header", wrapperType: "group" }),
+        makeGroup({ label: "Edit Contact", selector: "div.main-content", wrapperType: "group" }),
+      ], { url: "http://localhost:3001/editContact" }),
+    };
+
+    const { templates } = detectTemplates([route1, route2]);
+    expect(templates).toHaveLength(1);
+
+    const result = emitTemplate(templates[0], [route1, route2]);
+
+    // Config interface should have unique property names (no duplicates)
+    const configBlock = result.match(/interface TemplateConfig \{([^}]+)\}/)?.[1] ?? "";
+    const configLines = configBlock.trim().split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    const propNames = configLines.map(l => l.split(":")[0].trim());
+    const uniqueProps = new Set(propNames);
+    expect(uniqueProps.size).toBe(propNames.length);
+    // Should have 3 unique config properties
+    expect(propNames).toHaveLength(3);
   });
 });
 

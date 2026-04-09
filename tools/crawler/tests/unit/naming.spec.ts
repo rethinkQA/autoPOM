@@ -116,6 +116,30 @@ test.describe("deduplicateNames", () => {
     expect(result[0]).toBe("navigation2");
     expect(result[1]).toBe("footer");
   });
+
+  test("uses groupType-based suffix when available", () => {
+    const result = deduplicateNames(
+      ["Contact List App", "Contact List App"],
+      undefined,
+      undefined,
+      ["footer", "form"],
+    );
+    expect(result[0]).toBe("contactListApp");
+    expect(result[1]).toBe("contactListAppForm");
+  });
+
+  test("falls back to numeric suffix when groupType suffix collides", () => {
+    const result = deduplicateNames(
+      ["Nav", "Nav", "Nav"],
+      undefined,
+      undefined,
+      ["header", "header", "form"],
+    );
+    expect(result[0]).toBe("nav");
+    expect(result[1]).toBe("navHeader");
+    // second "header" suffix already taken → falls back to numeric
+    expect(result[2]).toBe("navForm");
+  });
 });
 
 // ── inferRouteName ──────────────────────────────────────────

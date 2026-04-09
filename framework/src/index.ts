@@ -149,6 +149,19 @@ export {
   createFlatpickrAdapter,
 } from "./adapters/index.js";
 
+// ── Label strategy registration ──────────────────────────────
+
+export {
+  registerLabelStrategy,
+  unregisterLabelStrategy,
+  resetLabelStrategies,
+} from "./defaults.js";
+
+export type {
+  LabelStrategy,
+  LabelStrategyPosition,
+} from "./handler-types.js";
+
 // ── Network traffic capture ─────────────────────────────────
 
 export { captureTraffic } from "./capture-traffic.js";

@@ -86,9 +86,29 @@ export function labelToPropertyName(label: string): string {
   return camel;
 }
 
+/** Map groupType to a readable suffix for disambiguation. */
+const GROUP_TYPE_SUFFIX: Record<string, string> = {
+  nav: "Nav",
+  header: "Header",
+  footer: "Footer",
+  main: "Main",
+  aside: "Aside",
+  section: "Section",
+  fieldset: "Fieldset",
+  form: "Form",
+  region: "Region",
+  toolbar: "Toolbar",
+  tablist: "Tablist",
+  menu: "Menu",
+  menubar: "Menubar",
+  details: "Details",
+  generic: "Group",
+};
+
 /**
- * Deduplicate property names by appending numeric suffixes.
- * Returns an array of unique property names indexed by position.
+ * Deduplicate property names. When a collision occurs and a groupType is
+ * available, uses a semantic suffix (e.g. "Footer", "Form") instead of
+ * a bare numeric suffix.
  *
  * @param reservedNames Names already in use (e.g. shared component props) that
  *   the output must avoid.
@@ -97,11 +117,13 @@ export function deduplicateNames(
   labels: string[],
   overrides?: Record<string, string>,
   reservedNames?: Iterable<string>,
+  groupTypes?: string[],
 ): string[] {
   const result: string[] = [];
   const usedNames = new Set<string>(reservedNames);
 
-  for (const label of labels) {
+  for (let i = 0; i < labels.length; i++) {
+    const label = labels[i];
     // Check for override first
     if (overrides?.[label]) {
       const name = overrides[label];
@@ -114,11 +136,18 @@ export function deduplicateNames(
 
     // Deduplicate
     if (usedNames.has(name)) {
-      let suffix = 2;
-      while (usedNames.has(`${name}${suffix}`)) {
-        suffix++;
+      // Try semantic suffix from groupType first
+      const groupType = groupTypes?.[i];
+      const suffix = groupType ? GROUP_TYPE_SUFFIX[groupType] : undefined;
+      if (suffix && !usedNames.has(`${name}${suffix}`)) {
+        name = `${name}${suffix}`;
+      } else {
+        let n = 2;
+        while (usedNames.has(`${name}${n}`)) {
+          n++;
+        }
+        name = `${name}${n}`;
       }
-      name = `${name}${suffix}`;
     }
 
     result.push(name);
@@ -177,9 +206,10 @@ export function inferRouteName(url: string): string {
 
     return tail
       .map((seg, i) => {
-        const lower = seg.toLowerCase();
-        if (i === 0) return lower;
-        return lower.charAt(0).toUpperCase() + lower.slice(1);
+        // Preserve existing camelCase (e.g. "contactList" stays "contactList")
+        // Only ensure first char of first segment is lowercase
+        if (i === 0) return seg.charAt(0).toLowerCase() + seg.slice(1);
+        return seg.charAt(0).toUpperCase() + seg.slice(1);
       })
       .join("");
   } catch {

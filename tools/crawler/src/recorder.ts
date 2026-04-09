@@ -16,7 +16,7 @@
  */
 
 import type { Page } from "playwright";
-import type { ManifestGroup, ApiDependency } from "./types.js";
+import type { ManifestGroup, ApiDependency, ActionNavigation } from "./types.js";
 import { discoverGroups, discoverToasts, GROUP_SELECTOR } from "./discover.js";
 import { safePathname } from "./naming.js";
 import { injectNavigationInterceptor } from "./navigation.js";
@@ -30,6 +30,10 @@ export interface PageRecording {
   groups: ManifestGroup[];
   /** API dependencies observed on this page (if network observation was active). */
   apiDependencies?: ApiDependency[];
+  /** Actions that caused navigation away from this page. */
+  actionNavigations?: ActionNavigation[];
+  /** Route template (e.g. "/contactList") — used for stable file naming in AI mode. */
+  routeTemplate?: string;
 }
 
 // ── Types for browser ↔ Node communication ──────────────────
@@ -247,6 +251,14 @@ const INIT_SCRIPT = /* js */ `
 })();
 `;
 
+/**
+ * Module-level map from Page to the active action bridge callback.
+ * `exposeFunction` can only be called once per name per page, so the
+ * first DomRecorder to call it registers a stable callback that
+ * delegates to whichever recorder is currently active via this map.
+ */
+const activeActionBridge = new WeakMap<Page, (description: string) => void>();
+
 // ── DomRecorder class ───────────────────────────────────────
 
 /**
@@ -276,6 +288,8 @@ export class DomRecorder {
   private interactionTimestamp = 0;
   /** Per-page API dependencies collected from completed pages. */
   private apiDepsByPage = new Map<string, ApiDependency[]>();
+  /** Per-page action→navigation map (recorded when an action causes page navigation). */
+  private actionNavsByPage = new Map<string, ActionNavigation[]>();
   /** Timer to auto-clear action attribution after a short window. */
   private actionClearTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -303,28 +317,45 @@ export class DomRecorder {
 
     // Expose Node-side action bridge so browser click events feed into
     // NetworkObserver.setAction() for interaction → endpoint attribution.
+    //
+    // `exposeFunction` can only bind a name once per page. We register
+    // a stable delegate that looks up the current handler from the
+    // module-level WeakMap so subsequent DomRecorder instances on the
+    // same page still receive action events.
+    const actionHandler = (description: string) => {
+      if (this.networkObserver) {
+        // Clear any pending auto-clear timer
+        if (this.actionClearTimer) {
+          clearTimeout(this.actionClearTimer);
+        }
+        // Use a 500ms look-back to account for the browser→Node IPC
+        // delay: the click fires a fetch/form-submit request before
+        // this exposeFunction callback runs in Node.
+        this.networkObserver.setAction(description, 500);
+        // Mark the interaction timestamp on first action (backdated
+        // by the same look-back so timing classification matches).
+        if (!this.interactionTimestamp) {
+          this.interactionTimestamp = Date.now() - 500;
+        }
+        // Auto-clear after 2s — API calls triggered by this click
+        // should arrive within that window
+        this.actionClearTimer = setTimeout(() => {
+          this.networkObserver?.clearAction();
+          this.actionClearTimer = null;
+        }, 2000);
+      }
+    };
+    activeActionBridge.set(this.page, actionHandler);
+
     try {
       await this.page.exposeFunction("__pwActionEvent", (description: string) => {
-        if (this.networkObserver) {
-          // Clear any pending auto-clear timer
-          if (this.actionClearTimer) {
-            clearTimeout(this.actionClearTimer);
-          }
-          this.networkObserver.setAction(description);
-          // Mark the interaction timestamp on first action
-          if (!this.interactionTimestamp) {
-            this.interactionTimestamp = Date.now();
-          }
-          // Auto-clear after 2s — API calls triggered by this click
-          // should arrive within that window
-          this.actionClearTimer = setTimeout(() => {
-            this.networkObserver?.clearAction();
-            this.actionClearTimer = null;
-          }, 2000);
-        }
+        // Delegate to whichever recorder is currently active
+        const handler = activeActionBridge.get(this.page);
+        if (handler) handler(description);
       });
     } catch {
       // __pwActionEvent may already be exposed (e.g. if page was reused) — OK
+      // Just update the bridge to point to this recorder's handler.
     }
 
     // P2-317: Inject MutationObserver FIRST so it captures any mutations
@@ -424,8 +455,25 @@ export class DomRecorder {
    * Called on navigation away from a page.
    */
   private async finalizeCurrentPage(): Promise<void> {
+    // Capture the last action label BEFORE stopping the observer,
+    // since stopNetworkObserver clears the action state.
+    const lastAction = this.networkObserver?.getLastActionLabel() ?? null;
+
     // Stop network observer for this page and collect API dependencies.
     const apiDeps = this.stopNetworkObserver();
+
+    // Track action→navigation: if an action was active when we navigated away,
+    // record it so the emitter can generate waitForURL in the page object.
+    const newPathname = safePathname(this.page.url());
+    if (lastAction && newPathname !== this.currentPathname) {
+      const navs = this.actionNavsByPage.get(this.currentPathname) ?? [];
+      // Deduplicate by triggeredBy + navigatesTo
+      const key = `${lastAction}::${newPathname}`;
+      if (!navs.some(n => `${n.triggeredBy}::${n.navigatesTo}` === key)) {
+        navs.push({ triggeredBy: lastAction, navigatesTo: newPathname });
+        this.actionNavsByPage.set(this.currentPathname, navs);
+      }
+    }
 
     // Store API deps for this page
     if (apiDeps.length > 0) {
@@ -559,6 +607,10 @@ export class DomRecorder {
       if (deps && deps.length > 0) {
         recording.apiDependencies = deps;
       }
+      const navs = this.actionNavsByPage.get(pathname);
+      if (navs && navs.length > 0) {
+        recording.actionNavigations = navs;
+      }
     }
 
     return Array.from(byPathname.values());
@@ -608,6 +660,7 @@ export class DomRecorder {
         discoveredIn: "record" as const,
       })),
       apiDependencies: this.apiDepsByPage.get(p.pathname),
+      actionNavigations: this.actionNavsByPage.get(p.pathname),
     }));
   }
 
@@ -620,6 +673,9 @@ export class DomRecorder {
 
     // Stop any active network observer
     this.stopNetworkObserver();
+
+    // Remove this recorder's action bridge from the module-level map
+    activeActionBridge.delete(this.page);
 
     // Remove the navigation re-injection listener
     if (this.onNavigation) {

@@ -8,7 +8,7 @@
  */
 
 import type { Locator } from "@playwright/test";
-import type { ElementHandler, HandlerPosition, DetectRule } from "./handler-types.js";
+import type { ElementHandler, HandlerPosition, DetectRule, LabelStrategy, LabelStrategyPosition } from "./handler-types.js";
 import type { Logger, AriaRole, IHandlerRegistry } from "./types.js";
 import { createDefaultHandlers } from "./default-handlers.js";
 import { classifyElement, type SerializedEntry } from "./element-classifier.js";
@@ -71,6 +71,7 @@ export class HandlerRegistry implements IHandlerRegistry {
   private _cache: { serialized: SerializedEntry[]; fallback: ElementHandler } | null = null;
   private _roleFallbacksVersion = -1;
   private _roleFallbacks: AriaRole[] = [];
+  private _labelStrategies: LabelStrategy[] = [];
 
   /**
    * @param loggerProvider — callback returning the current Logger.
@@ -369,5 +370,62 @@ export class HandlerRegistry implements IHandlerRegistry {
 
     this._roleFallbacksVersion = this._registryVersion;
     return this._roleFallbacks;
+  }
+
+  // ── Label strategy management ───────────────────────────────
+
+  /** Public read-only view of the registered label strategies. */
+  get labelStrategies(): readonly LabelStrategy[] {
+    return this._labelStrategies;
+  }
+
+  /**
+   * Register a label-resolution strategy.
+   *
+   * Strategies are invoked as a fallback phase in label resolution
+   * when the built-in `getByLabel` / `getByRole` heuristics fail.
+   * They run in registration order (first registered = first tried).
+   */
+  registerLabelStrategy(
+    strategy: LabelStrategy,
+    position: LabelStrategyPosition = "last",
+  ): void {
+    if (!strategy.name?.trim()) {
+      throw new Error(
+        `registerLabelStrategy: strategy.name must be a non-empty string.`,
+      );
+    }
+    if (typeof strategy.resolve !== "function") {
+      throw new Error(
+        `registerLabelStrategy: strategy "${strategy.name}" must have a resolve function.`,
+      );
+    }
+    if (this._labelStrategies.some((s) => s.name === strategy.name)) {
+      throw new Error(
+        `registerLabelStrategy: strategy with name "${strategy.name}" is already registered.`,
+      );
+    }
+
+    if (position === "first") {
+      this._labelStrategies.unshift(strategy);
+    } else {
+      this._labelStrategies.push(strategy);
+    }
+  }
+
+  /**
+   * Remove a label strategy by name.
+   * @returns `true` if found and removed.
+   */
+  unregisterLabelStrategy(name: string): boolean {
+    const idx = this._labelStrategies.findIndex((s) => s.name === name);
+    if (idx === -1) return false;
+    this._labelStrategies.splice(idx, 1);
+    return true;
+  }
+
+  /** Reset label strategies to the empty default state. */
+  resetLabelStrategies(): void {
+    this._labelStrategies = [];
   }
 }

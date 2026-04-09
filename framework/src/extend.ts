@@ -35,6 +35,9 @@ export {
   getHandlerByType,
   getHandlers,
   getRoleFallbacks,
+  registerLabelStrategy,
+  unregisterLabelStrategy,
+  resetLabelStrategies,
   resetAll,
   runAction,
   getLogger,
@@ -66,6 +69,8 @@ export type {
   HandlerPosition,
   ActionOptions,
   LabelActionOptions,
+  LabelStrategy,
+  LabelStrategyPosition,
 } from "./handler-types.js";
 
 // ── Middleware ───────────────────────────────────────────────

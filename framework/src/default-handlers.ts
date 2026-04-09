@@ -472,6 +472,30 @@ const DEFAULT_HANDLERS: readonly Readonly<ElementHandler>[] = [
     get: textContentGet,
   },
 
+  /* ── Read-only text display (for label strategies) ─────── */
+  {
+    type: "text-display",
+    detect: [
+      { tags: ["span"] },
+      { tags: ["p"] },
+      { tags: ["div"] },
+      { tags: ["output"] },
+      { tags: ["dd"] },
+      { tags: ["td"] },
+      { tags: ["li"] },
+      { tags: ["time"] },
+    ],
+    expectedValueType: ["string"],
+    valueKind: "string",
+    set: async () => {
+      throw new Error(
+        "text-display handler: this element is read-only. " +
+        "Use group.read() to read its value.",
+      );
+    },
+    get: textContentGet,
+  },
+
   /* ── Generic input (fallback) ────────────────────────────── */
   {
     type: "input",

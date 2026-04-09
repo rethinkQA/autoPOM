@@ -23,7 +23,7 @@ import type { Locator } from "@playwright/test";
 
 // ── Import types needed by interfaces below ─────────────────
 
-import type { ElementHandler, HandlerPosition } from "./handler-types.js";
+import type { ElementHandler, HandlerPosition, LabelStrategy, LabelStrategyPosition } from "./handler-types.js";
 import type { ActionContext, Middleware, MiddlewarePosition } from "./middleware-types.js";
 
 // ── Logger ──────────────────────────────────────────────────
@@ -78,6 +78,14 @@ export interface IHandlerRegistry {
   ): Promise<ElementHandler>;
   /** Compute the role-fallback list from the current handler registry. */
   getRoleFallbacks(): AriaRole[];
+  /** Register a label-resolution strategy at the given position (default `"last"`). */
+  registerLabelStrategy(strategy: LabelStrategy, position?: LabelStrategyPosition): void;
+  /** Remove a label strategy by name. Returns `true` if found and removed. */
+  unregisterLabelStrategy(name: string): boolean;
+  /** Public read-only view of the registered label strategies. */
+  readonly labelStrategies: readonly LabelStrategy[];
+  /** Reset label strategies to the empty default state. */
+  resetLabelStrategies(): void;
 }
 
 /**

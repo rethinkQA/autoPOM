@@ -132,4 +132,28 @@ test.describe("NetworkObserver attribution", () => {
     expect(depB).toBeDefined();
     expect(depB!.triggeredBy).toBeUndefined();
   });
+
+  test("pending requests without responses are included when stop() is called", async ({ page }) => {
+    // Simulate a request whose response never arrives (e.g., form submit → navigation)
+    await page.route("**/api/submit", async () => {
+      // Intentionally never fulfill — simulates navigation killing the response
+    });
+
+    const observer = new NetworkObserver(page);
+    observer.start();
+
+    observer.setAction("click → Submit", 500);
+
+    // Fire the request — it will be captured by the request handler
+    // but the response handler will never fire
+    page.evaluate(() => fetch("/api/submit", { method: "POST" })).catch(() => {});
+    await page.waitForTimeout(200);
+
+    const deps = observer.stop();
+    const submitDep = deps.find((d) => d.method === "POST" && d.pattern.includes("/api/submit"));
+
+    expect(submitDep).toBeDefined();
+    expect(submitDep!.timing).toBe("interaction");
+    expect(submitDep!.triggeredBy).toBe("click → Submit");
+  });
 });

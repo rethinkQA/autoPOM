@@ -67,6 +67,18 @@ export async function recordPage(
     result.apiDependencies = Array.from(seen.values());
   }
 
+  // Attach action navigations to the manifest
+  const allActionNavs = pages.flatMap(p => p.actionNavigations ?? []);
+  if (allActionNavs.length > 0) {
+    const existing = result.actionNavigations ?? [];
+    const seen = new Map<string, (typeof allActionNavs)[0]>();
+    for (const n of [...existing, ...allActionNavs]) {
+      const key = `${n.triggeredBy}::${n.navigatesTo}`;
+      if (!seen.has(key)) seen.set(key, n);
+    }
+    result.actionNavigations = Array.from(seen.values());
+  }
+
   if (interactError) throw interactError;
 
   return result;

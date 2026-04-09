@@ -140,6 +140,8 @@ export function mergeManifest(
     groups: Array.from(merged.values()).sort((a, b) => mergeKey(a).localeCompare(mergeKey(b))),
     // P2-252: preserve existing apiDependencies (callers merge new deps externally)
     apiDependencies: existing.apiDependencies,
+    // Preserve existing actionNavigations (callers merge new navs externally)
+    actionNavigations: existing.actionNavigations,
   };
 }
 

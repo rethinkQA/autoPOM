@@ -80,6 +80,7 @@ export class FrameworkContext implements IFrameworkContext {
    * Reset ALL mutable state to factory defaults in a single call.
    *
    * Equivalent to calling `handlers.resetHandlers()`,
+   * `handlers.resetLabelStrategies()`,
    * `middleware.clearMiddleware()`, `logger.configureLogger(null)`,
    * `resolveRetry.resetResolveRetry()`, and `resetRetryablePatterns()`
    * individually. Also resets module-level warning state so that
@@ -93,6 +94,7 @@ export class FrameworkContext implements IFrameworkContext {
    */
   reset(): void {
     this.handlers.resetHandlers();
+    this.handlers.resetLabelStrategies();
     this.middleware.clearMiddleware();
     this.logger.configureLogger(null);
     this.resolveRetry.resetResolveRetry();

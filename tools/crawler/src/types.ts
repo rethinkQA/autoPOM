@@ -82,6 +82,17 @@ export interface ApiDependency {
   triggeredBy?: string;
 }
 
+// ── Action navigation ───────────────────────────────────────
+
+/** Records that a user action on this page navigated to another page. */
+export interface ActionNavigation {
+  /** Description of the action (e.g. 'click on "Submit" (button)'). */
+  triggeredBy: string;
+
+  /** URL pathname the action navigated to. */
+  navigatesTo: string;
+}
+
 // ── Manifest ────────────────────────────────────────────────
 
 export interface CrawlerManifest {
@@ -105,6 +116,9 @@ export interface CrawlerManifest {
 
   /** Optional API dependencies observed during crawl. */
   apiDependencies?: ApiDependency[];
+
+  /** Actions that caused navigation away from this page (record mode). */
+  actionNavigations?: ActionNavigation[];
 }
 
 // ── Crawler options ─────────────────────────────────────────

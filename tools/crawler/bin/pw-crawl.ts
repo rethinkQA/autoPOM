@@ -555,6 +555,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
     let networkInteractionTimestamp = 0;
     let actionClearTimer: ReturnType<typeof setTimeout> | null = null;
     const apiDepsByRoute = new Map<string, ApiDependency[]>();
+    const actionNavsByRoute = new Map<string, Array<{ triggeredBy: string; navigatesTo: string }>>();
     let currentRoute = safePathname(args.url); // use args.url; page hasn't navigated yet
 
     if (args.aiProvider) {
@@ -620,6 +621,8 @@ async function runRecord(args: RecordArgs): Promise<void> {
     function rotateNetworkObserver(): void {
       if (!networkObserver) return;
       if (actionClearTimer) { clearTimeout(actionClearTimer); actionClearTimer = null; }
+      // Capture last action label BEFORE clearing — needed for action navigation tracking
+      const lastAction = networkObserver.getLastActionLabel();
       networkObserver.clearAction();
       const deps = networkObserver.stop(networkInteractionTimestamp || undefined);
       const prevRoute = currentRoute;
@@ -633,6 +636,15 @@ async function runRecord(args: RecordArgs): Promise<void> {
         apiDepsByRoute.set(currentRoute, Array.from(seen.values()));
       }
       currentRoute = safePathname(page.url());
+      // Track action→navigation for the page we're leaving
+      if (lastAction && currentRoute !== prevRoute) {
+        const navs = actionNavsByRoute.get(prevRoute) ?? [];
+        const key = `${lastAction}::${currentRoute}`;
+        if (!navs.some(n => `${n.triggeredBy}::${n.navigatesTo}` === key)) {
+          navs.push({ triggeredBy: lastAction, navigatesTo: currentRoute });
+          actionNavsByRoute.set(prevRoute, navs);
+        }
+      }
       networkObserver = new NetworkObserver(page);
       networkObserver.start();
       networkInteractionTimestamp = 0;
@@ -853,6 +865,14 @@ async function runRecord(args: RecordArgs): Promise<void> {
       process.on("SIGINT", handler);
     });
 
+    // Keep a SIGINT handler registered during harvest so a second
+    // Ctrl+C (from the process group) doesn't kill Node before we
+    // finish saving manifests.
+    const guardHandler = () => {
+      console.error("  (saving in progress — please wait)");
+    };
+    process.on("SIGINT", guardHandler);
+
     // Clean up stdin raw mode
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
@@ -882,7 +902,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
       // Merge all scans for the same page into one manifest.
       // Page identity is solely route-template based — no AI pageName merging.
-      const mergedByRoute = new Map<string, { pathname: string; groups: ManifestGroup[] }>();
+      const mergedByRoute = new Map<string, { pathname: string; routeTemplate?: string; groups: ManifestGroup[] }>();
 
       for (const scan of aiScans) {
         const existing = mergedByRoute.get(scan.page);
@@ -897,7 +917,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
           );
           existing.groups = merged.groups;
         } else {
-          mergedByRoute.set(scan.page, { pathname: scan.pageName, groups: [...scan.groups] });
+          mergedByRoute.set(scan.page, { pathname: scan.pageName, routeTemplate: scan.page, groups: [...scan.groups] });
         }
       }
 
@@ -920,12 +940,12 @@ async function runRecord(args: RecordArgs): Promise<void> {
 
     // Attach API dependencies from network observation to each page
     if (aiProvider) {
-      // In AI mode, recording.pathname is the AI pageName (e.g. "contact-list"),
-      // but apiDepsByRoute keys are URL pathnames (e.g. "/contactList").
-      // Build a mapping: AI pageName → URL pathnames from aiScans.
-      const pageNameToPathnames = new Map<string, Set<string>>();
+      // In AI mode, recording.routeTemplate is the normalized URL route (e.g. "/contactList").
+      // apiDepsByRoute keys are actual URL pathnames from safePathname(page.url()).
+      // Build a mapping: route template → URL pathnames from aiScans.
+      const routeToPathnames = new Map<string, Set<string>>();
       for (const scan of aiScans) {
-        const pathnames = pageNameToPathnames.get(scan.pageName) ?? new Set<string>();
+        const pathnames = routeToPathnames.get(scan.page) ?? new Set<string>();
         // scan.pathname = actual URL pathname (e.g. "/contactList")
         pathnames.add(scan.pathname);
         // scan.page = route template (e.g. "/contactList" or "/users/:id")
@@ -934,23 +954,26 @@ async function runRecord(args: RecordArgs): Promise<void> {
         if (scan.page !== scan.pathname) {
           pathnames.add(scan.page);
         }
-        pageNameToPathnames.set(scan.pageName, pathnames);
+        routeToPathnames.set(scan.page, pathnames);
       }
 
       // Debug: show the mapping
       if (apiDepsByRoute.size > 0) {
-        console.error("  📡 Page name → URL pathname mapping:");
-        for (const [name, paths] of pageNameToPathnames) {
-          console.error(`    "${name}" → [${Array.from(paths).join(", ")}]`);
+        console.error("  📡 Route template → URL pathname mapping:");
+        for (const [route, paths] of routeToPathnames) {
+          console.error(`    "${route}" → [${Array.from(paths).join(", ")}]`);
         }
       }
 
       for (const recording of pages) {
-        const urlPathnames = pageNameToPathnames.get(recording.pathname) ?? new Set<string>();
+        const urlPathnames = routeToPathnames.get(recording.routeTemplate ?? recording.pathname) ?? new Set<string>();
         const collectedDeps: ApiDependency[] = [];
+        const collectedNavs: Array<{ triggeredBy: string; navigatesTo: string }> = [];
         for (const urlPath of urlPathnames) {
           const deps = apiDepsByRoute.get(urlPath);
           if (deps) collectedDeps.push(...deps);
+          const navs = actionNavsByRoute.get(urlPath);
+          if (navs) collectedNavs.push(...navs);
         }
         if (collectedDeps.length > 0) {
           const existing = recording.apiDependencies ?? [];
@@ -961,22 +984,19 @@ async function runRecord(args: RecordArgs): Promise<void> {
           }
           recording.apiDependencies = Array.from(seen.values());
         }
-      }
-
-      // Fallback: attach any unmatched deps to their closest page
-      const attachedRoutes = new Set<string>();
-      for (const recording of pages) {
-        const urlPathnames = pageNameToPathnames.get(recording.pathname);
-        if (urlPathnames) for (const p of urlPathnames) attachedRoutes.add(p);
-      }
-      for (const [route, deps] of apiDepsByRoute) {
-        if (attachedRoutes.has(route) || deps.length === 0) continue;
-        if (pages.length > 0) {
-          const target = pages[pages.length - 1]; // attach to last page as fallback
-          const existing = target.apiDependencies ?? [];
-          target.apiDependencies = [...existing, ...deps];
+        if (collectedNavs.length > 0) {
+          const existing = recording.actionNavigations ?? [];
+          const seen = new Map<string, (typeof collectedNavs)[0]>();
+          for (const n of [...existing, ...collectedNavs]) {
+            const key = `${n.triggeredBy}::${n.navigatesTo}`;
+            if (!seen.has(key)) seen.set(key, n);
+          }
+          recording.actionNavigations = Array.from(seen.values());
         }
       }
+
+      // Note: deps from routes not matching any recorded page (e.g. /logout)
+      // are intentionally dropped — they don't belong to any page object.
     }
     // In heuristic mode, DomRecorder already attaches apiDependencies to each PageRecording.
 
@@ -991,10 +1011,24 @@ async function runRecord(args: RecordArgs): Promise<void> {
       await mkdir(outputDir, { recursive: true });
 
       for (const recording of pages) {
-        // Use the AI page name (stored in pathname for AI mode) or infer from URL
-        const routeName = aiProvider
-          ? labelToPropertyName(recording.pathname)
-          : inferRouteName(recording.pathname);
+        // Use the route template for file naming. For root routes ("/"),
+        // infer from group labels (e.g. "Login Form" → "login") or AI pageName.
+        let routeName: string;
+        if (recording.routeTemplate === "/" || recording.routeTemplate === undefined && recording.pathname === "/") {
+          // Check if groups suggest a login/auth page
+          const loginGroup = recording.groups.find(g =>
+            /\b(log\s*in|sign\s*in|auth)\b/i.test(g.label),
+          );
+          if (loginGroup) {
+            routeName = "login";
+          } else {
+            routeName = aiProvider
+              ? labelToPropertyName(recording.pathname)
+              : "home";
+          }
+        } else {
+          routeName = inferRouteName(recording.routeTemplate ?? recording.pathname);
+        }
         const fileName = `${routeName}.manifest.json`;
         const filePath = join(outputDir, fileName);
 
@@ -1008,7 +1042,7 @@ async function runRecord(args: RecordArgs): Promise<void> {
         const manifest = mergeManifest(
           existing,
           recording.groups,
-          recording.pathname,
+          recording.routeTemplate ?? recording.pathname,
           (existing?.passCount ?? 0) + 1,
           args.scope ?? null,
         );
@@ -1024,6 +1058,17 @@ async function runRecord(args: RecordArgs): Promise<void> {
           manifest.apiDependencies = Array.from(seen.values());
         }
 
+        // Attach action navigations from recording
+        if (recording.actionNavigations && recording.actionNavigations.length > 0) {
+          const existingNavs = manifest.actionNavigations ?? [];
+          const seen = new Map<string, (typeof existingNavs)[0]>();
+          for (const n of [...existingNavs, ...recording.actionNavigations]) {
+            const key = `${n.triggeredBy}::${n.navigatesTo}`;
+            if (!seen.has(key)) seen.set(key, n);
+          }
+          manifest.actionNavigations = Array.from(seen.values());
+        }
+
         await writeFile(filePath, JSON.stringify(manifest, null, 2) + "\n", "utf-8");
         console.error(`  ✓ ${fileName} — ${recording.groups.length} group(s)`);
       }
@@ -1036,10 +1081,16 @@ async function runRecord(args: RecordArgs): Promise<void> {
         if (recording.apiDependencies && recording.apiDependencies.length > 0) {
           m.apiDependencies = recording.apiDependencies;
         }
+        if (recording.actionNavigations && recording.actionNavigations.length > 0) {
+          m.actionNavigations = recording.actionNavigations;
+        }
         return m;
       });
       console.log(JSON.stringify(manifests, null, 2));
     }
+
+    // Remove the SIGINT guard now that saving is complete
+    process.off("SIGINT", guardHandler);
   } finally {
     await browser.close();
   }

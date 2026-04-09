@@ -4,6 +4,8 @@
 > **Created:** 2026-02-16
 > **Last updated:** 2026-03-20
 
+**Current test count:** 1,819 tests (1,064 framework integration + 312 unit + 329 crawler integration + 114 crawler unit), all passing.
+
 ---
 
 ## Completed Phases
@@ -29,15 +31,7 @@ All phases below are complete. The full historical checklists are preserved in [
 | 12 | Page Object Emitter (codegen, diff mode, templates, CLI) | ✅ Complete |
 | 13 | Validation — Generated vs Hand-Written (structural + functional) | ✅ Complete |
 | — | Network Settle Middleware (auto-wait for in-flight HTTP) | ✅ Complete |
-| 14 | Crawler Record Mode (DOM Flight Recorder) | ✅ Complete |
-
-**Current test count:** 1,772 tests (1,064 framework integration + 276 unit + 329 crawler integration + 103 crawler unit), all passing.
-
----
-
-## v0.2 Direction
-
-Candidate goals for the next iteration, roughly prioritized. No target dates — this is a directional guide, not a commitment.
+| 14 | Crawler Record Mode (DOM Flight Recorder) | ✅ Complete |/Users/lazy_genius/Projects/demodemonot a commitment.
 
 ### Product architecture
 

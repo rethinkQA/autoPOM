@@ -26,13 +26,13 @@ test("fill a form by label", async ({ page }) => {
 
 ### Running the validation suite
 
-The repo ships 7 test-fixture apps (vanilla HTML, React + MUI, Vue + Vuetify, Angular + Angular Material, Svelte + Bits UI, Next.js + MUI, Lit + Shoelace) and 1340 tests.
+The repo ships 7 test-fixture apps (vanilla HTML, React + MUI, Vue + Vuetify, Angular + Angular Material, Svelte + Bits UI, Next.js + MUI, Lit + Shoelace) and 1376 tests.
 
 ```bash
 npm install
 npx playwright test                       # all 7 apps (1064 integration tests)
 npx playwright test --project=vanilla     # single app
-npx playwright test --config=playwright.unit.config.ts   # 276 unit tests
+npx playwright test --config=playwright.unit.config.ts   # 312 unit tests
 ```
 
 Playwright auto-starts each app's dev server via the multi-project `webServer` config.
@@ -425,7 +425,7 @@ framework/
 │   ├── table-rows.spec.ts            (7 tests)
 │   ├── functional-swap.spec.ts       (16 tests)
 │   │
-│   └── unit/                         (21 files, 276 tests)
+│   └── unit/                         (21 files, 312 tests)
 │       ├── click-in-container.spec.ts
 │       ├── coercion.spec.ts
 │       ├── context.spec.ts
@@ -472,7 +472,7 @@ The generated docs cover all four export paths:
 
 ## Test Coverage
 
-1340 tests across 39 spec files (18 integration × 7 apps + 21 unit), all passing:
+1376 tests across 39 spec files (18 integration × 7 apps + 21 unit), all passing:
 
 ### Cross-App Compatibility
 
@@ -517,7 +517,7 @@ Key adapter components:
 | aria-validation | 8 | ARIA attributes: aria-live on toast, dialog role/title, table role, accessible names, radio group role, checkbox aria-checked |
 | keyboard-navigation | 7 | Tab/Shift+Tab order, arrow keys in radio group, Enter activates button, dialog focus trap, Escape closes dialog, Space toggles checkbox |
 
-### Unit tests (276 tests, 21 files)
+### Unit tests (312 tests, 21 files)
 
 | Spec | Covers |
 |------|--------|

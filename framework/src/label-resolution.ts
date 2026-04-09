@@ -43,6 +43,50 @@ export function normalizeRadioLabel(raw: string): string {
 }
 
 /**
+ * Normalize a label string for the fuzzy resolution pass (Phases 3–5).
+ *
+ * Applied transformations:
+ * 1. Trim leading/trailing whitespace.
+ * 2. Collapse runs of internal whitespace to a single space.
+ * 3. Strip a trailing colon (with optional preceding whitespace).
+ *
+ * Returns null when normalization produces no change (the exact pass
+ * already tried this value, so retrying would be redundant).
+ *
+ * @param raw The raw label text to normalize.
+ * @returns   The normalized label, or `null` if it equals the input.
+ */
+export function normalizeLabel(raw: string): string | null {
+  const normalized = raw
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*$/, "");
+  return normalized === raw ? null : normalized;
+}
+
+/**
+ * Build a regex that matches a label with tolerance for common DOM
+ * messiness. Used by the normalized resolution phases (3–5).
+ *
+ * Tolerance:
+ * - Leading/trailing whitespace in the DOM label.
+ * - Runs of whitespace collapsed (user types one space, DOM has many).
+ * - Optional trailing colon (`:`) with surrounding whitespace.
+ *
+ * @param label  The user-supplied label text.
+ * @returns      A regex anchored with `^…$` for exact-with-tolerance matching.
+ */
+export function buildNormalizedPattern(label: string): RegExp {
+  const cleaned = label
+    .trim()
+    .replace(/\s*:\s*$/, "")
+    .replace(/\s+/g, " ");
+  const escaped = cleaned.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const flexWhitespace = escaped.replace(/ /g, "\\s+");
+  return new RegExp(`^\\s*${flexWhitespace}\\s*:?\\s*$`);
+}
+
+/**
  * Resolve the visible label text for any input element within a container.
  * Used by radio, checkbox-group, and handlers that need a normalised label.
  */
@@ -151,14 +195,23 @@ async function resolveAttempt(
 
   if (!result) {
     const roles = fwCtx.handlers.getRoleFallbacks();
+    const strategyNames = fwCtx.handlers.labelStrategies.map(s => s.name);
+    const triedStrategies = [
+      "getByLabel(exact)",
+      "getByPlaceholder(exact)",
+      ...strategyNames.map(n => `labelStrategy("${n}")`),
+      "getByLabel(normalized)",
+      "getByPlaceholder(normalized)",
+      ...roles.map(r => `getByRole("${r}", normalized)`),
+    ];
     return {
       kind: "retry",
       error: new ElementNotFoundError(
         `No element found with label "${label}" in container. ` +
-        `Tried: getByLabel, then getByRole for [${roles.join(", ")}].`,
+        `Tried: ${triedStrategies.join(", ")}.`,
         {
           query: label,
-          triedStrategies: ["getByLabel", ...roles.map(r => `getByRole("${r}")`)],
+          triedStrategies,
           container: "group",
         },
       ),
@@ -188,10 +241,13 @@ async function resolveAttempt(
 /**
  * Resolve a labeled element and its handler within a container.
  *
- * Resolution chain:
- * 1. getByLabel — standard form controls associated via <label>.
- * 2. getByRole(role, { name }) for each role derived from the handler
- *    registry — catches <fieldset>/<legend>, ARIA widgets, etc.
+ * Resolution chain (6 phases):
+ * 0. getByLabel (exact) — standard form controls associated via <label>.
+ * 1. getByPlaceholder (exact) — inputs with no <label>, only placeholder.
+ * 2. Registered label strategies — custom user-defined resolution.
+ * 3. getByLabel (normalized, exact) — trim/collapse/strip colon, retry.
+ * 4. getByPlaceholder (normalized, exact) — same normalization.
+ * 5. getByRole (normalized, exact) — fieldset/legend, ARIA widgets.
  *
  * Uses a standalone `retryUntil()` loop for automatic retries with a
  * progressive back-off schedule, so the framework has no runtime
@@ -236,12 +292,21 @@ export async function resolveLabeled(
 
     // Retry budget exhausted — the element was never found.
     const roles = fwCtx.handlers.getRoleFallbacks();
+    const strategyNames = fwCtx.handlers.labelStrategies.map(s => s.name);
+    const triedStrategies = [
+      "getByLabel(exact)",
+      "getByPlaceholder(exact)",
+      ...strategyNames.map(n => `labelStrategy("${n}")`),
+      "getByLabel(normalized)",
+      "getByPlaceholder(normalized)",
+      ...roles.map(r => `getByRole("${r}", normalized)`),
+    ];
     throw new ElementNotFoundError(
       `No element found with label "${label}" in container after waiting ${effectiveTimeout}ms. ` +
-      `Tried: getByLabel, then getByRole for [${roles.join(", ")}].`,
+      `Tried: ${triedStrategies.join(", ")}.`,
       {
         query: label,
-        triedStrategies: ["getByLabel", ...roles.map(r => `getByRole("${r}")`)],
+        triedStrategies,
         container: "group",
       },
       { cause: err },
@@ -250,13 +315,49 @@ export async function resolveLabeled(
 }
 
 /**
+ * Helper — count a locator and return the match with ambiguity checking.
+ * Returns the first element if exactly one match, throws on ambiguity,
+ * returns null on zero matches.
+ */
+async function tryLocator(
+  loc: Locator,
+  label: string,
+  strategy: string,
+  logger: ReturnType<IFrameworkContext["logger"]["getLogger"]>,
+): Promise<{ el: Locator } | null> {
+  const count = await loc.count();
+  if (count === 0) return null;
+  if (count > 1) {
+    const msg = `Ambiguous label "${label}": ${count} elements matched via ${strategy}.`;
+    logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
+    throw new AmbiguousMatchError(
+      `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
+      { query: label, matchCount: count, strategy },
+    );
+  }
+  logger.debug(`[resolveOnce] Matched label "${label}" via ${strategy} (count=1).`);
+  return { el: loc.first() };
+}
+
+/**
  * Single-pass resolution attempt. Returns the matched locator or null
  * if nothing was found. Does NOT call detectHandler — the caller
  * wraps that in retry logic.
  *
- * All candidate locators (getByLabel + every role fallback) are counted
- * in a single parallel `Promise.all` batch so the resolution costs one
- * wall-clock round-trip regardless of how many roles exist.
+ * Resolution chain (6 phases):
+ *
+ * | Phase | Strategy                | Match type        |
+ * |-------|-------------------------|-------------------|
+ * | 0     | getByLabel              | exact             |
+ * | 1     | getByPlaceholder        | exact             |
+ * | 2     | Registered strategies   | custom            |
+ * | 3     | getByLabel              | normalized, exact |
+ * | 4     | getByPlaceholder        | normalized, exact |
+ * | 5     | getByRole (fallbacks)   | normalized, exact |
+ *
+ * Phases 0–2 use the raw label. Phases 3–5 use a regex pattern that
+ * tolerates leading/trailing whitespace, collapsed internal whitespace,
+ * and an optional trailing colon in the DOM label text.
  */
 async function resolveOnce(
   container: Locator,
@@ -267,76 +368,76 @@ async function resolveOnce(
   const roles = fwCtx.handlers.getRoleFallbacks();
 
   logger.debug(
-    `[resolveOnce] Resolving label "${label}" — trying getByLabel, then roles [${roles.join(", ")}].`,
+    `[resolveOnce] Resolving label "${label}" — 6-phase chain: ` +
+    `getByLabel(exact), getByPlaceholder(exact), strategies, ` +
+    `getByLabel(normalized), getByPlaceholder(normalized), roles(normalized) ` +
+    `[${roles.join(", ")}].`,
   );
 
-  // ── Phase 0: exact label match (preferred) ──────────────────────
+  // ── Phase 0: getByLabel (exact) ─────────────────────────────────
   // Exact matching avoids substring ambiguity — e.g. "Category" must
-  // not match "Sort by Category" (Shoelace <th> aria-label vs
-  // <sl-select> label).  If an exact match is found we return it
-  // immediately without probing role fallbacks.
-  const byLabelExact = container.getByLabel(label, { exact: true });
-  const exactLabelCount = await byLabelExact.count();
+  // not match "Sort by Category".
+  const hit0 = await tryLocator(
+    container.getByLabel(label, { exact: true }),
+    label, "getByLabel(exact)", logger,
+  );
+  if (hit0) return hit0;
 
-  if (exactLabelCount > 0) {
-    if (exactLabelCount > 1) {
-      const msg = `Ambiguous label "${label}": ${exactLabelCount} elements matched via getByLabel (exact).`;
-      logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
-      throw new AmbiguousMatchError(
-        `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
-        { query: label, matchCount: exactLabelCount, strategy: "getByLabel(exact)" },
-      );
-    }
+  // ── Phase 1: getByPlaceholder (exact) ───────────────────────────
+  // Catches inputs without associated <label> (e.g. password fields).
+  const hit1 = await tryLocator(
+    container.getByPlaceholder(label, { exact: true }),
+    label, "getByPlaceholder(exact)", logger,
+  );
+  if (hit1) return hit1;
+
+  // ── Phase 2: registered label strategies ────────────────────────
+  const strategies = fwCtx.handlers.labelStrategies;
+  for (const strategy of strategies) {
     logger.debug(
-      `[resolveOnce] Matched label "${label}" via getByLabel exact (count=${exactLabelCount}).`,
+      `[resolveOnce] Trying label strategy "${strategy.name}" for label "${label}".`,
     );
-    return { el: byLabelExact.first() };
+    const result = await strategy.resolve(container, label);
+    if (result) {
+      logger.debug(
+        `[resolveOnce] Matched label "${label}" via label strategy "${strategy.name}".`,
+      );
+      return { el: result };
+    }
   }
 
-  // ── Phase 1 + 2: substring label + role fallbacks (parallel) ────
-  // Handles abbreviated labels like "Express" matching "Express — $9.99".
-  const byLabel = container.getByLabel(label);
-  const roleLocators = roles.map(role =>
-    container.getByRole(role, { name: label }),
+  // ── Normalized pass (Phases 3–5) ────────────────────────────────
+  // Build a regex that tolerates whitespace / trailing-colon drift
+  // between the user's query and what appears in the DOM.  The pattern
+  // uses anchors (^ $) so it behaves like exact matching, just with
+  // tolerance for leading/trailing whitespace, collapsed internal
+  // whitespace, and an optional trailing colon.
+  const pattern = buildNormalizedPattern(label);
+  logger.debug(
+    `[resolveOnce] Normalized pattern: ${pattern}. Running normalized pass.`,
   );
 
-  const [labelCount, ...roleCounts] = await Promise.all([
-    byLabel.count(),
-    ...roleLocators.map(loc => loc.count()),
-  ]);
+  // ── Phase 3: getByLabel (normalized) ────────────────────────────
+  const hit3 = await tryLocator(
+    container.getByLabel(pattern),
+    label, `getByLabel(normalized)`, logger,
+  );
+  if (hit3) return hit3;
 
-  // Phase 1: substring <label> association
-  if (labelCount > 0) {
-    if (labelCount > 1) {
-      const msg = `Ambiguous label "${label}": ${labelCount} elements matched via getByLabel.`;
-      logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
-      throw new AmbiguousMatchError(
-        `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
-        { query: label, matchCount: labelCount, strategy: "getByLabel" },
-      );
-    }
-    logger.debug(
-      `[resolveOnce] Matched label "${label}" via getByLabel (count=${labelCount}).`,
+  // ── Phase 4: getByPlaceholder (normalized) ──────────────────────
+  const hit4 = await tryLocator(
+    container.getByPlaceholder(pattern),
+    label, `getByPlaceholder(normalized)`, logger,
+  );
+  if (hit4) return hit4;
+
+  // ── Phase 5: getByRole fallbacks (normalized) ───────────────────
+  for (const role of roles) {
+    const hit5 = await tryLocator(
+      container.getByRole(role, { name: pattern }),
+      label, `getByRole("${role}", normalized)`, logger,
     );
-    return { el: byLabel.first() };
-  }
-
-  // Phase 2: role-based fallback — return the first match in priority order
-  for (let i = 0; i < roles.length; i++) {
-    if (roleCounts[i] > 0) {
-      if (roleCounts[i] > 1) {
-        const msg = `Ambiguous label "${label}": ${roleCounts[i]} elements matched via getByRole("${roles[i]}").`;
-        logger.warn(`[group] ${msg} Rejecting ambiguous match.`);
-        throw new AmbiguousMatchError(
-          `${msg} Disambiguate by narrowing the container scope or using a more specific label.`,
-          { query: label, matchCount: roleCounts[i], strategy: `getByRole("${roles[i]}")` },
-        );
-      }
-      logger.debug(
-        `[resolveOnce] Matched label "${label}" via getByRole("${roles[i]}") (count=${roleCounts[i]}).`,
-      );
-      return { el: roleLocators[i].first() };
-    }
+    if (hit5) return hit5;
   }
 
   logger.debug(

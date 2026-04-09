@@ -23,15 +23,18 @@ export function observeNetwork(page: Page): NetworkObserver {
 }
 
 export class NetworkObserver {
-  private responses: Array<{ url: string; method: string; timestamp: number }> = [];
+  private responses: Array<{ url: string; method: string; timestamp: number; requestTimestamp: number }> = [];
   private navigationTimestamp = 0;
   private handler: ((response: Response) => void) | null = null;
+  private requestHandler: ((request: import("playwright").Request) => void) | null = null;
   private started = false;
   /** Currently active action label — set by `setAction()`, cleared by `clearAction()`. */
   private currentAction: string | null = null;
   /** Maps timestamp ranges to action labels for attribution. */
   private actionLog: Array<{ label: string; start: number; end: number }> = [];
   private actionStart = 0;
+  /** Track request start times by URL+method for attribution. */
+  private pendingRequests = new Map<string, number>();
 
   constructor(private readonly page: Page) {}
 
@@ -42,6 +45,19 @@ export class NetworkObserver {
     if (this.started) return;
     this.started = true;
     this.navigationTimestamp = Date.now();
+
+    // Track request start times so we can attribute based on when the
+    // request was initiated (not when the response arrived). This is
+    // critical for submit→navigate flows where the response may arrive
+    // after the page has already navigated away.
+    this.requestHandler = (request: import("playwright").Request) => {
+      const url = request.url();
+      const method = request.method();
+      if (this.isStaticResource(url)) return;
+      const key = `${method}:${url}`;
+      this.pendingRequests.set(key, Date.now());
+    };
+    this.page.on("request", this.requestHandler);
 
     this.handler = (response: Response) => {
       const url = response.url();
@@ -54,10 +70,16 @@ export class NetworkObserver {
       const contentType = response.headers()["content-type"] ?? "";
       if (contentType.includes("text/html")) return;
 
+      // Use request start time for attribution if available, otherwise response time
+      const key = `${method}:${url}`;
+      const requestTimestamp = this.pendingRequests.get(key) ?? Date.now();
+      this.pendingRequests.delete(key);
+
       this.responses.push({
         url,
         method,
         timestamp: Date.now(),
+        requestTimestamp,
       });
     };
 
@@ -68,9 +90,13 @@ export class NetworkObserver {
    * Mark the start of a user action. API calls observed between
    * `setAction()` and `clearAction()` will be attributed to this label.
    *
-   * @param label  Description of the action (e.g. "click → Save button").
+   * @param label      Description of the action (e.g. "click → Save button").
+   * @param lookBack   Optional ms to backdate the start time. Used by the
+   *                   DomRecorder's browser→Node bridge where the action
+   *                   description arrives via async IPC after the click has
+   *                   already fired the fetch/form-submit request.
    */
-  setAction(label: string): void {
+  setAction(label: string, lookBack = 0): void {
     // Close any previous action that wasn't explicitly cleared
     if (this.currentAction) {
       this.actionLog.push({
@@ -80,7 +106,7 @@ export class NetworkObserver {
       });
     }
     this.currentAction = label;
-    this.actionStart = Date.now();
+    this.actionStart = Date.now() - lookBack;
   }
 
   /**
@@ -99,6 +125,16 @@ export class NetworkObserver {
   }
 
   /**
+   * Return the label of the most recent action (active or just-closed).
+   * Used by the recorder to determine which action caused a navigation.
+   */
+  getLastActionLabel(): string | null {
+    if (this.currentAction) return this.currentAction;
+    if (this.actionLog.length > 0) return this.actionLog[this.actionLog.length - 1].label;
+    return null;
+  }
+
+  /**
    * Stop observing and return collected API dependencies.
    *
    * @param interactionTimestamp If provided, requests after this time
@@ -108,6 +144,10 @@ export class NetworkObserver {
     if (this.handler) {
       this.page.off("response", this.handler);
       this.handler = null;
+    }
+    if (this.requestHandler) {
+      this.page.off("request", this.requestHandler);
+      this.requestHandler = null;
     }
 
     // Close any open action
@@ -127,33 +167,66 @@ export class NetworkObserver {
       const pattern = this.toPattern(r.url);
       const key = `${r.method}:${pattern}`;
 
-      const timing: ApiTiming =
-        interactionTimestamp && r.timestamp > interactionTimestamp
-          ? "interaction"
-          : "page-load";
-
-      // Attribute to an action if the request falls within an action's time window.
-      // Iterate in reverse so the most recent (most specific) action wins when
-      // grace periods overlap.
+      // Attribute to an action if the request was initiated within an
+      // action's time window. Using requestTimestamp ensures that
+      // submit→navigate flows are correctly attributed even when the
+      // response arrives after the observer is stopped.
       let triggeredBy: string | undefined;
-      if (timing === "interaction") {
-        for (let i = this.actionLog.length - 1; i >= 0; i--) {
-          const action = this.actionLog[i];
-          if (r.timestamp >= action.start && r.timestamp <= action.end + 2000) {
-            triggeredBy = action.label;
-            break;
-          }
+      for (let i = this.actionLog.length - 1; i >= 0; i--) {
+        const action = this.actionLog[i];
+        if (r.requestTimestamp >= action.start && r.requestTimestamp <= action.end + 2000) {
+          triggeredBy = action.label;
+          break;
         }
       }
+
+      // If a request is attributed to an action, it's an interaction.
+      // Otherwise, fall back to timestamp-based classification.
+      const timing: ApiTiming = triggeredBy
+        ? "interaction"
+        : (interactionTimestamp && r.requestTimestamp > interactionTimestamp
+          ? "interaction"
+          : "page-load");
 
       if (!seen.has(key)) {
         seen.set(key, { pattern, method: r.method, timing, ...(triggeredBy ? { triggeredBy } : {}) });
       }
     }
 
+    // Include pending requests that never received a response.
+    // This happens when a form submission triggers navigation before the
+    // response arrives — the request was captured but the response handler
+    // was removed during stop(). We still want to attribute these requests.
+    for (const [key, requestTimestamp] of this.pendingRequests) {
+      const [method, ...urlParts] = key.split(":");
+      const url = urlParts.join(":");
+      const pattern = this.toPattern(url);
+      const dedupKey = `${method}:${pattern}`;
+
+      if (seen.has(dedupKey)) continue;
+
+      let triggeredBy: string | undefined;
+      for (let i = this.actionLog.length - 1; i >= 0; i--) {
+        const action = this.actionLog[i];
+        if (requestTimestamp >= action.start && requestTimestamp <= action.end + 2000) {
+          triggeredBy = action.label;
+          break;
+        }
+      }
+
+      const timing: ApiTiming = triggeredBy
+        ? "interaction"
+        : (interactionTimestamp && requestTimestamp > interactionTimestamp
+          ? "interaction"
+          : "page-load");
+
+      seen.set(dedupKey, { pattern, method, timing, ...(triggeredBy ? { triggeredBy } : {}) });
+    }
+
     // P3-308: Clear state so the observer can be reused.
     this.responses = [];
     this.actionLog = [];
+    this.pendingRequests.clear();
 
     return Array.from(seen.values());
   }
@@ -172,6 +245,9 @@ export class NetworkObserver {
         /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
         "*",
       );
+
+      // Replace hex-based IDs (MongoDB ObjectIDs, hashes, short hex IDs)
+      path = path.replace(/\/[0-9a-f]{8,}(?=\/|$)/gi, "/*");
 
       // Replace numeric IDs in path segments
       path = path.replace(/\/\d+(?=\/|$)/g, "/*");

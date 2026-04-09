@@ -6,6 +6,9 @@ import {
   resetHandlers,
   getHandlerByType,
   getRoleFallbacks,
+  registerLabelStrategy,
+  unregisterLabelStrategy,
+  resetLabelStrategies,
 } from "../../src/defaults.js";
 import { ROLE_PRIORITY } from "../../src/handler-registry.js";
 import type { ElementHandler } from "../../src/handler-types.js";
@@ -356,5 +359,126 @@ test.describe("ROLE_PRIORITY sync with default handlers", () => {
       `ROLE_PRIORITY contains roles not declared by any handler: ${stale.join(", ")}. ` +
         `Remove them or add a handler that declares the role.`,
     ).toEqual([]);
+  });
+});
+
+// ── Label strategy registration ─────────────────────────────
+
+test.describe("registerLabelStrategy", () => {
+  const stubStrategy = {
+    name: "test-strategy",
+    async resolve() { return null; },
+  };
+
+  test("registers a strategy and exposes it via getActiveContext", async () => {
+    const { getActiveContext } = await import("../../src/context.js");
+    registerLabelStrategy(stubStrategy);
+    const strategies = getActiveContext().handlers.labelStrategies;
+    expect(strategies.some(s => s.name === "test-strategy")).toBe(true);
+  });
+
+  test("default position is 'last'", async () => {
+    const { getActiveContext } = await import("../../src/context.js");
+    const first = { name: "first-strat", async resolve() { return null; } };
+    const second = { name: "second-strat", async resolve() { return null; } };
+    registerLabelStrategy(first);
+    registerLabelStrategy(second);
+    const strategies = getActiveContext().handlers.labelStrategies;
+    const firstIdx = strategies.findIndex(s => s.name === "first-strat");
+    const secondIdx = strategies.findIndex(s => s.name === "second-strat");
+    expect(firstIdx).toBeLessThan(secondIdx);
+  });
+
+  test("position 'first' prepends the strategy", async () => {
+    const { getActiveContext } = await import("../../src/context.js");
+    const first = { name: "first-strat", async resolve() { return null; } };
+    const second = { name: "second-strat", async resolve() { return null; } };
+    registerLabelStrategy(first);
+    registerLabelStrategy(second, "first");
+    const strategies = getActiveContext().handlers.labelStrategies;
+    expect(strategies[0].name).toBe("second-strat");
+  });
+
+  test("rejects empty name", () => {
+    expect(() => registerLabelStrategy({
+      name: "",
+      async resolve() { return null; },
+    })).toThrow(/non-empty string/);
+  });
+
+  test("rejects missing resolve function", () => {
+    expect(() => registerLabelStrategy({
+      name: "bad",
+      resolve: "not-a-fn" as any,
+    })).toThrow(/resolve function/);
+  });
+
+  test("rejects duplicate name", () => {
+    registerLabelStrategy(stubStrategy);
+    expect(() => registerLabelStrategy(stubStrategy)).toThrow(/already registered/);
+  });
+});
+
+// ── unregisterLabelStrategy ─────────────────────────────────
+
+test.describe("unregisterLabelStrategy", () => {
+  test("removes strategy and returns true", async () => {
+    const { getActiveContext } = await import("../../src/context.js");
+    registerLabelStrategy({
+      name: "removable",
+      async resolve() { return null; },
+    });
+    expect(unregisterLabelStrategy("removable")).toBe(true);
+    const strategies = getActiveContext().handlers.labelStrategies;
+    expect(strategies.some(s => s.name === "removable")).toBe(false);
+  });
+
+  test("returns false for non-existent strategy", () => {
+    expect(unregisterLabelStrategy("nonexistent")).toBe(false);
+  });
+});
+
+// ── resetLabelStrategies ────────────────────────────────────
+
+test.describe("resetLabelStrategies", () => {
+  test("clears all registered strategies", async () => {
+    const { getActiveContext } = await import("../../src/context.js");
+    registerLabelStrategy({
+      name: "temp-strat",
+      async resolve() { return null; },
+    });
+    resetLabelStrategies();
+    expect(getActiveContext().handlers.labelStrategies).toHaveLength(0);
+  });
+});
+
+// ── text-display handler ────────────────────────────────────
+
+test.describe("text-display handler", () => {
+  test("is a built-in handler", () => {
+    const handler = getHandlerByType("text-display");
+    expect(handler).toBeDefined();
+    expect(handler!.type).toBe("text-display");
+  });
+
+  test("detects span, p, div, output, dd, td, li, time tags", () => {
+    const handler = getHandlerByType("text-display")!;
+    const tags = handler.detect.flatMap(r => r.tags ?? []);
+    for (const tag of ["span", "p", "div", "output", "dd", "td", "li", "time"]) {
+      expect(tags).toContain(tag);
+    }
+  });
+
+  test("set throws read-only error", async () => {
+    const handler = getHandlerByType("text-display")!;
+    await expect(handler.set(null as any, "value")).rejects.toThrow(/read-only/);
+  });
+
+  test("is positioned before the input fallback handler", () => {
+    const handlers = getHandlers();
+    const textDisplayIdx = handlers.findIndex(h => h.type === "text-display");
+    const inputIdx = handlers.findIndex(h => h.type === "input");
+    expect(textDisplayIdx).toBeGreaterThan(-1);
+    expect(textDisplayIdx).toBeLessThan(inputIdx);
   });
 });

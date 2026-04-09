@@ -24,7 +24,7 @@
  * context via `createFrameworkContext()` when direct access is needed.
  */
 
-import type { ElementHandler, HandlerPosition } from "./handler-types.js";
+import type { ElementHandler, HandlerPosition, LabelStrategy, LabelStrategyPosition } from "./handler-types.js";
 import type { ActionContext, Middleware, MiddlewarePosition } from "./middleware-types.js";
 import type { Logger, AriaRole } from "./types.js";
 
@@ -68,6 +68,29 @@ export function getRoleFallbacks(): AriaRole[] {
  */
 export function getHandlers(): readonly ElementHandler[] {
   return getActiveContext().handlers.handlers;
+}
+
+// ── Label strategy defaults ──────────────────────────────────
+
+/** @see HandlerRegistry.registerLabelStrategy */
+export function registerLabelStrategy(
+  strategy: LabelStrategy,
+  position?: LabelStrategyPosition,
+): void {
+  checkMutationScope("registerLabelStrategy");
+  getActiveContext().handlers.registerLabelStrategy(strategy, position);
+}
+
+/** @see HandlerRegistry.unregisterLabelStrategy */
+export function unregisterLabelStrategy(name: string): boolean {
+  checkMutationScope("unregisterLabelStrategy");
+  return getActiveContext().handlers.unregisterLabelStrategy(name);
+}
+
+/** @see HandlerRegistry.resetLabelStrategies */
+export function resetLabelStrategies(): void {
+  checkMutationScope("resetLabelStrategies");
+  getActiveContext().handlers.resetLabelStrategies();
 }
 
 // ── Middleware defaults ──────────────────────────────────────

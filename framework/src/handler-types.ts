@@ -11,6 +11,58 @@
 
 import type { Locator } from "@playwright/test";
 
+// ── Label Strategy ──────────────────────────────────────────
+
+/**
+ * A pluggable label-resolution strategy that teaches the framework
+ * how to connect a label string to a DOM element.
+ *
+ * Strategies are registered globally (like handlers and middleware)
+ * and run as a fallback phase in the resolution chain when the
+ * built-in `getByLabel` / `getByRole` heuristics fail to find a match.
+ *
+ * A strategy describes a **structural pattern** (e.g. "labels with a
+ * `for` attribute pointing to a non-form-control element"), not a
+ * per-field lookup.  One registration covers every field in every
+ * group that follows the pattern.
+ *
+ * @example
+ * ```ts
+ * registerLabelStrategy({
+ *   name: "label-for-id",
+ *   resolve: async (container, label) => {
+ *     const labelEl = container.locator("label", { hasText: label });
+ *     if (await labelEl.count() !== 1) return null;
+ *     const forAttr = await labelEl.getAttribute("for");
+ *     if (!forAttr) return null;
+ *     const target = container.locator(`#${CSS.escape(forAttr)}`);
+ *     return (await target.count()) === 1 ? target : null;
+ *   },
+ * });
+ * ```
+ */
+export interface LabelStrategy {
+  /** Human-readable identifier for logging and debugging. */
+  name: string;
+  /**
+   * Attempt to resolve `label` within `container`.
+   *
+   * Return a `Locator` pointing to the matched element, or `null` if
+   * this strategy doesn't apply (the chain continues to the next strategy).
+   *
+   * The locator is relative to `container` — the group's root element.
+   */
+  resolve(container: Locator, label: string): Promise<Locator | null>;
+}
+
+/**
+ * Position options for {@link registerLabelStrategy}.
+ *
+ * - `"first"` — highest priority, runs before other custom strategies.
+ * - `"last"`  — lowest priority (default), runs after all other strategies.
+ */
+export type LabelStrategyPosition = "first" | "last";
+
 // ── Action Options ──────────────────────────────────────────
 
 /** Per-call overrides accepted by element wrapper methods. */

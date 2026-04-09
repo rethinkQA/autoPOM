@@ -15,7 +15,7 @@
  *   }
  */
 
-import type { CrawlerManifest, ManifestGroup, WrapperType, ApiDependency } from "./types.js";
+import type { CrawlerManifest, ManifestGroup, WrapperType, ApiDependency, ActionNavigation } from "./types.js";
 import type { EmitOptions } from "./emitter-types.js";
 import { labelToPropertyName, deduplicateNames, inferRouteName } from "./naming.js";
 
@@ -155,13 +155,18 @@ const WRAPPER_TO_FACTORY: Record<WrapperType, string> = {
 
 // ── Import collection ───────────────────────────────────────
 
-function collectImports(groups: ManifestGroup[]): Set<string> {
+function collectImports(groups: ManifestGroup[], apiDeps?: ApiDependency[]): Set<string> {
   const factories = new Set<string>();
   factories.add("group"); // Always need group for root
   factories.add("By");
 
   for (const g of groups) {
     factories.add(WRAPPER_TO_FACTORY[g.wrapperType]);
+  }
+
+  // If there are interaction API deps, we need captureTraffic for submit()
+  if (apiDeps?.some(d => d.timing === "interaction" && d.triggeredBy)) {
+    factories.add("captureTraffic");
   }
 
   return factories;
@@ -188,11 +193,13 @@ export function emitPageObject(
   const names = deduplicateNames(
     groups.map((g) => g.label),
     options?.propertyNameOverrides,
+    undefined,
+    groups.map((g) => g.groupType),
   );
   const nameOf = (g: ManifestGroup) => names[groups.indexOf(g)];
 
   // Collect needed imports
-  const factories = collectImports(groups);
+  const factories = collectImports(groups, manifest.apiDependencies);
 
   // Build lines
   const lines: string[] = [];
@@ -288,6 +295,10 @@ export function emitPageObject(
     }
   }
 
+  // Pre-compute table cell navigation actions (to be attached as methods on the table)
+  const filteredNavs = filterAuthNavs(manifest.actionNavigations ?? []);
+  const tableCellNavs = filteredNavs.filter(n => isTableCellClick(n.triggeredBy));
+
   // Emit typed wrappers (table, dialog, toast)
   if (specialWrappers.length > 0) {
     lines.push(``);
@@ -301,7 +312,26 @@ export function emitPageObject(
         : g.notes
           ? ` // ${g.notes}`
           : "";
-      lines.push(`    ${propName}: ${factory}(${byExpr}, page),${comment}`);
+
+      // If this is a table with table-cell navigations, extend it with action methods
+      if (g.wrapperType === "table" && tableCellNavs.length > 0) {
+        lines.push(`    ${propName}: (() => {${comment}`);
+        lines.push(`      const _t = ${factory}(${byExpr}, page);`);
+        lines.push(`      return {`);
+        lines.push(`        ..._t,`);
+        for (const nav of tableCellNavs) {
+          const destName = pathToFuncName(nav.navigatesTo);
+          const actionName = `goTo${destName.charAt(0).toUpperCase()}${destName.slice(1)}`;
+          lines.push(`        ${actionName}: async (label: string) => {`);
+          lines.push(`          await (await _t.locator()).getByText(label).click();`);
+          lines.push(`          await page.waitForURL(${navPathnameToRegex(nav.navigatesTo)});`);
+          lines.push(`        },`);
+        }
+        lines.push(`      };`);
+        lines.push(`    })(),`);
+      } else {
+        lines.push(`    ${propName}: ${factory}(${byExpr}, page),${comment}`);
+      }
     }
   }
 
@@ -325,21 +355,27 @@ export function emitPageObject(
     lines.push(emitWaitForReadyFunction(manifest.apiDependencies, generatedMarkers));
   }
 
-  // Emit interaction endpoint comments if API dependencies with triggeredBy exist
-  if (manifest.apiDependencies) {
-    const interactionDeps = manifest.apiDependencies.filter(
-      (d) => d.timing === "interaction" && d.triggeredBy,
-    );
-    if (interactionDeps.length > 0) {
+  // Emit submit() for interaction API dependencies
+  // Skip table cell clicks and navigation-only GET clicks
+  const allInteractionDeps = manifest.apiDependencies?.filter(
+    (d) => d.timing === "interaction" && d.triggeredBy,
+  ) ?? [];
+  const interactionDeps = allInteractionDeps.filter(
+    (d) => !isTableCellClick(d.triggeredBy!) &&
+           !isNavigationOnlyAction(d.triggeredBy!, allInteractionDeps, manifest.actionNavigations),
+  );
+  if (interactionDeps.length > 0) {
+    lines.push(``);
+    lines.push(emitSubmitFunction(interactionDeps, funcName, generatedMarkers, undefined, manifest.actionNavigations));
+  }
+
+  // Emit navigation helper functions for non-submit navigations
+  if (manifest.actionNavigations && manifest.actionNavigations.length > 0) {
+    const submitTriggeredBy = interactionDeps.length > 0 ? interactionDeps[0].triggeredBy : undefined;
+    const navFuncs = emitNavigationFunctions(manifest.actionNavigations, submitTriggeredBy, generatedMarkers);
+    if (navFuncs) {
       lines.push(``);
-      lines.push(`/**`);
-      lines.push(` * Interaction API endpoints — triggered by user actions:`);
-      for (const dep of interactionDeps) {
-        lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
-      }
-      lines.push(` *`);
-      lines.push(` * Use captureTraffic() to assert on these during tests.`);
-      lines.push(` */`);
+      lines.push(navFuncs);
     }
   }
 
@@ -390,6 +426,206 @@ function emitWaitForReadyFunction(
   }
 
   lines.push(`}`);
+  return lines.join("\n");
+}
+
+// ── submit() generation ─────────────────────────────────────
+
+/**
+ * Well-known auth route patterns. Navigations TO these routes are cross-cutting
+ * (e.g. a Logout button in the shared header) and should not generate page-specific
+ * submit/navigation functions.
+ */
+const AUTH_ROUTE_PATTERNS = [
+  /^\/log\s*out/i,
+  /^\/sign\s*out/i,
+  /^\/auth\/logout/i,
+  /^\/session\/end/i,
+];
+
+/** Returns true if a pathname looks like an auth/logout route. */
+function isAuthRoute(pathname: string): boolean {
+  return AUTH_ROUTE_PATTERNS.some((re) => re.test(pathname));
+}
+
+/**
+ * Filter out interaction deps whose triggeredBy action navigates to an auth route.
+ * These are cross-cutting actions (e.g. Logout in the header) and don't belong
+ * in page-specific submit functions.
+ */
+function filterAuthDeps(
+  deps: ApiDependency[],
+  actionNavigations?: ActionNavigation[],
+): ApiDependency[] {
+  if (!actionNavigations || actionNavigations.length === 0) return deps;
+  // Build a set of triggeredBy strings that navigate to auth routes
+  const authTriggers = new Set(
+    actionNavigations
+      .filter((n) => isAuthRoute(n.navigatesTo))
+      .map((n) => n.triggeredBy),
+  );
+  if (authTriggers.size === 0) return deps;
+  return deps.filter((d) => !d.triggeredBy || !authTriggers.has(d.triggeredBy));
+}
+
+/** Filter out action navigations to auth routes. */
+function filterAuthNavs(navs: ActionNavigation[]): ActionNavigation[] {
+  return navs.filter((n) => !isAuthRoute(n.navigatesTo));
+}
+
+/**
+ * Parse the `triggeredBy` string to extract the button label.
+ *
+ * Expected format: `click on "Submit" (button)` → `"Submit"`
+ */
+function parseTriggeredByLabel(triggeredBy: string): string | null {
+  const match = triggeredBy.match(/click on "([^"]+)"/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Convert an ActionNavigation.navigatesTo pathname into a RegExp literal
+ * suitable for `page.waitForURL(...)`.
+ *
+ * Strips leading slash and trailing dynamic segments (hex IDs, UUIDs)
+ * to produce a stable regex: `/contactList/` for `/contactList`.
+ */
+function navPathnameToRegex(pathname: string): string {
+  // Strip leading slash and any trailing dynamic segments (24-char hex, UUIDs, numeric IDs)
+  const cleaned = pathname.replace(/^\//, "").replace(/\/[0-9a-f]{24}$/i, "").replace(/\/[0-9]+$/, "");
+  // Escape forward-slashes inside the regex
+  return `/${cleaned.replace(/\//g, "\\/")}/`;
+}
+
+/**
+ * Emit a submit() function that wraps captureTraffic around the
+ * click action observed during crawling.
+ */
+function emitSubmitFunction(
+  deps: ApiDependency[],
+  pageFuncName: string,
+  generatedMarkers: boolean,
+  funcName?: string,
+  actionNavigations?: ActionNavigation[],
+): string {
+  const lines: string[] = [];
+
+  // Use the first interaction dep to determine the button label
+  const primaryDep = deps[0];
+  const buttonLabel = parseTriggeredByLabel(primaryDep.triggeredBy!) ?? "Submit";
+  const exportName = funcName ?? "submit";
+
+  // Find if the submit action causes navigation
+  const navTarget = actionNavigations?.find(
+    (n) => n.triggeredBy === primaryDep.triggeredBy,
+  );
+
+  lines.push(`/**`);
+  lines.push(` * Submit the form and capture API traffic.`);
+  if (generatedMarkers) {
+    lines.push(` * Generated from observed interaction:`);
+    for (const dep of deps) {
+      lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
+    }
+  }
+  lines.push(` */`);
+  lines.push(`export async function ${exportName}(page: Page) {`);
+  lines.push(`  const root = group(By.css("body"), page);`);
+  if (navTarget) {
+    lines.push(`  return captureTraffic(page, async () => {`);
+    lines.push(`    await root.click("${escapeStringForTs(buttonLabel)}");`);
+    lines.push(`    await page.waitForURL(${navPathnameToRegex(navTarget.navigatesTo)});`);
+    lines.push(`  });`);
+  } else {
+    lines.push(`  return captureTraffic(page, () => root.click("${escapeStringForTs(buttonLabel)}"));`);
+  }
+  lines.push(`}`);
+
+  return lines.join("\n");
+}
+
+/**
+ * Emit standalone navigation helper functions for action navigations
+ * that are NOT covered by the submit function (i.e. navigation-only actions
+ * like clicking "Add a New Contact").
+ */
+/**
+ * Derive a camelCase function name from a URL pathname.
+ * Unlike inferRouteName, preserves existing camelCase in path segments
+ * (e.g. "/contactDetails" → "contactDetails").
+ */
+function pathToFuncName(pathname: string): string {
+  const cleaned = pathname.replace(/^\/+|\/+$/g, "").replace(/\/[0-9a-f]{24}$/i, "").replace(/\/[0-9]+$/, "");
+  if (!cleaned) return "home";
+  const segments = cleaned.split("/").filter(Boolean);
+  return segments
+    .map((seg, i) => {
+      if (i === 0) return seg;
+      return seg.charAt(0).toUpperCase() + seg.slice(1);
+    })
+    .join("");
+}
+
+/**
+ * Detect whether a triggeredBy action is a table cell/row click (dynamic data).
+ * Returns true for patterns like `click on "some text" (td)` or `(tr)`.
+ */
+function isTableCellClick(triggeredBy: string): boolean {
+  return /\((td|tr)\)\s*$/.test(triggeredBy);
+}
+
+/**
+ * Check whether an action is a pure navigation click (all deps are GETs and
+ * the same action has a matching actionNavigation). Navigation-only clicks
+ * should emit a goTo*() helper, not a submit().
+ */
+function isNavigationOnlyAction(
+  triggeredBy: string,
+  allDeps: ApiDependency[],
+  actionNavigations?: ActionNavigation[],
+): boolean {
+  if (!actionNavigations || actionNavigations.length === 0) return false;
+  // Must have a matching navigation
+  const hasNav = actionNavigations.some(n => n.triggeredBy === triggeredBy);
+  if (!hasNav) return false;
+  // All deps for this action must be GETs (page loads from navigation, not mutations)
+  const actionDeps = allDeps.filter(d => d.triggeredBy === triggeredBy);
+  return actionDeps.length > 0 && actionDeps.every(d => d.method === "GET");
+}
+
+function emitNavigationFunctions(
+  actionNavigations: ActionNavigation[],
+  submitTriggeredBy: string | undefined,
+  generatedMarkers: boolean,
+): string {
+  const lines: string[] = [];
+
+  for (const nav of actionNavigations) {
+    // Skip navigations already handled by submit()
+    if (nav.triggeredBy === submitTriggeredBy) continue;
+
+    // Skip table cell clicks — they are emitted as methods on the table element
+    if (isTableCellClick(nav.triggeredBy)) continue;
+
+    const buttonLabel = parseTriggeredByLabel(nav.triggeredBy);
+    if (!buttonLabel) continue;
+
+    const destName = pathToFuncName(nav.navigatesTo);
+    const funcName = `goTo${destName.charAt(0).toUpperCase()}${destName.slice(1)}`;
+
+    lines.push(`/**`);
+    lines.push(` * Click "${buttonLabel}" and wait for navigation.`);
+    if (generatedMarkers) {
+      lines.push(` * Generated from observed navigation: ${nav.triggeredBy} → ${nav.navigatesTo}`);
+    }
+    lines.push(` */`);
+    lines.push(`export async function ${funcName}(page: Page) {`);
+    lines.push(`  const root = group(By.css("body"), page);`);
+    lines.push(`  await root.click("${escapeStringForTs(buttonLabel)}");`);
+    lines.push(`  await page.waitForURL(${navPathnameToRegex(nav.navigatesTo)});`);
+    lines.push(`}`);
+  }
+
   return lines.join("\n");
 }
 
@@ -552,6 +788,9 @@ export function emitTemplate(
     for (const g of rm.manifest.groups) {
       factories.add(WRAPPER_TO_FACTORY[g.wrapperType]);
     }
+    if (rm.manifest.apiDependencies?.some(d => d.timing === "interaction" && d.triggeredBy)) {
+      factories.add("captureTraffic");
+    }
   }
 
   const sortedFactories = [...factories].sort((a, b) => {
@@ -566,14 +805,31 @@ export function emitTemplate(
   );
   lines.push(``);
 
+  // Build deduplicated config property names for varying labels.
+  // Multiple selectors can produce the same base name (e.g. two groups
+  // with label "Add Contact"), so we deduplicate with numeric suffixes.
+  const configPropNames = new Map<string, string>();
+  if (template.varyingLabels.size > 0) {
+    const usedNames = new Set<string>();
+    for (const [selector, labelsByRoute] of template.varyingLabels) {
+      let propName = labelToPropertyName(
+        [...labelsByRoute.values()][0],
+      ) + "Label";
+      if (usedNames.has(propName)) {
+        let suffix = 2;
+        while (usedNames.has(`${propName}${suffix}`)) suffix++;
+        propName = `${propName}${suffix}`;
+      }
+      usedNames.add(propName);
+      configPropNames.set(selector, propName);
+    }
+  }
+
   // If there are varying labels, emit config interface
   if (template.varyingLabels.size > 0) {
     lines.push(`interface TemplateConfig {`);
-    for (const [_selector, labelsByRoute] of template.varyingLabels) {
-      const propName = labelToPropertyName(
-        [...labelsByRoute.values()][0],
-      ) + "Label";
-      lines.push(`  ${propName}: string;`);
+    for (const [selector] of template.varyingLabels) {
+      lines.push(`  ${configPropNames.get(selector)!}: string;`);
     }
     lines.push(`}`);
     lines.push(``);
@@ -597,16 +853,16 @@ export function emitTemplate(
     const names = deduplicateNames(
       refManifest.groups.map((g) => g.label),
       options?.propertyNameOverrides,
+      undefined,
+      refManifest.groups.map((g) => g.groupType),
     );
 
     // P1-291: Build map of group selector → config property name
     // so we can wire config values into the template body.
+    // Uses the deduplicated configPropNames map built above.
     const selectorToConfigProp = new Map<string, string>();
-    for (const [selector, labelsByRoute] of template.varyingLabels) {
-      const configPropName = labelToPropertyName(
-        [...labelsByRoute.values()][0],
-      ) + "Label";
-      selectorToConfigProp.set(selector, configPropName);
+    for (const [selector] of template.varyingLabels) {
+      selectorToConfigProp.set(selector, configPropNames.get(selector)!);
     }
 
     for (const [i, g] of refManifest.groups.entries()) {
@@ -632,10 +888,8 @@ export function emitTemplate(
     const funcName = `${rm.route}Page`;
     if (template.varyingLabels.size > 0) {
       const configEntries: string[] = [];
-      for (const [_selector, labelsByRoute] of template.varyingLabels) {
-        const propName = labelToPropertyName(
-          [...labelsByRoute.values()][0],
-        ) + "Label";
+      for (const [selector, labelsByRoute] of template.varyingLabels) {
+        const propName = configPropNames.get(selector)!;
         const label = labelsByRoute.get(rm.route) ?? "";
         configEntries.push(`${propName}: "${label}"`);
       }
@@ -655,20 +909,29 @@ export function emitTemplate(
       lines.push(``);
       lines.push(emitWaitForReadyFunction(rm.manifest.apiDependencies, generatedMarkers, `${rm.route}WaitForReady`));
     }
-    if (rm.manifest.apiDependencies) {
-      const interactionDeps = rm.manifest.apiDependencies.filter(
-        (d) => d.timing === "interaction" && d.triggeredBy,
-      );
-      if (interactionDeps.length > 0) {
+    const filteredRouteNavs = filterAuthNavs(rm.manifest.actionNavigations ?? []);
+    const allRouteDeps = rm.manifest.apiDependencies?.filter(
+      (d) => d.timing === "interaction" && d.triggeredBy,
+    ) ?? [];
+    const interactionDeps = filterAuthDeps(
+      allRouteDeps.filter(
+        (d) => !isTableCellClick(d.triggeredBy!) &&
+               !isNavigationOnlyAction(d.triggeredBy!, allRouteDeps, rm.manifest.actionNavigations),
+      ),
+      rm.manifest.actionNavigations,
+    );
+    if (interactionDeps.length > 0) {
+      lines.push(``);
+      lines.push(emitSubmitFunction(interactionDeps, `${rm.route}Page`, generatedMarkers, `${rm.route}Submit`, filteredRouteNavs));
+    }
+
+    // Emit navigation helper functions for non-submit navigations
+    if (filteredRouteNavs.length > 0) {
+      const submitTriggeredBy = interactionDeps.length > 0 ? interactionDeps[0].triggeredBy : undefined;
+      const navFuncs = emitNavigationFunctions(filteredRouteNavs, submitTriggeredBy, generatedMarkers);
+      if (navFuncs) {
         lines.push(``);
-        lines.push(`/**`);
-        lines.push(` * Interaction API endpoints for ${rm.route} — triggered by user actions:`);
-        for (const dep of interactionDeps) {
-          lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
-        }
-        lines.push(` *`);
-        lines.push(` * Use captureTraffic() to assert on these during tests.`);
-        lines.push(` */`);
+        lines.push(navFuncs);
       }
     }
   }
@@ -697,19 +960,20 @@ interface SharedComponent {
 /**
  * Scan all route manifests and extract groups that appear on 2+ pages.
  *
- * Comparison uses the same normalizeSelectorPattern() as template detection
- * (strips IDs, aria-label values, text content) so a nav bar with slightly
- * different aria-label values across pages still gets recognized as shared.
+ * Uses exact selector + wrapperType matching (NOT normalized patterns)
+ * so that structurally similar elements with different IDs (e.g. #add-contact
+ * vs #contactDetails) are NOT falsely merged as shared.
+ * Semantic selectors (tag names, roles) naturally match across pages.
  *
  * Returns shared components sorted by frequency (most common first).
  */
 function extractSharedGroups(routes: RouteManifest[]): SharedComponent[] {
-  // key = wrapperType + normalized selector → which routes have it
+  // key = wrapperType + exact selector → which routes have it
   const seen = new Map<string, { group: ManifestGroup; routes: string[] }>();
 
   for (const route of routes) {
     for (const g of route.manifest.groups) {
-      const key = `${g.wrapperType}::${normalizeSelectorPattern(g.selector)}`;
+      const key = `${g.wrapperType}::${g.selector}`;
       const entry = seen.get(key);
       if (entry) {
         if (!entry.routes.includes(route.route)) {
@@ -808,7 +1072,7 @@ function emitSharedComponentsFile(
  * (same wrapperType + normalized selector).
  */
 function isSharedGroup(group: ManifestGroup, sharedSet: Set<string>): boolean {
-  const key = `${group.wrapperType}::${normalizeSelectorPattern(group.selector)}`;
+  const key = `${group.wrapperType}::${group.selector}`;
   return sharedSet.has(key);
 }
 
@@ -832,7 +1096,7 @@ function emitPageObjectWithShared(
   const pageSpecific = groups.filter((g) => !isSharedGroup(g, sharedKeys));
   const sharedOnThisPage = shared.filter((comp) =>
     groups.some((g) => {
-      const key = `${g.wrapperType}::${normalizeSelectorPattern(g.selector)}`;
+      const key = `${g.wrapperType}::${g.selector}`;
       return key === comp.selectorPattern;
     }),
   );
@@ -842,6 +1106,9 @@ function emitPageObjectWithShared(
   for (const g of pageSpecific) {
     factories.add(WRAPPER_TO_FACTORY[g.wrapperType]);
   }
+  if (manifest.apiDependencies?.some(d => d.timing === "interaction" && d.triggeredBy)) {
+    factories.add("captureTraffic");
+  }
 
   // Collect shared component prop names so page-specific names avoid them
   const sharedPropNames = new Set(sharedOnThisPage.map((comp) => comp.propName));
@@ -850,6 +1117,7 @@ function emitPageObjectWithShared(
     pageSpecific.map((g) => g.label),
     options?.propertyNameOverrides,
     sharedPropNames,
+    pageSpecific.map((g) => g.groupType),
   );
 
   const lines: string[] = [];
@@ -944,13 +1212,36 @@ function emitPageObjectWithShared(
     }
   }
 
+  // Pre-compute table cell navigation actions (to be attached as methods on the table)
+  const filteredNavs2 = filterAuthNavs(manifest.actionNavigations ?? []);
+  const tableCellNavs2 = filteredNavs2.filter(n => isTableCellClick(n.triggeredBy));
+
   if (specialWrappers.length > 0) {
     lines.push(``);
     lines.push(`    // ── Typed wrappers ──────────────────────────────────────`);
     for (const g of specialWrappers) {
       const factory = WRAPPER_TO_FACTORY[g.wrapperType];
       const byExpr = selectorToByExpression(g.selector, g);
-      lines.push(`    ${names[pageSpecific.indexOf(g)]}: ${factory}(${byExpr}, page),`);
+      const propName = names[pageSpecific.indexOf(g)];
+
+      if (g.wrapperType === "table" && tableCellNavs2.length > 0) {
+        lines.push(`    ${propName}: (() => {`);
+        lines.push(`      const _t = ${factory}(${byExpr}, page);`);
+        lines.push(`      return {`);
+        lines.push(`        ..._t,`);
+        for (const nav of tableCellNavs2) {
+          const destName = pathToFuncName(nav.navigatesTo);
+          const actionName = `goTo${destName.charAt(0).toUpperCase()}${destName.slice(1)}`;
+          lines.push(`        ${actionName}: async (label: string) => {`);
+          lines.push(`          await (await _t.locator()).getByText(label).click();`);
+          lines.push(`          await page.waitForURL(${navPathnameToRegex(nav.navigatesTo)});`);
+          lines.push(`        },`);
+        }
+        lines.push(`      };`);
+        lines.push(`    })(),`);
+      } else {
+        lines.push(`    ${propName}: ${factory}(${byExpr}, page),`);
+      }
     }
   }
 
@@ -972,21 +1263,30 @@ function emitPageObjectWithShared(
     lines.push(emitWaitForReadyFunction(manifest.apiDependencies, generatedMarkers));
   }
 
-  // Emit interaction endpoint comments if API dependencies with triggeredBy exist
-  if (manifest.apiDependencies) {
-    const interactionDeps = manifest.apiDependencies.filter(
-      (d) => d.timing === "interaction" && d.triggeredBy,
-    );
-    if (interactionDeps.length > 0) {
+  // Emit submit() for interaction API dependencies
+  // Skip table cell clicks and navigation-only GET clicks
+  const allInteractionDeps3 = manifest.apiDependencies?.filter(
+    (d) => d.timing === "interaction" && d.triggeredBy,
+  ) ?? [];
+  const interactionDeps = filterAuthDeps(
+    allInteractionDeps3.filter(
+      (d) => !isTableCellClick(d.triggeredBy!) &&
+             !isNavigationOnlyAction(d.triggeredBy!, allInteractionDeps3, manifest.actionNavigations),
+    ),
+    manifest.actionNavigations,
+  );
+  if (interactionDeps.length > 0) {
+    lines.push(``);
+    lines.push(emitSubmitFunction(interactionDeps, funcName, generatedMarkers, undefined, filteredNavs2));
+  }
+
+  // Emit navigation helper functions for non-submit navigations
+  if (filteredNavs2.length > 0) {
+    const submitTriggeredBy = interactionDeps.length > 0 ? interactionDeps[0].triggeredBy : undefined;
+    const navFuncs = emitNavigationFunctions(filteredNavs2, submitTriggeredBy, generatedMarkers);
+    if (navFuncs) {
       lines.push(``);
-      lines.push(`/**`);
-      lines.push(` * Interaction API endpoints — triggered by user actions:`);
-      for (const dep of interactionDeps) {
-        lines.push(` *   ${dep.method} ${dep.pattern} ← ${dep.triggeredBy}`);
-      }
-      lines.push(` *`);
-      lines.push(` * Use captureTraffic() to assert on these during tests.`);
-      lines.push(` */`);
+      lines.push(navFuncs);
     }
   }
 
