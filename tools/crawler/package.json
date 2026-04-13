@@ -34,12 +34,12 @@
     "check-drift": "./scripts/check-drift.sh"
   },
   "dependencies": {
-    "playwright": "~1.58.0"
+    "playwright": "~1.59.1"
   },
   "devDependencies": {
-    "@playwright/test": "~1.58.0",
+    "@playwright/test": "~1.59.1",
     "@types/node": "~20.19.0",
-    "esbuild": "~0.27.4",
+    "esbuild": "~0.28.0",
     "tsx": "~4.21.0",
     "typescript": "~5.9.3"
   },
