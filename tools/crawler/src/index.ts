@@ -52,6 +52,20 @@ export {
 export type { LocatorStrategy, LocatorSelection } from "./browser-controller.js";
 export { extractActionCandidates, classifyActionRisk } from "./explore-planner.js";
 
+// ── MCP-backed browser controller (Slice 1) ────────────────
+
+export { McpBrowserController, targetFromHint, elementDescription } from "./mcp-controller.js";
+export type {
+  IMcpClient,
+  McpToolCall,
+  McpControllerOptions,
+} from "./mcp-controller.js";
+export { createMcpController } from "./mcp-factory.js";
+export type {
+  CreateMcpControllerOptions,
+  McpControllerHandle,
+} from "./mcp-factory.js";
+
 // ── Replay-based drift detection ────────────────────────────
 
 export {

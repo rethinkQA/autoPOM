@@ -23,7 +23,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve, join, basename, dirname } from "node:path";
 import { crawlPage, diffPage } from "../src/crawler.js";
-import { explorePage } from "../src/explore.js";
+import { explorePage, exploreWithController } from "../src/explore.js";
 import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName, safePathname, normalizeRoute } from "../src/naming.js";
@@ -44,7 +44,8 @@ import {
   GraphValidationError,
   type DriftReport,
 } from "../src/replay.js";
-import { PlaywrightBrowserController } from "../src/browser-controller.js";
+import { PlaywrightBrowserController, type IBrowserController } from "../src/browser-controller.js";
+import { createMcpController } from "../src/mcp-factory.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -136,6 +137,8 @@ interface ExploreArgs {
   ignoreHTTPSErrors: boolean;
   check: boolean;
   help: boolean;
+  mcp: boolean;
+  mcpCdpPort?: number;
   aiProvider?: AiProviderName;
   aiModel?: string;
   aiKey?: string;
@@ -155,6 +158,8 @@ interface DriftArgs {
   maxPaths?: number;
   json: boolean;
   help: boolean;
+  mcp: boolean;
+  mcpCdpPort?: number;
   aiProvider?: AiProviderName;
   aiModel?: string;
   aiKey?: string;
@@ -319,6 +324,7 @@ function parseDriftArgs(argv: string[]): DriftArgs {
     ignoreHTTPSErrors: false,
     json: false,
     help: false,
+    mcp: false,
   };
 
   let i = 0;
@@ -356,6 +362,15 @@ function parseDriftArgs(argv: string[]): DriftArgs {
         break;
       case "--json":
         args.json = true;
+        break;
+      case "--mcp":
+        args.mcp = true;
+        break;
+      case "--no-mcp":
+        args.mcp = false;
+        break;
+      case "--mcp-cdp-port":
+        args.mcpCdpPort = parsePositiveIntFlag(argv, ++i, arg);
         break;
       case "--ai-provider":
         args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
@@ -461,6 +476,7 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
     ignoreHTTPSErrors: false,
     check: false,
     help: false,
+    mcp: false,
   };
 
   let i = 0;
@@ -533,8 +549,13 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
         args.aiBaseUrl = requireValue(argv, ++i, arg);
         break;
       case "--mcp":
-        console.error("Error: --mcp is reserved for the future MCP controller adapter and is not implemented yet.");
-        process.exit(1);
+        args.mcp = true;
+        break;
+      case "--no-mcp":
+        args.mcp = false;
+        break;
+      case "--mcp-cdp-port":
+        args.mcpCdpPort = parsePositiveIntFlag(argv, ++i, arg);
         break;
       case "-h":
       case "--help":
@@ -610,10 +631,16 @@ Options:
   --no-observe-network     Disable API dependency capture
   --headed                 Run browser in headed mode (visible)
   --check                  Compare generated files with existing outputs; exit 1 on drift
+  --mcp                    Drive the browser via @playwright/mcp (action channel)
+  --no-mcp                 Disable MCP, use direct Playwright (default)
+  --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
   --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
   --ai-base-url <url>      Custom API base URL
+
+  --mcp requires the optional peer deps:
+    npm install --save-optional @playwright/mcp @modelcontextprotocol/sdk
 
 ── Drift Mode (Deterministic Replay) ────────────────────────
 
@@ -636,6 +663,9 @@ Options:
   --ignore-https-errors    Skip TLS certificate validation
   --max-paths <n>          Limit how many planned paths get replayed
   --json                   Emit the drift report as JSON to stdout
+  --mcp                    Drive the browser via @playwright/mcp (action channel)
+  --no-mcp                 Disable MCP, use direct Playwright (default)
+  --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
   --ai-provider <name>     Use AI discovery during rescans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
@@ -1408,6 +1438,47 @@ async function runRecord(args: RecordArgs): Promise<void> {
   }
 }
 
+// ── Browser controller selection ────────────────────────────
+
+interface BrowserSession {
+  controller: IBrowserController;
+  dispose(): Promise<void>;
+}
+
+async function openExploreSession(args: {
+  mcp: boolean;
+  mcpCdpPort?: number;
+  headless: boolean;
+  ignoreHTTPSErrors: boolean;
+}): Promise<BrowserSession> {
+  if (args.mcp) {
+    console.error("  ● Spawning @playwright/mcp (action channel)…");
+    const handle = await createMcpController({
+      headless: args.headless,
+      cdpPort: args.mcpCdpPort,
+      chromiumArgs: args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [],
+    });
+    return { controller: handle.controller, dispose: handle.dispose };
+  }
+
+  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
+  const browser = await chromium.launch({
+    headless: args.headless,
+    args: launchArgs,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
+  const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
+  const page = await context.newPage();
+  return {
+    controller: new PlaywrightBrowserController(page),
+    dispose: async () => {
+      await browser.close();
+    },
+  };
+}
+
 // ── Explore mode ────────────────────────────────────────────
 
 async function runExplore(args: ExploreArgs): Promise<void> {
@@ -1431,19 +1502,14 @@ async function runExplore(args: ExploreArgs): Promise<void> {
     process.exit(1);
   }
 
-  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
-  const browser = await chromium.launch({
+  const session = await openExploreSession({
+    mcp: args.mcp,
+    mcpCdpPort: args.mcpCdpPort,
     headless: args.headless,
-    args: launchArgs,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
+    ignoreHTTPSErrors: args.ignoreHTTPSErrors,
   });
 
   try {
-    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
-    const page = await context.newPage();
-
     let aiProvider: AiProvider | undefined;
     if (args.aiProvider) {
       const { createAiProvider } = await import("../src/ai/provider.js");
@@ -1455,8 +1521,9 @@ async function runExplore(args: ExploreArgs): Promise<void> {
       });
     }
 
-    console.error(`  ● Exploring ${args.url} (${args.strategy})…`);
-    const result = await explorePage(page, args.url, {
+    const transportLabel = args.mcp ? " via MCP" : "";
+    console.error(`  ● Exploring ${args.url} (${args.strategy})${transportLabel}…`);
+    const result = await exploreWithController(session.controller, args.url, {
       scope: args.scope,
       maxDepth: args.maxDepth,
       maxActions: args.maxActions,
@@ -1529,7 +1596,7 @@ async function runExplore(args: ExploreArgs): Promise<void> {
       process.exit(0);
     }
   } finally {
-    await browser.close();
+    await session.dispose();
   }
 }
 
@@ -1575,20 +1642,15 @@ async function runDrift(args: DriftArgs): Promise<void> {
     }
   }
 
-  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
-  const browser = await chromium.launch({
+  const session = await openExploreSession({
+    mcp: args.mcp,
+    mcpCdpPort: args.mcpCdpPort,
     headless: args.headless,
-    args: launchArgs,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
+    ignoreHTTPSErrors: args.ignoreHTTPSErrors,
   });
 
   let report: DriftReport;
   try {
-    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
-    const page = await context.newPage();
-
     let aiProvider: AiProvider | undefined;
     if (args.aiProvider) {
       const { createAiProvider } = await import("../src/ai/provider.js");
@@ -1600,8 +1662,9 @@ async function runDrift(args: DriftArgs): Promise<void> {
       });
     }
 
-    console.error(`  ● Replaying ${args.graph} against ${args.url}…`);
-    report = await replayGraph(new PlaywrightBrowserController(page), graph, {
+    const transportLabel = args.mcp ? " via MCP" : "";
+    console.error(`  ● Replaying ${args.graph} against ${args.url}${transportLabel}…`);
+    report = await replayGraph(session.controller, graph, {
       baselines,
       scope: args.scope,
       observeNetwork: args.observeNetwork,
@@ -1609,7 +1672,7 @@ async function runDrift(args: DriftArgs): Promise<void> {
       maxPaths: args.maxPaths,
     });
   } finally {
-    await browser.close();
+    await session.dispose();
   }
 
   if (args.output) {

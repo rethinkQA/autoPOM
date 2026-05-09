@@ -62,6 +62,16 @@ The gap is not lack of AI. The gap is autonomous multi-step exploration:
 
 ## Current implementation status
 
+The next stable slice after `cbfcf9c` adds **deterministic graph replay drift detection** (`pw-crawl drift <url> --graph ... --manifests ...`) and the locator strategy split (`selectLocatorStrategy` / `resolveActionLocator` shared between Playwright and replay).
+
+The slice after that wires **Slice 1 of MCP integration: action channel only**. `--mcp` on `explore`/`drift` spawns Microsoft's `@playwright/mcp` over stdio, attaches it to the same Chromium instance via CDP, and routes `goto`/`click`/`hover` through MCP tools. Discovery (`crawlPage`, `extractActionCandidates`) still runs against the co-attached Playwright `Page`. The AI tool-use planner is the explicit next slice (Slice 2).
+
+Optional peer deps (resolved lazily, only when `--mcp` is on):
+
+```text
+npm install --save-optional @playwright/mcp @modelcontextprotocol/sdk
+```
+
 Commit `cbfcf9c` implemented the first stable slice:
 
 - `pw-crawl explore` CLI mode.

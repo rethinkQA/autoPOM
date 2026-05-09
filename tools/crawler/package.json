@@ -43,6 +43,10 @@
     "tsx": "~4.21.0",
     "typescript": "~5.9.3"
   },
+  "optionalDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@playwright/mcp": "^0.0.75"
+  },
   "keywords": [
     "playwright",
     "crawler",

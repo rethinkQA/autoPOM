@@ -37,6 +37,9 @@ coverage/
 **/playwright-report/
 **/test-results/
 
+# Playwright MCP scratch (page snapshots, console logs)
+**/.playwright-mcp/
+
 # Generated docs
 framework/docs/api/
 *.tgz
