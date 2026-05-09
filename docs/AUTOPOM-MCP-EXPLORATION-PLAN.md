@@ -64,13 +64,19 @@ The gap is not lack of AI. The gap is autonomous multi-step exploration:
 
 The next stable slice after `cbfcf9c` adds **deterministic graph replay drift detection** (`pw-crawl drift <url> --graph ... --manifests ...`) and the locator strategy split (`selectLocatorStrategy` / `resolveActionLocator` shared between Playwright and replay).
 
-The slice after that wires **Slice 1 of MCP integration: action channel only**. `--mcp` on `explore`/`drift` spawns Microsoft's `@playwright/mcp` over stdio, attaches it to the same Chromium instance via CDP, and routes `goto`/`click`/`hover` through MCP tools. Discovery (`crawlPage`, `extractActionCandidates`) still runs against the co-attached Playwright `Page`. The AI tool-use planner is the explicit next slice (Slice 2).
+The slice after that wires **Slice 1 of MCP integration: action channel only**. `--mcp` on `explore`/`drift` spawns Microsoft's `@playwright/mcp` over stdio, attaches it to the same Chromium instance via CDP, and routes `goto`/`click`/`hover` through MCP tools. Discovery (`crawlPage`, `extractActionCandidates`) still runs against the co-attached Playwright `Page`.
+
+**Slice 2: AI-guided exploration via tool-use** lands `--ai-agent` on `explore`. The agent (`createAnthropicAgent`) gets a small constrained tool surface — `click_candidate(index)`, `click_locator({role,name,...})`, `navigate(url)`, `stop({reason})` — and picks the next action each turn from an observation that includes URL, title, manifest groups already discovered, the visible action candidates with indices, recent history, and the action budget. Decisions translate into existing `ExplorationAction` records so the manifest/graph pipeline is unchanged. The loop is transport-agnostic — pair it with `PlaywrightBrowserController` for direct Playwright or `--mcp` for the MCP path.
+
+Slice 2 is non-deterministic by design — meant for nightly/manual runs and assisted-repair flows, not the CI replay path. CI continues using the heuristic planner + drift replay. Other AI providers (OpenAI / Ollama) for tool-use are a future slice.
 
 Optional peer deps (resolved lazily, only when `--mcp` is on):
 
 ```text
 npm install --save-optional @playwright/mcp @modelcontextprotocol/sdk
 ```
+
+Slice 2 (AI agent) only needs `ANTHROPIC_API_KEY` — the agent uses raw `fetch`, no SDK dep.
 
 Commit `cbfcf9c` implemented the first stable slice:
 

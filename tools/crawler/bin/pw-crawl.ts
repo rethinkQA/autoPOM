@@ -24,6 +24,8 @@ import { existsSync } from "node:fs";
 import { resolve, join, basename, dirname } from "node:path";
 import { crawlPage, diffPage } from "../src/crawler.js";
 import { explorePage, exploreWithController } from "../src/explore.js";
+import { exploreWithAgent } from "../src/agent-explore.js";
+import { createAnthropicAgent } from "../src/ai/agent-anthropic.js";
 import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName, safePathname, normalizeRoute } from "../src/naming.js";
@@ -139,6 +141,7 @@ interface ExploreArgs {
   help: boolean;
   mcp: boolean;
   mcpCdpPort?: number;
+  aiAgent: boolean;
   aiProvider?: AiProviderName;
   aiModel?: string;
   aiKey?: string;
@@ -477,6 +480,7 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
     check: false,
     help: false,
     mcp: false,
+    aiAgent: false,
   };
 
   let i = 0;
@@ -557,6 +561,12 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
       case "--mcp-cdp-port":
         args.mcpCdpPort = parsePositiveIntFlag(argv, ++i, arg);
         break;
+      case "--ai-agent":
+        args.aiAgent = true;
+        break;
+      case "--no-ai-agent":
+        args.aiAgent = false;
+        break;
       case "-h":
       case "--help":
         args.help = true;
@@ -634,6 +644,8 @@ Options:
   --mcp                    Drive the browser via @playwright/mcp (action channel)
   --no-mcp                 Disable MCP, use direct Playwright (default)
   --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
+  --ai-agent               Use a tool-using AI agent to pick actions (Slice 2)
+  --no-ai-agent            Disable AI agent, use heuristic planner (default)
   --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
@@ -641,6 +653,11 @@ Options:
 
   --mcp requires the optional peer deps:
     npm install --save-optional @playwright/mcp @modelcontextprotocol/sdk
+
+  --ai-agent currently requires --ai-provider anthropic and a valid
+  ANTHROPIC_API_KEY. The agent picks each action via the Anthropic Messages
+  API tool-use; the manifest pipeline is unchanged. Non-deterministic — use
+  for nightly/manual runs, not the CI replay path.
 
 ── Drift Mode (Deterministic Replay) ────────────────────────
 
@@ -1521,18 +1538,44 @@ async function runExplore(args: ExploreArgs): Promise<void> {
       });
     }
 
+    if (args.aiAgent && args.aiProvider !== "anthropic") {
+      console.error(
+        "Error: --ai-agent currently requires --ai-provider anthropic. Other providers are planned for a future slice.",
+      );
+      process.exit(1);
+    }
+
     const transportLabel = args.mcp ? " via MCP" : "";
-    console.error(`  ● Exploring ${args.url} (${args.strategy})${transportLabel}…`);
-    const result = await exploreWithController(session.controller, args.url, {
-      scope: args.scope,
-      maxDepth: args.maxDepth,
-      maxActions: args.maxActions,
-      maxRoutes: args.maxRoutes,
-      maxRescans: args.maxRescans,
-      strategy: args.strategy,
-      observeNetwork: args.observeNetwork,
-      aiProvider,
-    });
+    const plannerLabel = args.aiAgent ? " (AI agent)" : "";
+    console.error(`  ● Exploring ${args.url} (${args.strategy})${transportLabel}${plannerLabel}…`);
+
+    let result;
+    if (args.aiAgent) {
+      const agent = createAnthropicAgent({
+        apiKey: args.aiKey,
+        model: args.aiModel,
+        baseUrl: args.aiBaseUrl,
+      });
+      result = await exploreWithAgent(session.controller, agent, args.url, {
+        scope: args.scope,
+        maxActions: args.maxActions,
+        observeNetwork: args.observeNetwork,
+        aiProvider,
+        strategy: args.strategy,
+        log: (line) => console.error(`  ${line}`),
+      });
+    } else {
+      result = await exploreWithController(session.controller, args.url, {
+        scope: args.scope,
+        maxDepth: args.maxDepth,
+        maxActions: args.maxActions,
+        maxRoutes: args.maxRoutes,
+        maxRescans: args.maxRescans,
+        strategy: args.strategy,
+        observeNetwork: args.observeNetwork,
+        aiProvider,
+      });
+    }
 
     const routes = manifestsToRoutes(result.manifests);
     const pageFiles = emitRoutesToFiles(routes);

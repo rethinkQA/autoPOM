@@ -52,6 +52,26 @@ export {
 export type { LocatorStrategy, LocatorSelection } from "./browser-controller.js";
 export { extractActionCandidates, classifyActionRisk } from "./explore-planner.js";
 
+// ── AI-driven exploration agent (Slice 2) ──────────────────
+
+export { exploreWithAgent } from "./agent-explore.js";
+export type {
+  IExplorationAgent,
+  AgentObservation,
+  AgentDecision,
+  AgentDecisionSummary,
+  AgentCandidate,
+  AgentHistoryEntry,
+  AgentOutcome,
+  AgentExploreOptions,
+} from "./agent-types.js";
+export {
+  createAnthropicAgent,
+  extractDecision,
+  formatObservationMessage,
+} from "./ai/agent-anthropic.js";
+export type { AnthropicAgentOptions } from "./ai/agent-anthropic.js";
+
 // ── MCP-backed browser controller (Slice 1) ────────────────
 
 export { McpBrowserController, targetFromHint, elementDescription } from "./mcp-controller.js";
