@@ -141,6 +141,7 @@ interface ExploreArgs {
   help: boolean;
   mcp: boolean;
   mcpCdpPort?: number;
+  authState?: string;
   aiAgent: boolean;
   aiProvider?: AiProviderName;
   aiModel?: string;
@@ -163,6 +164,7 @@ interface DriftArgs {
   help: boolean;
   mcp: boolean;
   mcpCdpPort?: number;
+  authState?: string;
   aiProvider?: AiProviderName;
   aiModel?: string;
   aiKey?: string;
@@ -375,6 +377,9 @@ function parseDriftArgs(argv: string[]): DriftArgs {
       case "--mcp-cdp-port":
         args.mcpCdpPort = parsePositiveIntFlag(argv, ++i, arg);
         break;
+      case "--auth-state":
+        args.authState = requireValue(argv, ++i, arg);
+        break;
       case "--ai-provider":
         args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
         break;
@@ -561,6 +566,9 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
       case "--mcp-cdp-port":
         args.mcpCdpPort = parsePositiveIntFlag(argv, ++i, arg);
         break;
+      case "--auth-state":
+        args.authState = requireValue(argv, ++i, arg);
+        break;
       case "--ai-agent":
         args.aiAgent = true;
         break;
@@ -644,6 +652,7 @@ Options:
   --mcp                    Drive the browser via @playwright/mcp (action channel)
   --no-mcp                 Disable MCP, use direct Playwright (default)
   --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
+  --auth-state <file>      Playwright storageState JSON for cookies/localStorage
   --ai-agent               Use a tool-using AI agent to pick actions (Slice 2)
   --no-ai-agent            Disable AI agent, use heuristic planner (default)
   --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
@@ -658,6 +667,11 @@ Options:
   ANTHROPIC_API_KEY. The agent picks each action via the Anthropic Messages
   API tool-use; the manifest pipeline is unchanged. Non-deterministic — use
   for nightly/manual runs, not the CI replay path.
+
+  --auth-state expects a Playwright storageState JSON file (see
+  https://playwright.dev/docs/auth#reuse-signed-in-state). With --mcp, the
+  file is forwarded to @playwright/mcp via --storage-state so cookies and
+  localStorage load before any navigation. Do not commit auth-state files.
 
 ── Drift Mode (Deterministic Replay) ────────────────────────
 
@@ -683,6 +697,7 @@ Options:
   --mcp                    Drive the browser via @playwright/mcp (action channel)
   --no-mcp                 Disable MCP, use direct Playwright (default)
   --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
+  --auth-state <file>      Playwright storageState JSON for cookies/localStorage
   --ai-provider <name>     Use AI discovery during rescans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
@@ -1467,13 +1482,25 @@ async function openExploreSession(args: {
   mcpCdpPort?: number;
   headless: boolean;
   ignoreHTTPSErrors: boolean;
+  authState?: string;
 }): Promise<BrowserSession> {
+  const authStatePath = args.authState ? resolve(args.authState) : undefined;
+  if (authStatePath && !existsSync(authStatePath)) {
+    console.error(`Error: --auth-state file not found: ${authStatePath}`);
+    process.exit(1);
+  }
+
   if (args.mcp) {
     console.error("  ● Spawning @playwright/mcp (action channel)…");
+    const mcpArgs: string[] = [];
+    if (authStatePath) {
+      mcpArgs.push("--storage-state", authStatePath);
+    }
     const handle = await createMcpController({
       headless: args.headless,
       cdpPort: args.mcpCdpPort,
       chromiumArgs: args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [],
+      mcpArgs,
     });
     return { controller: handle.controller, dispose: handle.dispose };
   }
@@ -1486,7 +1513,10 @@ async function openExploreSession(args: {
     handleSIGTERM: false,
     handleSIGHUP: false,
   });
-  const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: args.ignoreHTTPSErrors,
+    ...(authStatePath ? { storageState: authStatePath } : {}),
+  });
   const page = await context.newPage();
   return {
     controller: new PlaywrightBrowserController(page),
@@ -1524,6 +1554,7 @@ async function runExplore(args: ExploreArgs): Promise<void> {
     mcpCdpPort: args.mcpCdpPort,
     headless: args.headless,
     ignoreHTTPSErrors: args.ignoreHTTPSErrors,
+    authState: args.authState,
   });
 
   try {
@@ -1710,6 +1741,7 @@ async function runDrift(args: DriftArgs): Promise<void> {
     mcpCdpPort: args.mcpCdpPort,
     headless: args.headless,
     ignoreHTTPSErrors: args.ignoreHTTPSErrors,
+    authState: args.authState,
   });
 
   let report: DriftReport;

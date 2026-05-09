@@ -80,6 +80,8 @@ Slice 2 (AI agent) only needs `ANTHROPIC_API_KEY` — the agent uses raw `fetch`
 
 **Slice 2 polish: prompt caching** is enabled by default. The agent sends the system prompt as a text-block array with `cache_control: { type: "ephemeral" }`, so Anthropic caches the cumulative prefix (tools + system) up to that breakpoint. After the first turn, subsequent turns within the 5-minute TTL are billed at ~0.1x base rate for the cached prefix. Disable via `AnthropicAgentOptions.disablePromptCache`. The CLI logs per-turn token usage and a final cache hit-rate when `--ai-agent` is on.
 
+**Slice 3: auth support** lands `--auth-state <file>` on `explore` and `drift`. The flag accepts a Playwright `storageState` JSON file. On the direct-Playwright path it's passed to `browser.newContext({ storageState })`; on the MCP path it's forwarded to `@playwright/mcp` via its `--storage-state` flag so cookies and localStorage load before any navigation. The file path is validated upfront so missing paths fail fast. Sensitive-value redaction in the graph (the plan's "redact sensitive values" item) is deferred — the graph stores `page.url()` as-is, which the app controls; users who need redaction can post-process the graph or run `--scope` to limit observation.
+
 Commit `cbfcf9c` implemented the first stable slice:
 
 - `pw-crawl explore` CLI mode.
