@@ -560,8 +560,22 @@ function pathToFuncName(pathname: string): string {
   const segments = cleaned.split("/").filter(Boolean);
   return segments
     .map((seg, i) => {
-      if (i === 0) return seg;
-      return seg.charAt(0).toUpperCase() + seg.slice(1);
+      // Strip file extensions (e.g. ".html", ".php") and split on non-identifier chars
+      const words = seg.replace(/\.[a-z]+$/i, "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .split(/[\-_.]+/)
+        .filter(Boolean);
+      if (i === 0) {
+        return words.map((w, j) => {
+          const lower = w.toLowerCase();
+          if (j === 0) return lower;
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        }).join("");
+      }
+      return words.map((w) => {
+        const lower = w.toLowerCase();
+        return lower.charAt(0).toUpperCase() + lower.slice(1);
+      }).join("");
     })
     .join("");
 }
