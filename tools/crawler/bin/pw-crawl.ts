@@ -1580,15 +1580,11 @@ async function openExploreSession(args: {
 
   if (args.mcp) {
     console.error("  ● Spawning @playwright/mcp (action channel)…");
-    const mcpArgs: string[] = [];
-    if (authStatePath) {
-      mcpArgs.push("--storage-state", authStatePath);
-    }
     const handle = await createMcpController({
       headless: args.headless,
       cdpPort: args.mcpCdpPort,
       chromiumArgs: args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [],
-      mcpArgs,
+      ...(authStatePath ? { storageState: authStatePath } : {}),
     });
     return { controller: handle.controller, dispose: handle.dispose };
   }

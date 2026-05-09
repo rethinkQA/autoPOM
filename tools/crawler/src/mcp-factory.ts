@@ -11,7 +11,10 @@
  */
 
 import { createServer } from "node:net";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { chromium } from "playwright";
 import {
   McpBrowserController,
   type IMcpClient,
@@ -39,6 +42,13 @@ export interface CreateMcpControllerOptions extends McpControllerOptions {
   /** Pass additional Chromium launch arguments. */
   chromiumArgs?: string[];
 
+  /**
+   * Path to a Playwright `storageState` JSON file. Loaded into the persistent
+   * context before MCP attaches via CDP, so cookies / localStorage are
+   * available on the very first navigation.
+   */
+  storageState?: string;
+
   /** Inject a pre-built MCP client (escape hatch for tests / custom transports). */
   client?: IMcpClient;
 }
@@ -52,8 +62,13 @@ export interface McpControllerHandle {
 /**
  * Boot an MCP-driven browser controller.
  *
+ * Architecture: we launch Chromium via `launchPersistentContext` so a single
+ * context is created up-front, optionally pre-loaded with `storageState`.
+ * Both Playwright (this process) and `@playwright/mcp` (via `--cdp-endpoint`)
+ * see the same context, so authenticated runs work correctly.
+ *
  * The returned `dispose()` shuts down everything in reverse order:
- * MCP client → MCP child process → Playwright connection → Chromium.
+ * MCP client → MCP child process → BrowserContext → temp userDataDir.
  */
 export async function createMcpController(
   options: CreateMcpControllerOptions = {},
@@ -61,33 +76,32 @@ export async function createMcpController(
   const cdpPort = options.cdpPort ?? (await pickUnusedPort());
   const headless = options.headless ?? true;
 
-  // ── 1. Launch Chromium with CDP exposed ──────────────────
-  const browser: Browser = await chromium.launch({
-    headless,
-    args: [
-      `--remote-debugging-port=${cdpPort}`,
-      "--remote-debugging-address=127.0.0.1",
-      ...(options.chromiumArgs ?? []),
-    ],
-  });
-  const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
-
-  // ── 2. Connect Playwright to the same browser via CDP ───
-  // We keep two handles: the launched-instance `browser` (for shutdown) and
-  // the CDP-attached `cdp` (for picking up the MCP-driven page).
-  let cdp: Browser | null = null;
-  let context: BrowserContext;
-  let page: Page;
+  // ── 1. Launch Chromium with a single persistent context ──
+  //
+  // launchPersistentContext keeps everything in one context — that's the
+  // context MCP will see when it attaches via CDP. If `storageState` is
+  // provided, cookies / localStorage / sessionStorage are loaded immediately,
+  // so the first navigation runs as the authenticated user.
+  const userDataDir = await mkdtemp(join(tmpdir(), "pw-crawl-mcp-"));
+  let context;
   try {
-    cdp = await chromium.connectOverCDP(cdpEndpoint);
-    context = cdp.contexts()[0] ?? (await cdp.newContext());
-    page = context.pages()[0] ?? (await context.newPage());
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless,
+      ...(options.storageState ? { storageState: options.storageState } : {}),
+      args: [
+        `--remote-debugging-port=${cdpPort}`,
+        "--remote-debugging-address=127.0.0.1",
+        ...(options.chromiumArgs ?? []),
+      ],
+    });
   } catch (err) {
-    await browser.close().catch(() => {});
+    await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
     throw err;
   }
+  const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
+  const page = context.pages()[0] ?? (await context.newPage());
 
-  // ── 3. Start MCP and connect a client ────────────────────
+  // ── 2. Start MCP and connect a client ────────────────────
   let client: IMcpClient;
   try {
     if (options.client) {
@@ -101,8 +115,8 @@ export async function createMcpController(
       });
     }
   } catch (err) {
-    await cdp.close().catch(() => {});
-    await browser.close().catch(() => {});
+    await context.close().catch(() => {});
+    await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
     throw err;
   }
 
@@ -116,8 +130,8 @@ export async function createMcpController(
       // controller.dispose() closes the SDK client, which in turn closes the
       // stdio transport and terminates the spawned MCP child process.
       await controller.dispose();
-      await cdp?.close().catch(() => {});
-      await browser.close().catch(() => {});
+      await context.close().catch(() => {});
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
     },
   };
 }
