@@ -175,7 +175,15 @@ interface DriftArgs {
   aiBaseUrl?: string;
 }
 
-type CliArgs = CrawlArgs | GenerateArgs | RecordArgs | ExploreArgs | DriftArgs;
+interface AuthSetupArgs {
+  mode: "auth-setup";
+  url: string;
+  output?: string;
+  ignoreHTTPSErrors: boolean;
+  help: boolean;
+}
+
+type CliArgs = CrawlArgs | GenerateArgs | RecordArgs | ExploreArgs | DriftArgs | AuthSetupArgs;
 
 /** Validate that argv[index] exists and is not another flag. */
 function requireValue(argv: string[], index: number, flag: string): string {
@@ -321,7 +329,49 @@ function parseArgs(argv: string[]): CliArgs {
   if (argv[0] === "drift") {
     return parseDriftArgs(argv.slice(1));
   }
+  if (argv[0] === "auth-setup") {
+    return parseAuthSetupArgs(argv.slice(1));
+  }
   return parseCrawlArgs(argv);
+}
+
+function parseAuthSetupArgs(argv: string[]): AuthSetupArgs {
+  const args: AuthSetupArgs = {
+    mode: "auth-setup",
+    url: "",
+    ignoreHTTPSErrors: false,
+    help: false,
+  };
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case "-o":
+      case "--output":
+        args.output = requireValue(argv, ++i, arg);
+        break;
+      case "--ignore-https-errors":
+        args.ignoreHTTPSErrors = true;
+        break;
+      case "-h":
+      case "--help":
+        args.help = true;
+        break;
+      default:
+        if (!arg.startsWith("-") && !args.url) {
+          args.url = arg;
+        } else if (arg.startsWith("-")) {
+          console.error(`Unknown option: ${arg}`);
+          process.exit(1);
+        }
+        break;
+    }
+    i++;
+  }
+
+  return args;
 }
 
 function parseDriftArgs(argv: string[]): DriftArgs {
@@ -617,6 +667,7 @@ Usage:
   pw-crawl record <url> [options]                  Record mode (interactive)
   pw-crawl explore <url> [options]                 Autonomous exploration mode
   pw-crawl drift <url> [options]                   Replay-based drift detection
+  pw-crawl auth-setup <url> -o <file>              Capture a Playwright storageState file
   pw-crawl generate <manifests...> [options]       Generate page objects
 
 ── Crawl Mode ──────────────────────────────────────────────────
@@ -722,6 +773,23 @@ Options:
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
   --ai-base-url <url>      Custom API base URL
+
+── Auth-Setup Mode (Interactive) ───────────────────────────────
+
+  Opens a headed browser at <url> so you can complete a manual login (or
+  any other state setup). Press ENTER in this terminal when you're done and
+  the crawler captures the resulting Playwright storageState (cookies +
+  localStorage + sessionStorage) to the path you specify with -o. Pass that
+  file later via --auth-state on explore/drift to run as the authenticated
+  user. Press Ctrl+C to cancel without writing.
+
+Arguments:
+  <url>                    URL to navigate to before login (required)
+
+Options:
+  -o, --output <file>      Where to write the storageState JSON (required)
+  --ignore-https-errors    Skip TLS certificate validation
+  -h, --help               Show this help message
 
 ── Record Mode (Interactive) ───────────────────────────────────
 
@@ -1852,6 +1920,92 @@ async function runDrift(args: DriftArgs): Promise<void> {
   process.exit(report.unchanged ? 0 : 1);
 }
 
+// ── Auth-setup mode ─────────────────────────────────────────
+
+async function runAuthSetup(args: AuthSetupArgs): Promise<void> {
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (!args.url) {
+    console.error("Error: URL is required. Use --help for usage information.");
+    process.exit(1);
+  }
+
+  if (!args.output) {
+    console.error("Error: -o/--output <file> is required for auth-setup mode.");
+    process.exit(1);
+  }
+
+  if (!process.stdin.isTTY) {
+    console.error("Error: auth-setup is interactive and must run in a terminal (stdin is not a TTY).");
+    process.exit(1);
+  }
+
+  const outputPath = resolve(args.output);
+  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
+  const browser = await chromium.launch({
+    headless: false,
+    args: launchArgs,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
+
+  let saved = false;
+  try {
+    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
+    const page = await context.newPage();
+    await page.goto(args.url, { waitUntil: "domcontentloaded" });
+
+    console.error("");
+    console.error("  ● Browser open. Log in (or set up whatever state you need).");
+    console.error(`  ● When you're ready, press ENTER here to capture storage state to:`);
+    console.error(`      ${outputPath}`);
+    console.error("  ● Or press Ctrl+C to cancel without writing.");
+    console.error("");
+
+    await waitForEnter();
+
+    await mkdir(dirname(outputPath), { recursive: true });
+    await context.storageState({ path: outputPath });
+    saved = true;
+    console.error(`  ✓ Storage state written to ${outputPath}`);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+
+  if (!saved) process.exit(1);
+}
+
+function waitForEnter(): Promise<void> {
+  return new Promise((resolveEnter, rejectEnter) => {
+    const onData = (chunk: Buffer): void => {
+      // Newline-terminated input or just any data line — both are fine
+      if (chunk.length > 0) {
+        cleanup();
+        resolveEnter();
+      }
+    };
+    const onSigint = (): void => {
+      cleanup();
+      console.error("");
+      console.error("  ✗ auth-setup canceled — no file written.");
+      rejectEnter(new Error("canceled"));
+    };
+    const cleanup = (): void => {
+      process.stdin.off("data", onData);
+      process.off("SIGINT", onSigint);
+      process.stdin.pause();
+    };
+
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+    process.on("SIGINT", onSigint);
+  });
+}
+
 function manifestsToRoutes(manifests: Map<string, CrawlerManifest>): RouteManifest[] {
   const routes: RouteManifest[] = [];
   const used = new Set<string>();
@@ -1968,6 +2122,10 @@ async function main(): Promise<void> {
 
   if (args.mode === "drift") {
     return runDrift(args);
+  }
+
+  if (args.mode === "auth-setup") {
+    return runAuthSetup(args);
   }
 
   // ── Crawl mode (existing behavior) ─────────────────────
