@@ -44,8 +44,38 @@ export { labelToPropertyName, deduplicateNames, inferRouteName, safePathname } f
 // ── Agentic / heuristic exploration ────────────────────────
 
 export { explorePage, exploreWithController, createExplorationGraph, snapshotExplorationState } from "./explore.js";
-export { PlaywrightBrowserController } from "./browser-controller.js";
+export {
+  PlaywrightBrowserController,
+  selectLocatorStrategy,
+  resolveActionLocator,
+} from "./browser-controller.js";
+export type { LocatorStrategy, LocatorSelection } from "./browser-controller.js";
 export { extractActionCandidates, classifyActionRisk } from "./explore-planner.js";
+
+// ── Replay-based drift detection ────────────────────────────
+
+export {
+  validateExplorationGraph,
+  loadExplorationGraph,
+  loadBaselineManifests,
+  planReplayPaths,
+  replayGraph,
+  formatDriftReport,
+  hasResolvableLocator,
+  GraphValidationError,
+} from "./replay.js";
+
+export type {
+  DriftReport,
+  ManifestDriftResult,
+  ReplayPath,
+  ReplayPathResult,
+  ReplayPathStatus,
+  ReplayFailure,
+  ReplayOptions,
+  PlanReplayOptions,
+  BaselinePresence,
+} from "./replay.js";
 
 // ── Types ───────────────────────────────────────────────────
 

@@ -36,6 +36,15 @@ import type { ApiDependency, CrawlerManifest, ManifestGroup } from "../src/types
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
 import type { AiProviderName, AiProvider, AiPageSummary } from "../src/ai/types.js";
 import type { ExploreStrategy } from "../src/explore-types.js";
+import {
+  formatDriftReport,
+  loadBaselineManifests,
+  loadExplorationGraph,
+  replayGraph,
+  GraphValidationError,
+  type DriftReport,
+} from "../src/replay.js";
+import { PlaywrightBrowserController } from "../src/browser-controller.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -133,7 +142,26 @@ interface ExploreArgs {
   aiBaseUrl?: string;
 }
 
-type CliArgs = CrawlArgs | GenerateArgs | RecordArgs | ExploreArgs;
+interface DriftArgs {
+  mode: "drift";
+  url: string;
+  graph?: string;
+  manifests?: string;
+  output?: string;
+  scope?: string;
+  observeNetwork: boolean;
+  headless: boolean;
+  ignoreHTTPSErrors: boolean;
+  maxPaths?: number;
+  json: boolean;
+  help: boolean;
+  aiProvider?: AiProviderName;
+  aiModel?: string;
+  aiKey?: string;
+  aiBaseUrl?: string;
+}
+
+type CliArgs = CrawlArgs | GenerateArgs | RecordArgs | ExploreArgs | DriftArgs;
 
 /** Validate that argv[index] exists and is not another flag. */
 function requireValue(argv: string[], index: number, flag: string): string {
@@ -276,7 +304,88 @@ function parseArgs(argv: string[]): CliArgs {
   if (argv[0] === "explore") {
     return parseExploreArgs(argv.slice(1));
   }
+  if (argv[0] === "drift") {
+    return parseDriftArgs(argv.slice(1));
+  }
   return parseCrawlArgs(argv);
+}
+
+function parseDriftArgs(argv: string[]): DriftArgs {
+  const args: DriftArgs = {
+    mode: "drift",
+    url: "",
+    observeNetwork: true,
+    headless: true,
+    ignoreHTTPSErrors: false,
+    json: false,
+    help: false,
+  };
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case "--graph":
+        args.graph = requireValue(argv, ++i, arg);
+        break;
+      case "--manifests":
+        args.manifests = requireValue(argv, ++i, arg);
+        break;
+      case "-o":
+      case "--output":
+        args.output = requireValue(argv, ++i, arg);
+        break;
+      case "--scope":
+        args.scope = requireValue(argv, ++i, arg);
+        break;
+      case "--observe-network":
+        args.observeNetwork = true;
+        break;
+      case "--no-observe-network":
+        args.observeNetwork = false;
+        break;
+      case "--headed":
+        args.headless = false;
+        break;
+      case "--ignore-https-errors":
+        args.ignoreHTTPSErrors = true;
+        break;
+      case "--max-paths":
+        args.maxPaths = parsePositiveIntFlag(argv, ++i, arg);
+        break;
+      case "--json":
+        args.json = true;
+        break;
+      case "--ai-provider":
+        args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
+        break;
+      case "--ai-model":
+        args.aiModel = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-key":
+        args.aiKey = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-base-url":
+        args.aiBaseUrl = requireValue(argv, ++i, arg);
+        break;
+      case "-h":
+      case "--help":
+        args.help = true;
+        break;
+      default:
+        if (!arg.startsWith("-") && !args.url) {
+          args.url = arg;
+        } else if (arg.startsWith("-")) {
+          console.error(`Unknown option: ${arg}`);
+          process.exit(1);
+        }
+        break;
+    }
+    i++;
+  }
+
+  return args;
 }
 
 function parseRecordArgs(argv: string[]): RecordArgs {
@@ -454,6 +563,7 @@ Usage:
   pw-crawl <url> [options]                         Crawl a page
   pw-crawl record <url> [options]                  Record mode (interactive)
   pw-crawl explore <url> [options]                 Autonomous exploration mode
+  pw-crawl drift <url> [options]                   Replay-based drift detection
   pw-crawl generate <manifests...> [options]       Generate page objects
 
 ── Crawl Mode ──────────────────────────────────────────────────
@@ -501,6 +611,32 @@ Options:
   --headed                 Run browser in headed mode (visible)
   --check                  Compare generated files with existing outputs; exit 1 on drift
   --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
+  --ai-model <model>       AI model override (default: per-provider)
+  --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
+  --ai-base-url <url>      Custom API base URL
+
+── Drift Mode (Deterministic Replay) ────────────────────────
+
+  Replays a saved exploration graph against the current app, rescans each
+  reached state, and compares the result to baseline manifests. Useful in CI
+  to catch renamed buttons, removed dialogs, broken navigation, and missing
+  API calls without re-running full agentic exploration.
+
+Arguments:
+  <url>                    URL of the page to drift-check (required)
+
+Options:
+  --graph <file>           Path to the exploration graph JSON (required)
+  --manifests <dir>        Directory of baseline route manifests (optional)
+  -o, --output <file>      Write the drift report JSON to this file
+  --scope <selector>       Limit rescans to a CSS selector
+  --observe-network        Capture API dependencies during rescans (default: on)
+  --no-observe-network     Disable API dependency capture
+  --headed                 Run browser in headed mode (visible)
+  --ignore-https-errors    Skip TLS certificate validation
+  --max-paths <n>          Limit how many planned paths get replayed
+  --json                   Emit the drift report as JSON to stdout
+  --ai-provider <name>     Use AI discovery during rescans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
   --ai-base-url <url>      Custom API base URL
@@ -1397,6 +1533,101 @@ async function runExplore(args: ExploreArgs): Promise<void> {
   }
 }
 
+// ── Drift mode ──────────────────────────────────────────────
+
+async function runDrift(args: DriftArgs): Promise<void> {
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (!args.url) {
+    console.error("Error: URL is required. Use --help for usage information.");
+    process.exit(1);
+  }
+
+  if (!args.graph) {
+    console.error("Error: --graph <file> is required for drift mode.");
+    process.exit(1);
+  }
+
+  let graph;
+  try {
+    graph = await loadExplorationGraph(args.graph);
+  } catch (err) {
+    if (err instanceof GraphValidationError) {
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  let baselines: Map<string, CrawlerManifest> | undefined;
+  if (args.manifests) {
+    try {
+      baselines = await loadBaselineManifests(args.manifests);
+    } catch (err) {
+      if (err instanceof GraphValidationError) {
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+      throw err;
+    }
+  }
+
+  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
+  const browser = await chromium.launch({
+    headless: args.headless,
+    args: launchArgs,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
+
+  let report: DriftReport;
+  try {
+    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
+    const page = await context.newPage();
+
+    let aiProvider: AiProvider | undefined;
+    if (args.aiProvider) {
+      const { createAiProvider } = await import("../src/ai/provider.js");
+      aiProvider = await createAiProvider({
+        provider: args.aiProvider,
+        model: args.aiModel,
+        apiKey: args.aiKey,
+        baseUrl: args.aiBaseUrl,
+      });
+    }
+
+    console.error(`  ● Replaying ${args.graph} against ${args.url}…`);
+    report = await replayGraph(new PlaywrightBrowserController(page), graph, {
+      baselines,
+      scope: args.scope,
+      observeNetwork: args.observeNetwork,
+      aiProvider,
+      maxPaths: args.maxPaths,
+    });
+  } finally {
+    await browser.close();
+  }
+
+  if (args.output) {
+    const outputPath = resolve(args.output);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, JSON.stringify(report, null, 2) + "\n", "utf-8");
+    console.error(`  ✓ Drift report written to ${outputPath}`);
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(formatDriftReport(report));
+  }
+
+  process.exit(report.unchanged ? 0 : 1);
+}
+
 function manifestsToRoutes(manifests: Map<string, CrawlerManifest>): RouteManifest[] {
   const routes: RouteManifest[] = [];
   const used = new Set<string>();
@@ -1509,6 +1740,10 @@ async function main(): Promise<void> {
 
   if (args.mode === "explore") {
     return runExplore(args);
+  }
+
+  if (args.mode === "drift") {
+    return runDrift(args);
   }
 
   // ── Crawl mode (existing behavior) ─────────────────────

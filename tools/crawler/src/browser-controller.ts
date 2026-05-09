@@ -7,7 +7,7 @@
  */
 
 import type { Locator, Page } from "playwright";
-import type { ExplorationAction, ExplorationActionCandidate } from "./explore-types.js";
+import type { ActionLocatorHint, ExplorationAction, ExplorationActionCandidate } from "./explore-types.js";
 
 /** Browser control contract used by exploration orchestration. */
 export interface IBrowserController {
@@ -45,10 +45,10 @@ export class PlaywrightBrowserController implements IBrowserController {
       case "click":
       case "navigate":
       case "submit":
-        await resolveActionLocator(this._page, action).click({ timeout: 5_000 });
+        await resolveActionLocator(this._page, action.locator, action.label).click({ timeout: 5_000 });
         return;
       case "hover":
-        await resolveActionLocator(this._page, action).hover({ timeout: 5_000 });
+        await resolveActionLocator(this._page, action.locator, action.label).hover({ timeout: 5_000 });
         return;
       default:
         throw new Error(`Unsupported exploration action kind: ${action.kind}`);
@@ -67,28 +67,53 @@ export class PlaywrightBrowserController implements IBrowserController {
 
 // ── Locator resolution ──────────────────────────────────────
 
-function resolveActionLocator(page: Page, action: ExplorationActionCandidate | ExplorationAction): Locator {
-  const hint = action.locator;
+/** Strategy chosen when resolving an `ActionLocatorHint` into a Playwright locator. */
+export type LocatorStrategy = "role" | "label" | "testId" | "text" | "selector" | "none";
 
-  if (hint.role && hint.name) {
-    return page.getByRole(hint.role as Parameters<Page["getByRole"]>[0], { name: hint.name, exact: true }).first();
+/** Selection result returned by {@link selectLocatorStrategy}. */
+export interface LocatorSelection {
+  /** Strategy that will be used by {@link resolveActionLocator}. */
+  strategy: LocatorStrategy;
+
+  /** Strategy-specific detail (e.g. role or selector value) for diagnostics. */
+  detail?: string;
+}
+
+/**
+ * Determine, deterministically, which replay strategy will be used for a given
+ * locator hint. Pure function — does not touch a `Page` so it can be unit-tested
+ * without a browser. Mirrors the priority used by {@link resolveActionLocator}.
+ */
+export function selectLocatorStrategy(hint: ActionLocatorHint): LocatorSelection {
+  if (hint.role && hint.name) return { strategy: "role", detail: `${hint.role}:${hint.name}` };
+  if (hint.label) return { strategy: "label", detail: hint.label };
+  if (hint.testId) return { strategy: "testId", detail: hint.testId };
+  if (hint.text) return { strategy: "text", detail: hint.text };
+  if (hint.selector) return { strategy: "selector", detail: hint.selector };
+  return { strategy: "none" };
+}
+
+/**
+ * Resolve an `ActionLocatorHint` into a Playwright `Locator` using the priority
+ * order: role+accessible name → label → test id → exact text → CSS selector.
+ *
+ * Throws if the hint contains no resolvable identity.
+ */
+export function resolveActionLocator(page: Page, hint: ActionLocatorHint, label?: string): Locator {
+  const selection = selectLocatorStrategy(hint);
+
+  switch (selection.strategy) {
+    case "role":
+      return page.getByRole(hint.role as Parameters<Page["getByRole"]>[0], { name: hint.name!, exact: true }).first();
+    case "label":
+      return page.getByLabel(hint.label!, { exact: true }).first();
+    case "testId":
+      return page.getByTestId(hint.testId!).first();
+    case "text":
+      return page.getByText(hint.text!, { exact: true }).first();
+    case "selector":
+      return page.locator(hint.selector!).first();
+    default:
+      throw new Error(`Action has no replayable locator${label ? `: ${label}` : ""}`);
   }
-
-  if (hint.label) {
-    return page.getByLabel(hint.label, { exact: true }).first();
-  }
-
-  if (hint.testId) {
-    return page.getByTestId(hint.testId).first();
-  }
-
-  if (hint.text) {
-    return page.getByText(hint.text, { exact: true }).first();
-  }
-
-  if (hint.selector) {
-    return page.locator(hint.selector).first();
-  }
-
-  throw new Error(`Action has no replayable locator: ${action.label}`);
 }
