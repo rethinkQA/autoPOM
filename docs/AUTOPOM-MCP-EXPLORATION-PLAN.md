@@ -78,6 +78,8 @@ npm install --save-optional @playwright/mcp @modelcontextprotocol/sdk
 
 Slice 2 (AI agent) only needs `ANTHROPIC_API_KEY` — the agent uses raw `fetch`, no SDK dep.
 
+**Slice 2 polish: prompt caching** is enabled by default. The agent sends the system prompt as a text-block array with `cache_control: { type: "ephemeral" }`, so Anthropic caches the cumulative prefix (tools + system) up to that breakpoint. After the first turn, subsequent turns within the 5-minute TTL are billed at ~0.1x base rate for the cached prefix. Disable via `AnthropicAgentOptions.disablePromptCache`. The CLI logs per-turn token usage and a final cache hit-rate when `--ai-agent` is on.
+
 Commit `cbfcf9c` implemented the first stable slice:
 
 - `pw-crawl explore` CLI mode.

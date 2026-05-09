@@ -1551,10 +1551,23 @@ async function runExplore(args: ExploreArgs): Promise<void> {
 
     let result;
     if (args.aiAgent) {
+      let totalInput = 0;
+      let totalCacheRead = 0;
+      let totalCacheCreation = 0;
+      let totalOutput = 0;
       const agent = createAnthropicAgent({
         apiKey: args.aiKey,
         model: args.aiModel,
         baseUrl: args.aiBaseUrl,
+        onUsage: (usage) => {
+          totalInput += usage.inputTokens;
+          totalCacheRead += usage.cacheReadInputTokens;
+          totalCacheCreation += usage.cacheCreationInputTokens;
+          totalOutput += usage.outputTokens;
+          console.error(
+            `  agent usage: input=${usage.inputTokens} cache_read=${usage.cacheReadInputTokens} cache_create=${usage.cacheCreationInputTokens} output=${usage.outputTokens}`,
+          );
+        },
       });
       result = await exploreWithAgent(session.controller, agent, args.url, {
         scope: args.scope,
@@ -1564,6 +1577,13 @@ async function runExplore(args: ExploreArgs): Promise<void> {
         strategy: args.strategy,
         log: (line) => console.error(`  ${line}`),
       });
+      const totalCached = totalCacheRead + totalCacheCreation;
+      if (totalCached > 0) {
+        const hitRate = totalCached === 0 ? 0 : totalCacheRead / totalCached;
+        console.error(
+          `  ✓ Agent totals: input=${totalInput} cache_read=${totalCacheRead} cache_create=${totalCacheCreation} output=${totalOutput} (cache hit ${(hitRate * 100).toFixed(1)}%)`,
+        );
+      }
     } else {
       result = await exploreWithController(session.controller, args.url, {
         scope: args.scope,

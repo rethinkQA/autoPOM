@@ -6,6 +6,7 @@
 
 import { test, expect } from "@playwright/test";
 import {
+  buildAnthropicRequest,
   extractDecision,
   formatObservationMessage,
 } from "../../src/ai/agent-anthropic.js";
@@ -193,5 +194,71 @@ test.describe("Anthropic agent — formatObservationMessage", () => {
   test("falls back to 'no candidates' message when visibleActions is empty", () => {
     const text = formatObservationMessage(makeObservation());
     expect(text).toContain("No visible action candidates");
+  });
+});
+
+// ── buildAnthropicRequest ───────────────────────────────────
+
+test.describe("Anthropic agent — buildAnthropicRequest", () => {
+  function makeObservation(overrides: Partial<AgentObservation> = {}): AgentObservation {
+    return {
+      iteration: 0,
+      url: "http://localhost/",
+      routeTemplate: "/",
+      title: "Demo",
+      manifestGroupKeys: [],
+      visibleActions: [],
+      recentHistory: [],
+      budget: { actionsRemaining: 10, maxActions: 10 },
+      ...overrides,
+    };
+  }
+
+  test("emits system as a text-block array with cache_control by default", () => {
+    const body = buildAnthropicRequest(makeObservation(), {
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 512,
+      systemPrompt: "system text",
+      toolChoice: { type: "auto" },
+      enablePromptCache: true,
+    });
+
+    expect(body.system).toEqual([
+      { type: "text", text: "system text", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(body.tool_choice).toEqual({ type: "auto" });
+    expect(body.tools.length).toBeGreaterThan(0);
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0].role).toBe("user");
+  });
+
+  test("omits cache_control when caching is disabled", () => {
+    const body = buildAnthropicRequest(makeObservation(), {
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 512,
+      systemPrompt: "system text",
+      toolChoice: { type: "auto" },
+      enablePromptCache: false,
+    });
+
+    expect(body.system).toEqual([{ type: "text", text: "system text" }]);
+  });
+
+  test("user message contains the formatted observation", () => {
+    const observation = makeObservation({ url: "http://localhost/products", title: "Products" });
+    const body = buildAnthropicRequest(observation, {
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 512,
+      systemPrompt: "sys",
+      toolChoice: { type: "auto" },
+      enablePromptCache: true,
+    });
+
+    const block = body.messages[0].content[0];
+    expect(block).toMatchObject({ type: "text" });
+    if (block.type === "text") {
+      expect(block.text).toContain("URL: http://localhost/products");
+      expect(block.text).toContain("Title: Products");
+    }
   });
 });

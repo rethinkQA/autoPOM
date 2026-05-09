@@ -69,8 +69,14 @@ export {
   createAnthropicAgent,
   extractDecision,
   formatObservationMessage,
+  buildAnthropicRequest,
 } from "./ai/agent-anthropic.js";
-export type { AnthropicAgentOptions } from "./ai/agent-anthropic.js";
+export type {
+  AnthropicAgentOptions,
+  AnthropicAgentUsage,
+  AnthropicRequestBody,
+  AnthropicRequestConfig,
+} from "./ai/agent-anthropic.js";
 
 // ── MCP-backed browser controller (Slice 1) ────────────────
 

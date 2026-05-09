@@ -22,6 +22,21 @@ import type { ActionLocatorHint } from "../explore-types.js";
 
 // ── Configuration ───────────────────────────────────────────
 
+/** Token usage stats reported by Anthropic for a single Messages API call. */
+export interface AnthropicAgentUsage {
+  /** Non-cached input tokens billed at full rate. */
+  inputTokens: number;
+
+  /** Tokens written into the prompt cache during this call (5x base rate). */
+  cacheCreationInputTokens: number;
+
+  /** Tokens read from the prompt cache during this call (0.1x base rate). */
+  cacheReadInputTokens: number;
+
+  /** Output tokens. */
+  outputTokens: number;
+}
+
 /** Options for {@link createAnthropicAgent}. */
 export interface AnthropicAgentOptions {
   /** API key (falls back to `ANTHROPIC_API_KEY` env). */
@@ -41,6 +56,15 @@ export interface AnthropicAgentOptions {
 
   /** Optional model-side tool-choice override. */
   toolChoice?: { type: "auto" } | { type: "tool"; name: string };
+
+  /**
+   * Disable prompt caching. Defaults to false — caching is on so agent loops
+   * pay full rate only on the first turn and ~0.1x rate on subsequent turns.
+   */
+  disablePromptCache?: boolean;
+
+  /** Optional callback invoked once per Messages API call with token usage stats. */
+  onUsage?: (usage: AnthropicAgentUsage) => void;
 }
 
 /** Default model when `options.model` is omitted. */
@@ -154,12 +178,82 @@ type AnthropicContentBlock =
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string };
 
+/** Cache breakpoint marker. */
+type CacheControl = { type: "ephemeral" };
+
+/** Anthropic system block in array form (required for cache_control). */
+interface AnthropicSystemBlock {
+  type: "text";
+  text: string;
+  cache_control?: CacheControl;
+}
+
 interface AnthropicMessagesResponse {
   content: AnthropicContentBlock[];
   stop_reason?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+}
+
+/** Request body shape Anthropic's `/v1/messages` accepts. */
+export interface AnthropicRequestBody {
+  model: string;
+  max_tokens: number;
+  system: AnthropicSystemBlock[];
+  tools: ReadonlyArray<unknown>;
+  tool_choice: { type: "auto" } | { type: "tool"; name: string };
+  messages: AnthropicMessage[];
 }
 
 // ── Agent implementation ────────────────────────────────────
+
+/** Resolved configuration used by {@link buildAnthropicRequest}. */
+export interface AnthropicRequestConfig {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  toolChoice: { type: "auto" } | { type: "tool"; name: string };
+  enablePromptCache: boolean;
+}
+
+/**
+ * Build the request body sent to Anthropic's `/v1/messages` for one agent
+ * decision. Pure function — extracted so tests can verify the cache_control
+ * shape without a live API.
+ *
+ * Caching strategy: a single `cache_control: ephemeral` breakpoint is placed
+ * on the system block. Anthropic caches the cumulative prefix (tools + system
+ * up to the breakpoint), which is fully static across turns. Subsequent calls
+ * within the cache TTL pay 0.1x base rate for the cached prefix.
+ */
+export function buildAnthropicRequest(
+  observation: AgentObservation,
+  config: AnthropicRequestConfig,
+): AnthropicRequestBody {
+  const systemBlock: AnthropicSystemBlock = {
+    type: "text",
+    text: config.systemPrompt,
+    ...(config.enablePromptCache ? { cache_control: { type: "ephemeral" } as const } : {}),
+  };
+
+  return {
+    model: config.model,
+    max_tokens: config.maxTokens,
+    system: [systemBlock],
+    tools: TOOLS,
+    tool_choice: config.toolChoice,
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: formatObservationMessage(observation) }],
+      },
+    ],
+  };
+}
 
 /** Build an Anthropic-backed exploration agent. */
 export function createAnthropicAgent(options: AnthropicAgentOptions = {}): IExplorationAgent {
@@ -169,40 +263,32 @@ export function createAnthropicAgent(options: AnthropicAgentOptions = {}): IExpl
       "Missing API key for anthropic agent. Set ANTHROPIC_API_KEY or pass --ai-key.",
     );
   }
-  const model = options.model ?? DEFAULT_MODEL;
+  const config: AnthropicRequestConfig = {
+    model: options.model ?? DEFAULT_MODEL,
+    maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+    systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    toolChoice: options.toolChoice ?? { type: "auto" },
+    enablePromptCache: options.disablePromptCache !== true,
+  };
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
-  const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-  const toolChoice = options.toolChoice ?? { type: "auto" };
 
   return {
-    name: `anthropic:${model}`,
+    name: `anthropic:${config.model}`,
     async decide(observation: AgentObservation): Promise<AgentDecision> {
-      const message = formatObservationMessage(observation);
-      const response = await callAnthropic({
-        apiKey,
-        baseUrl,
-        body: {
-          model,
-          max_tokens: maxTokens,
-          system: systemPrompt,
-          tools: TOOLS,
-          tool_choice: toolChoice,
-          messages: [
-            {
-              role: "user",
-              content: [{ type: "text", text: message }],
-            },
-          ],
-        },
-      });
+      const body = buildAnthropicRequest(observation, config);
+      const response = await callAnthropic({ apiKey, baseUrl, body });
+
+      if (options.onUsage && response.usage) {
+        options.onUsage({
+          inputTokens: response.usage.input_tokens ?? 0,
+          cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
+          cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+          outputTokens: response.usage.output_tokens ?? 0,
+        });
+      }
 
       const decision = extractDecision(response);
-      if (!decision) {
-        const fallback = pickFallback(observation);
-        return fallback;
-      }
-      return decision;
+      return decision ?? pickFallback(observation);
     },
   };
 }
@@ -210,14 +296,7 @@ export function createAnthropicAgent(options: AnthropicAgentOptions = {}): IExpl
 interface CallArgs {
   apiKey: string;
   baseUrl: string;
-  body: {
-    model: string;
-    max_tokens: number;
-    system: string;
-    tools: typeof TOOLS;
-    tool_choice: { type: "auto" } | { type: "tool"; name: string };
-    messages: AnthropicMessage[];
-  };
+  body: AnthropicRequestBody;
 }
 
 async function callAnthropic(args: CallArgs): Promise<AnthropicMessagesResponse> {
