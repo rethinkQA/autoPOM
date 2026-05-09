@@ -52,6 +52,19 @@ export {
 export type { LocatorStrategy, LocatorSelection } from "./browser-controller.js";
 export { extractActionCandidates, classifyActionRisk } from "./explore-planner.js";
 
+// ── Assisted repair (Slice 4) ──────────────────────────────
+
+export { suggestRepairs } from "./repair.js";
+export type {
+  IRepairAgent,
+  RepairContext,
+  RepairDecision,
+  RepairHistoryEntry,
+  RepairReport,
+  RepairSuggestion,
+  SuggestRepairsOptions,
+} from "./repair-types.js";
+
 // ── AI-driven exploration agent (Slice 2) ──────────────────
 
 export { exploreWithAgent } from "./agent-explore.js";
@@ -67,13 +80,19 @@ export type {
 } from "./agent-types.js";
 export {
   createAnthropicAgent,
+  createAnthropicRepairAgent,
   extractDecision,
+  extractRepairDecision,
   formatObservationMessage,
+  formatRepairContextMessage,
   buildAnthropicRequest,
+  buildAnthropicRepairRequest,
 } from "./ai/agent-anthropic.js";
 export type {
   AnthropicAgentOptions,
   AnthropicAgentUsage,
+  AnthropicRepairAgentOptions,
+  AnthropicRepairRequestConfig,
   AnthropicRequestBody,
   AnthropicRequestConfig,
 } from "./ai/agent-anthropic.js";

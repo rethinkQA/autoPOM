@@ -19,6 +19,11 @@ import type {
   IExplorationAgent,
 } from "../agent-types.js";
 import type { ActionLocatorHint } from "../explore-types.js";
+import type {
+  IRepairAgent,
+  RepairContext,
+  RepairDecision,
+} from "../repair-types.js";
 
 // ── Configuration ───────────────────────────────────────────
 
@@ -445,4 +450,242 @@ function formatHistoryDecision(decision: AgentObservation["recentHistory"][numbe
     case "stop":
       return `stop(${decision.reason})`;
   }
+}
+
+// ── Repair agent (assisted drift refresh) ───────────────────
+
+/** Options for {@link createAnthropicRepairAgent}. */
+export interface AnthropicRepairAgentOptions extends Omit<AnthropicAgentOptions, "toolChoice"> {
+  /** Optional model-side tool-choice override. */
+  toolChoice?: { type: "auto" } | { type: "tool"; name: string };
+}
+
+const DEFAULT_REPAIR_SYSTEM_PROMPT = `You suggest a replacement locator for a single failed action during drift replay of a previously-explored web app.
+
+You receive:
+- the saved action (label, kind, locator)
+- the failure reason (typically a Playwright timeout or selector mismatch)
+- the current page URL and title at the failure point
+- the visible action candidates currently available, with indices
+- the path of successful actions that led up to the failure
+
+Choose exactly one tool:
+- replace_with_candidate(index, label?, rationale): pick from visibleCandidates when one of them clearly matches the saved action's intent
+- replace_with_locator(locator, label, rationale): construct a fresh locator (role+name preferred) when nothing in the visible list fits
+- give_up(reason): no acceptable replacement exists
+
+Rules:
+- Prefer replace_with_candidate when a candidate clearly serves the same purpose.
+- Prefer role+name locators; only fall back to label/testId/text/selector when no role+name pair is available.
+- Do not propose destructive replacements (delete, sign out, purchase, checkout, reset, confirm).
+- Keep rationales to one short sentence — focus on why this replacement preserves the original intent.`;
+
+const REPAIR_TOOLS = [
+  {
+    name: "replace_with_candidate",
+    description:
+      "Replace the failed action with one of the currently visible candidates by index.",
+    input_schema: {
+      type: "object",
+      properties: {
+        index: { type: "integer", minimum: 0 },
+        label: { type: "string", description: "Optional updated label to record." },
+        rationale: { type: "string" },
+      },
+      required: ["index", "rationale"],
+    },
+  },
+  {
+    name: "replace_with_locator",
+    description:
+      "Replace the failed action with a custom locator. Prefer role+name; fall back to label, testId, text, or selector.",
+    input_schema: {
+      type: "object",
+      properties: {
+        locator: {
+          type: "object",
+          properties: {
+            role: { type: "string" },
+            name: { type: "string" },
+            label: { type: "string" },
+            testId: { type: "string" },
+            text: { type: "string" },
+            selector: { type: "string" },
+          },
+        },
+        label: { type: "string" },
+        rationale: { type: "string" },
+      },
+      required: ["locator", "label", "rationale"],
+    },
+  },
+  {
+    name: "give_up",
+    description: "No acceptable replacement exists.",
+    input_schema: {
+      type: "object",
+      properties: { reason: { type: "string" } },
+      required: ["reason"],
+    },
+  },
+] as const;
+
+/** Resolved configuration used by {@link buildAnthropicRepairRequest}. */
+export interface AnthropicRepairRequestConfig {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  toolChoice: { type: "auto" } | { type: "tool"; name: string };
+  enablePromptCache: boolean;
+}
+
+/**
+ * Build the request body for one repair decision. Pure — exported so the
+ * cache_control shape is unit-testable without a live API.
+ */
+export function buildAnthropicRepairRequest(
+  context: RepairContext,
+  config: AnthropicRepairRequestConfig,
+): AnthropicRequestBody {
+  const systemBlock: AnthropicSystemBlock = {
+    type: "text",
+    text: config.systemPrompt,
+    ...(config.enablePromptCache ? { cache_control: { type: "ephemeral" } as const } : {}),
+  };
+
+  return {
+    model: config.model,
+    max_tokens: config.maxTokens,
+    system: [systemBlock],
+    tools: REPAIR_TOOLS,
+    tool_choice: config.toolChoice,
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: formatRepairContextMessage(context) }],
+      },
+    ],
+  };
+}
+
+/** Build an Anthropic-backed repair agent. */
+export function createAnthropicRepairAgent(
+  options: AnthropicRepairAgentOptions = {},
+): IRepairAgent {
+  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "Missing API key for anthropic repair agent. Set ANTHROPIC_API_KEY or pass --ai-key.",
+    );
+  }
+  const config: AnthropicRepairRequestConfig = {
+    model: options.model ?? DEFAULT_MODEL,
+    maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+    systemPrompt: options.systemPrompt ?? DEFAULT_REPAIR_SYSTEM_PROMPT,
+    toolChoice: options.toolChoice ?? { type: "auto" },
+    enablePromptCache: options.disablePromptCache !== true,
+  };
+  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+
+  return {
+    name: `anthropic-repair:${config.model}`,
+    async suggest(context: RepairContext): Promise<RepairDecision> {
+      const body = buildAnthropicRepairRequest(context, config);
+      const response = await callAnthropic({ apiKey, baseUrl, body });
+
+      if (options.onUsage && response.usage) {
+        options.onUsage({
+          inputTokens: response.usage.input_tokens ?? 0,
+          cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
+          cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+          outputTokens: response.usage.output_tokens ?? 0,
+        });
+      }
+
+      const decision = extractRepairDecision(response);
+      return decision ?? { kind: "give_up", reason: "agent returned no tool_use" };
+    },
+  };
+}
+
+/** Translate Claude's tool_use block into a `RepairDecision`. */
+export function extractRepairDecision(
+  response: { content: Array<Record<string, unknown>> },
+): RepairDecision | null {
+  const block = response.content?.find(
+    (b): b is { type: "tool_use"; name: string; input: Record<string, unknown> } =>
+      b.type === "tool_use" && typeof b.name === "string" && typeof b.input === "object" && b.input !== null,
+  );
+  if (!block) return null;
+
+  switch (block.name) {
+    case "replace_with_candidate": {
+      const index = numberOrThrow(block.input, "index");
+      const label = stringOrUndefined(block.input, "label");
+      const rationale = stringOrUndefined(block.input, "rationale") ?? "";
+      return { kind: "replace_with_candidate", index, label, rationale };
+    }
+    case "replace_with_locator": {
+      const rawLocator = (block.input as { locator?: unknown }).locator;
+      if (!rawLocator || typeof rawLocator !== "object") return null;
+      const locator = sanitizeRepairLocator(rawLocator as Record<string, unknown>);
+      const label = stringOrThrow(block.input, "label");
+      const rationale = stringOrUndefined(block.input, "rationale") ?? "";
+      return { kind: "replace_with_locator", locator, label, rationale };
+    }
+    case "give_up": {
+      const reason = stringOrUndefined(block.input, "reason") ?? "agent gave up without explicit reason";
+      return { kind: "give_up", reason };
+    }
+    default:
+      return null;
+  }
+}
+
+function sanitizeRepairLocator(raw: Record<string, unknown>): ActionLocatorHint {
+  const result: ActionLocatorHint = {};
+  if (typeof raw.role === "string") result.role = raw.role;
+  if (typeof raw.name === "string") result.name = raw.name;
+  if (typeof raw.label === "string") result.label = raw.label;
+  if (typeof raw.testId === "string") result.testId = raw.testId;
+  if (typeof raw.text === "string") result.text = raw.text;
+  if (typeof raw.selector === "string") result.selector = raw.selector;
+  return result;
+}
+
+/** Format a repair context as a single user message. */
+export function formatRepairContextMessage(context: RepairContext): string {
+  const lines: string[] = [];
+  const { failedAction } = context;
+  lines.push(`Failed action: ${failedAction.id}`);
+  lines.push(`  kind: ${failedAction.kind}`);
+  lines.push(`  label: "${failedAction.label}"`);
+  lines.push(`  saved locator: ${JSON.stringify(failedAction.locator)}`);
+  lines.push(`  failure reason: ${context.failureReason}`);
+  lines.push("");
+  lines.push(`Current page: ${context.pageUrl}`);
+  lines.push(`Title: ${context.pageTitle}`);
+
+  if (context.history.length > 0) {
+    lines.push("");
+    lines.push(`Path leading to failure (${context.history.length} successful step(s)):`);
+    for (const entry of context.history) {
+      lines.push(`  - ${entry.actionId} ${entry.kind} "${entry.label}"`);
+    }
+  }
+
+  lines.push("");
+  if (context.visibleCandidates.length === 0) {
+    lines.push("No visible action candidates at the failure point. Use replace_with_locator or give_up.");
+  } else {
+    lines.push(`Visible action candidates (${context.visibleCandidates.length}):`);
+    for (const candidate of context.visibleCandidates) {
+      const role = candidate.role ? ` ${candidate.role}` : "";
+      lines.push(
+        `  [${candidate.index}]${role} "${candidate.label}" — kind=${candidate.kind} risk=${candidate.risk}`,
+      );
+    }
+  }
+
+  return lines.join("\n");
 }

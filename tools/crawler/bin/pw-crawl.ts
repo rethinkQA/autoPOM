@@ -48,6 +48,8 @@ import {
 } from "../src/replay.js";
 import { PlaywrightBrowserController, type IBrowserController } from "../src/browser-controller.js";
 import { createMcpController } from "../src/mcp-factory.js";
+import { suggestRepairs } from "../src/repair.js";
+import { createAnthropicRepairAgent } from "../src/ai/agent-anthropic.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -165,6 +167,8 @@ interface DriftArgs {
   mcp: boolean;
   mcpCdpPort?: number;
   authState?: string;
+  repair: boolean;
+  repairOutput?: string;
   aiProvider?: AiProviderName;
   aiModel?: string;
   aiKey?: string;
@@ -330,6 +334,7 @@ function parseDriftArgs(argv: string[]): DriftArgs {
     json: false,
     help: false,
     mcp: false,
+    repair: false,
   };
 
   let i = 0;
@@ -379,6 +384,15 @@ function parseDriftArgs(argv: string[]): DriftArgs {
         break;
       case "--auth-state":
         args.authState = requireValue(argv, ++i, arg);
+        break;
+      case "--repair":
+        args.repair = true;
+        break;
+      case "--no-repair":
+        args.repair = false;
+        break;
+      case "--repair-output":
+        args.repairOutput = requireValue(argv, ++i, arg);
         break;
       case "--ai-provider":
         args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
@@ -698,6 +712,12 @@ Options:
   --no-mcp                 Disable MCP, use direct Playwright (default)
   --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
   --auth-state <file>      Playwright storageState JSON for cookies/localStorage
+  --repair                 On failed actions, ask the AI agent for replacement
+                           locators and write a repair-suggestions.json file.
+                           Requires --ai-provider anthropic.
+  --no-repair              Disable repair pass (default)
+  --repair-output <file>   Where to write the suggestions JSON (default:
+                           <output-dir>/repair-suggestions.json or cwd)
   --ai-provider <name>     Use AI discovery during rescans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
@@ -1744,7 +1764,16 @@ async function runDrift(args: DriftArgs): Promise<void> {
     authState: args.authState,
   });
 
+  if (args.repair && args.aiProvider !== "anthropic") {
+    console.error(
+      "Error: --repair currently requires --ai-provider anthropic. Other providers are planned for a future slice.",
+    );
+    await session.dispose();
+    process.exit(1);
+  }
+
   let report: DriftReport;
+  let repairReportPath: string | undefined;
   try {
     let aiProvider: AiProvider | undefined;
     if (args.aiProvider) {
@@ -1766,6 +1795,40 @@ async function runDrift(args: DriftArgs): Promise<void> {
       aiProvider,
       maxPaths: args.maxPaths,
     });
+
+    if (args.repair && report.summary.pathsFailed > 0) {
+      console.error(`  ● Asking repair agent to suggest fixes for ${report.summary.pathsFailed} failed path(s)…`);
+      const repairAgent = createAnthropicRepairAgent({
+        apiKey: args.aiKey,
+        model: args.aiModel,
+        baseUrl: args.aiBaseUrl,
+        onUsage: (usage) => {
+          console.error(
+            `  repair usage: input=${usage.inputTokens} cache_read=${usage.cacheReadInputTokens} cache_create=${usage.cacheCreationInputTokens} output=${usage.outputTokens}`,
+          );
+        },
+      });
+
+      const repairReport = await suggestRepairs(session.controller, graph, report, repairAgent, {
+        scope: args.scope,
+        graphFile: args.graph,
+        log: (line) => console.error(`  ${line}`),
+      });
+
+      const outPath = args.repairOutput
+        ? resolve(args.repairOutput)
+        : args.output
+          ? resolve(dirname(resolve(args.output)), "repair-suggestions.json")
+          : resolve("repair-suggestions.json");
+      await mkdir(dirname(outPath), { recursive: true });
+      await writeFile(outPath, JSON.stringify(repairReport, null, 2) + "\n", "utf-8");
+      repairReportPath = outPath;
+      console.error(
+        `  ✓ Repair suggestions written to ${outPath} (${repairReport.summary.repaired} repaired, ${repairReport.summary.gaveUp} gave up, ${repairReport.summary.unreachable} unreachable)`,
+      );
+    } else if (args.repair) {
+      console.error("  ✓ No failed paths — skipping repair pass.");
+    }
   } finally {
     await session.dispose();
   }
@@ -1781,6 +1844,9 @@ async function runDrift(args: DriftArgs): Promise<void> {
     console.log(JSON.stringify(report, null, 2));
   } else {
     console.log(formatDriftReport(report));
+    if (repairReportPath) {
+      console.log(`Repair suggestions: ${repairReportPath}`);
+    }
   }
 
   process.exit(report.unchanged ? 0 : 1);
