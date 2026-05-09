@@ -11,10 +11,7 @@
  */
 
 import { createServer } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { chromium } from "playwright";
+import { chromium, type BrowserContext } from "playwright";
 import {
   McpBrowserController,
   type IMcpClient,
@@ -62,13 +59,15 @@ export interface McpControllerHandle {
 /**
  * Boot an MCP-driven browser controller.
  *
- * Architecture: we launch Chromium via `launchPersistentContext` so a single
- * context is created up-front, optionally pre-loaded with `storageState`.
- * Both Playwright (this process) and `@playwright/mcp` (via `--cdp-endpoint`)
- * see the same context, so authenticated runs work correctly.
+ * Architecture: we launch Chromium ourselves with CDP exposed, then create a
+ * single context (optionally pre-loaded with `storageState`). When
+ * `@playwright/mcp` attaches via `--cdp-endpoint`, it sees that one context
+ * and drives the same page we observe — so authenticated runs work because
+ * the cookies / localStorage are already loaded before MCP performs any
+ * action.
  *
  * The returned `dispose()` shuts down everything in reverse order:
- * MCP client → MCP child process → BrowserContext → temp userDataDir.
+ * MCP client → MCP child process → BrowserContext → Browser.
  */
 export async function createMcpController(
   options: CreateMcpControllerOptions = {},
@@ -76,32 +75,30 @@ export async function createMcpController(
   const cdpPort = options.cdpPort ?? (await pickUnusedPort());
   const headless = options.headless ?? true;
 
-  // ── 1. Launch Chromium with a single persistent context ──
-  //
-  // launchPersistentContext keeps everything in one context — that's the
-  // context MCP will see when it attaches via CDP. If `storageState` is
-  // provided, cookies / localStorage / sessionStorage are loaded immediately,
-  // so the first navigation runs as the authenticated user.
-  const userDataDir = await mkdtemp(join(tmpdir(), "pw-crawl-mcp-"));
-  let context;
+  // ── 1. Launch Chromium with CDP exposed ──────────────────
+  const browser = await chromium.launch({
+    headless,
+    args: [
+      `--remote-debugging-port=${cdpPort}`,
+      "--remote-debugging-address=127.0.0.1",
+      ...(options.chromiumArgs ?? []),
+    ],
+  });
+  const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
+
+  // ── 2. Create a single context, pre-loaded with auth if any ──
+  let context: BrowserContext;
   try {
-    context = await chromium.launchPersistentContext(userDataDir, {
-      headless,
-      ...(options.storageState ? { storageState: options.storageState } : {}),
-      args: [
-        `--remote-debugging-port=${cdpPort}`,
-        "--remote-debugging-address=127.0.0.1",
-        ...(options.chromiumArgs ?? []),
-      ],
-    });
+    context = options.storageState
+      ? await browser.newContext({ storageState: options.storageState })
+      : await browser.newContext();
   } catch (err) {
-    await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    await browser.close().catch(() => {});
     throw err;
   }
-  const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
-  const page = context.pages()[0] ?? (await context.newPage());
+  const page = await context.newPage();
 
-  // ── 2. Start MCP and connect a client ────────────────────
+  // ── 3. Start MCP and connect a client ────────────────────
   let client: IMcpClient;
   try {
     if (options.client) {
@@ -116,7 +113,7 @@ export async function createMcpController(
     }
   } catch (err) {
     await context.close().catch(() => {});
-    await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    await browser.close().catch(() => {});
     throw err;
   }
 
@@ -131,7 +128,7 @@ export async function createMcpController(
       // stdio transport and terminates the spawned MCP child process.
       await controller.dispose();
       await context.close().catch(() => {});
-      await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+      await browser.close().catch(() => {});
     },
   };
 }
