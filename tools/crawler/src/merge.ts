@@ -134,6 +134,7 @@ export function mergeManifest(
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     url,
+    routeTemplate: existing.routeTemplate,
     timestamp: now,
     scope,
     passCount: Math.max(existing.passCount, pass),
@@ -142,6 +143,8 @@ export function mergeManifest(
     apiDependencies: existing.apiDependencies,
     // Preserve existing actionNavigations (callers merge new navs externally)
     actionNavigations: existing.actionNavigations,
+    // Preserve exploration metadata (explore mode enriches after merge)
+    exploration: existing.exploration,
   };
 }
 

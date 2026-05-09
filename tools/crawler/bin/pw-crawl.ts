@@ -21,8 +21,9 @@
 import { chromium } from "playwright";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, basename, dirname } from "node:path";
 import { crawlPage, diffPage } from "../src/crawler.js";
+import { explorePage } from "../src/explore.js";
 import { emitPageObject, emitMultiRoute } from "../src/emitter.js";
 import { diffPageObjects, formatEmitterDiff } from "../src/emitter-diff.js";
 import { inferRouteName, labelToPropertyName, safePathname, normalizeRoute } from "../src/naming.js";
@@ -34,6 +35,7 @@ import { mergeManifest } from "../src/merge.js";
 import type { ApiDependency, CrawlerManifest, ManifestGroup } from "../src/types.js";
 import type { EmitterConfig, RouteManifest } from "../src/emitter-types.js";
 import type { AiProviderName, AiProvider, AiPageSummary } from "../src/ai/types.js";
+import type { ExploreStrategy } from "../src/explore-types.js";
 
 // ── Safe JSON parsing (P2-163/P2-211) ──────────────────────
 
@@ -107,7 +109,31 @@ interface RecordArgs {
   aiBaseUrl?: string;
 }
 
-type CliArgs = CrawlArgs | GenerateArgs | RecordArgs;
+interface ExploreArgs {
+  mode: "explore";
+  url: string;
+  output?: string;
+  manifestOutput?: string;
+  pagesOutput?: string;
+  graphOutput?: string;
+  maxDepth?: number;
+  maxActions?: number;
+  maxRoutes?: number;
+  maxRescans?: number;
+  strategy: ExploreStrategy;
+  scope?: string;
+  observeNetwork: boolean;
+  headless: boolean;
+  ignoreHTTPSErrors: boolean;
+  check: boolean;
+  help: boolean;
+  aiProvider?: AiProviderName;
+  aiModel?: string;
+  aiKey?: string;
+  aiBaseUrl?: string;
+}
+
+type CliArgs = CrawlArgs | GenerateArgs | RecordArgs | ExploreArgs;
 
 /** Validate that argv[index] exists and is not another flag. */
 function requireValue(argv: string[], index: number, flag: string): string {
@@ -240,12 +266,15 @@ function parseGenerateArgs(argv: string[]): GenerateArgs {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  // Check if first positional arg is "generate" or "record"
+  // Check if first positional arg is a subcommand
   if (argv[0] === "generate") {
     return parseGenerateArgs(argv.slice(1));
   }
   if (argv[0] === "record") {
     return parseRecordArgs(argv.slice(1));
+  }
+  if (argv[0] === "explore") {
+    return parseExploreArgs(argv.slice(1));
   }
   return parseCrawlArgs(argv);
 }
@@ -304,6 +333,119 @@ function parseRecordArgs(argv: string[]): RecordArgs {
   return args;
 }
 
+function parsePositiveIntFlag(argv: string[], index: number, flag: string): number {
+  const value = parseInt(requireValue(argv, index, flag), 10);
+  if (Number.isNaN(value) || value < 1) {
+    console.error(`Error: ${flag} must be a positive integer`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function parseExploreArgs(argv: string[]): ExploreArgs {
+  const args: ExploreArgs = {
+    mode: "explore",
+    url: "",
+    strategy: "conservative",
+    observeNetwork: true,
+    headless: true,
+    ignoreHTTPSErrors: false,
+    check: false,
+    help: false,
+  };
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case "-o":
+      case "--output":
+        args.output = requireValue(argv, ++i, arg);
+        break;
+      case "--manifest-output":
+        args.manifestOutput = requireValue(argv, ++i, arg);
+        break;
+      case "--pages-output":
+        args.pagesOutput = requireValue(argv, ++i, arg);
+        break;
+      case "--graph-output":
+        args.graphOutput = requireValue(argv, ++i, arg);
+        break;
+      case "--max-depth":
+        args.maxDepth = parsePositiveIntFlag(argv, ++i, arg);
+        break;
+      case "--max-actions":
+        args.maxActions = parsePositiveIntFlag(argv, ++i, arg);
+        break;
+      case "--max-routes":
+        args.maxRoutes = parsePositiveIntFlag(argv, ++i, arg);
+        break;
+      case "--max-rescans":
+        args.maxRescans = parsePositiveIntFlag(argv, ++i, arg);
+        break;
+      case "--strategy": {
+        const strategy = requireValue(argv, ++i, arg) as ExploreStrategy;
+        if (!["conservative", "balanced", "aggressive"].includes(strategy)) {
+          console.error("Error: --strategy must be conservative, balanced, or aggressive");
+          process.exit(1);
+        }
+        args.strategy = strategy;
+        break;
+      }
+      case "--scope":
+        args.scope = requireValue(argv, ++i, arg);
+        break;
+      case "--observe-network":
+        args.observeNetwork = true;
+        break;
+      case "--no-observe-network":
+        args.observeNetwork = false;
+        break;
+      case "--headed":
+        args.headless = false;
+        break;
+      case "--ignore-https-errors":
+        args.ignoreHTTPSErrors = true;
+        break;
+      case "--check":
+        args.check = true;
+        break;
+      case "--ai-provider":
+        args.aiProvider = requireValue(argv, ++i, arg) as AiProviderName;
+        break;
+      case "--ai-model":
+        args.aiModel = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-key":
+        args.aiKey = requireValue(argv, ++i, arg);
+        break;
+      case "--ai-base-url":
+        args.aiBaseUrl = requireValue(argv, ++i, arg);
+        break;
+      case "--mcp":
+        console.error("Error: --mcp is reserved for the future MCP controller adapter and is not implemented yet.");
+        process.exit(1);
+        break;
+      case "-h":
+      case "--help":
+        args.help = true;
+        break;
+      default:
+        if (!arg.startsWith("-") && !args.url) {
+          args.url = arg;
+        } else if (arg.startsWith("-")) {
+          console.error(`Unknown option: ${arg}`);
+          process.exit(1);
+        }
+        break;
+    }
+    i++;
+  }
+
+  return args;
+}
+
 function printHelp(): void {
   console.log(`
 pw-crawl — Runtime page crawler and page object generator for @playwright-elements
@@ -311,6 +453,7 @@ pw-crawl — Runtime page crawler and page object generator for @playwright-elem
 Usage:
   pw-crawl <url> [options]                         Crawl a page
   pw-crawl record <url> [options]                  Record mode (interactive)
+  pw-crawl explore <url> [options]                 Autonomous exploration mode
   pw-crawl generate <manifests...> [options]       Generate page objects
 
 ── Crawl Mode ──────────────────────────────────────────────────
@@ -328,6 +471,36 @@ Options:
   --headed                 Run browser in headed mode (visible)
   --ignore-https-errors    Skip TLS certificate validation
   --ai-provider <name>     Use AI discovery (openai, anthropic, ollama)
+  --ai-model <model>       AI model override (default: per-provider)
+  --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
+  --ai-base-url <url>      Custom API base URL
+
+── Explore Mode (Autonomous) ─────────────────────────────────
+
+  Runs a conservative heuristic explorer that clicks safe visible actions,
+  records an exploration graph, merges route manifests, and can generate
+  page objects from the resulting manifests. The manifest/emitter pipeline
+  remains the source of truth; MCP support is reserved for a future adapter.
+
+Arguments:
+  <url>                    URL of the page to explore (required)
+
+Options:
+  -o, --output <dir>       Write graph, manifests, and pages under this dir
+  --manifest-output <dir>  Write route manifests to this directory
+  --pages-output <dir>     Write generated page objects to this directory
+  --graph-output <file>    Write exploration graph JSON to this file
+  --max-depth <n>          Max action depth from start URL (default: 2)
+  --max-actions <n>        Max attempted actions (default: 20)
+  --max-routes <n>         Max distinct routes to enqueue (default: 10)
+  --max-rescans <n>        Max rescans per route (default: 2)
+  --strategy <name>        conservative | balanced | aggressive (default: conservative)
+  --scope <selector>       Limit scanning and action extraction to a section
+  --observe-network        Capture API dependencies during scans (default: on)
+  --no-observe-network     Disable API dependency capture
+  --headed                 Run browser in headed mode (visible)
+  --check                  Compare generated files with existing outputs; exit 1 on drift
+  --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
   --ai-base-url <url>      Custom API base URL
@@ -373,6 +546,9 @@ Options:
 
   # Record (interactive — discover dialogs, toasts, etc.)
   pw-crawl record http://localhost:3001 -o manifest.json
+
+  # Explore (autonomous — graph + manifests + page objects)
+  pw-crawl explore http://localhost:3001 -o .autopom --max-depth 2 --max-actions 20
 
   # Generate (single manifest)
   pw-crawl generate manifest.json -o pages/
@@ -1096,6 +1272,228 @@ async function runRecord(args: RecordArgs): Promise<void> {
   }
 }
 
+// ── Explore mode ────────────────────────────────────────────
+
+async function runExplore(args: ExploreArgs): Promise<void> {
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (!args.url) {
+    console.error("Error: URL is required. Use --help for usage information.");
+    process.exit(1);
+  }
+
+  const baseOutput = args.output ? resolve(args.output) : undefined;
+  const manifestDir = args.manifestOutput ? resolve(args.manifestOutput) : baseOutput ? join(baseOutput, "manifests") : undefined;
+  const pagesDir = args.pagesOutput ? resolve(args.pagesOutput) : baseOutput ? join(baseOutput, "pages") : undefined;
+  const graphPath = args.graphOutput ? resolve(args.graphOutput) : baseOutput ? join(baseOutput, "exploration.json") : undefined;
+
+  if (args.check && !manifestDir && !pagesDir && !graphPath) {
+    console.error("Error: --check requires --output, --manifest-output, --pages-output, or --graph-output");
+    process.exit(1);
+  }
+
+  const launchArgs = args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [];
+  const browser = await chromium.launch({
+    headless: args.headless,
+    args: launchArgs,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  });
+
+  try {
+    const context = await browser.newContext({ ignoreHTTPSErrors: args.ignoreHTTPSErrors });
+    const page = await context.newPage();
+
+    let aiProvider: AiProvider | undefined;
+    if (args.aiProvider) {
+      const { createAiProvider } = await import("../src/ai/provider.js");
+      aiProvider = await createAiProvider({
+        provider: args.aiProvider,
+        model: args.aiModel,
+        apiKey: args.aiKey,
+        baseUrl: args.aiBaseUrl,
+      });
+    }
+
+    console.error(`  ● Exploring ${args.url} (${args.strategy})…`);
+    const result = await explorePage(page, args.url, {
+      scope: args.scope,
+      maxDepth: args.maxDepth,
+      maxActions: args.maxActions,
+      maxRoutes: args.maxRoutes,
+      maxRescans: args.maxRescans,
+      strategy: args.strategy,
+      observeNetwork: args.observeNetwork,
+      aiProvider,
+    });
+
+    const routes = manifestsToRoutes(result.manifests);
+    const pageFiles = emitRoutesToFiles(routes);
+    let hasDrift = false;
+
+    if (graphPath) {
+      if (args.check) {
+        hasDrift = await checkJsonFile(graphPath, result.graph, normalizeGraphForCheck, "Exploration graph") || hasDrift;
+      } else {
+        const graphJson = JSON.stringify(result.graph, null, 2) + "\n";
+        hasDrift = await writeOrCheckFile(graphPath, graphJson, false, "Exploration graph") || hasDrift;
+      }
+    }
+
+    if (manifestDir) {
+      if (!args.check) await mkdir(manifestDir, { recursive: true });
+      for (const route of routes) {
+        const filePath = join(manifestDir, `${route.route}.manifest.json`);
+        if (args.check) {
+          hasDrift = await checkJsonFile(filePath, route.manifest, normalizeManifestForCheck, `Manifest ${route.route}`) || hasDrift;
+        } else {
+          const json = JSON.stringify(route.manifest, null, 2) + "\n";
+          hasDrift = await writeOrCheckFile(filePath, json, false, `Manifest ${route.route}`) || hasDrift;
+        }
+      }
+    }
+
+    if (pagesDir) {
+      if (!args.check) await mkdir(pagesDir, { recursive: true });
+      for (const [filename, source] of pageFiles) {
+        const filePath = join(pagesDir, filename);
+        if (args.check && existsSync(filePath)) {
+          const existing = await readFile(filePath, "utf-8");
+          const diff = diffPageObjects(source, existing);
+          if (!diff.unchanged) {
+            console.log(`\n─── ${filename} ───`);
+            console.log(formatEmitterDiff(diff));
+            hasDrift = true;
+          }
+        } else {
+          hasDrift = await writeOrCheckFile(filePath, source, args.check, `Page object ${filename}`) || hasDrift;
+        }
+      }
+    }
+
+    if (!graphPath && !manifestDir && !pagesDir) {
+      console.log(JSON.stringify({
+        graph: result.graph,
+        manifests: Object.fromEntries(result.manifests),
+      }, null, 2));
+    }
+
+    console.error(`  ✓ Explored ${result.graph.states.length} state(s), ${result.graph.actions.length} action(s), ${routes.length} route(s)`);
+
+    if (args.check) {
+      if (hasDrift) {
+        console.log("\n✗ Exploration drift detected.");
+        process.exit(1);
+      }
+      console.log("✓ Exploration outputs match existing files.");
+      process.exit(0);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+function manifestsToRoutes(manifests: Map<string, CrawlerManifest>): RouteManifest[] {
+  const routes: RouteManifest[] = [];
+  const used = new Set<string>();
+
+  for (const [routeTemplate, manifest] of manifests) {
+    let route = inferRouteName(routeTemplate);
+    if (used.has(route)) {
+      let n = 2;
+      while (used.has(`${route}${n}`)) n++;
+      route = `${route}${n}`;
+    }
+    used.add(route);
+    routes.push({ route, manifest });
+  }
+
+  return routes.sort((a, b) => a.route.localeCompare(b.route));
+}
+
+function emitRoutesToFiles(routes: RouteManifest[]): Map<string, string> {
+  const emitOptions = {
+    frameworkImport: "@playwright-elements/core",
+    generatedMarkers: true,
+    emitWaitForReady: true,
+  };
+
+  if (routes.length === 1) {
+    const route = routes[0];
+    return new Map([[`${route.route}.ts`, emitPageObject(route.manifest, {
+      ...emitOptions,
+      routeName: route.route,
+    })]]);
+  }
+
+  return emitMultiRoute(routes, emitOptions);
+}
+
+async function writeOrCheckFile(filePath: string, content: string, check: boolean, label: string): Promise<boolean> {
+  if (check) {
+    if (!existsSync(filePath)) {
+      console.log(`⚠ Missing ${label}: ${filePath}`);
+      return true;
+    }
+    const existing = await readFile(filePath, "utf-8");
+    if (existing !== content) {
+      console.log(`⚠ Changed ${label}: ${filePath}`);
+      return true;
+    }
+    return false;
+  }
+
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, "utf-8");
+  console.error(`  ✓ ${filePath}`);
+  return false;
+}
+
+async function checkJsonFile<T>(
+  filePath: string,
+  generated: T,
+  normalize: (value: T) => unknown,
+  label: string,
+): Promise<boolean> {
+  if (!existsSync(filePath)) {
+    console.log(`⚠ Missing ${label}: ${filePath}`);
+    return true;
+  }
+
+  try {
+    const existing = safeJsonParse<T>(await readFile(filePath, "utf-8"), filePath);
+    const existingJson = JSON.stringify(normalize(existing), null, 2) + "\n";
+    const generatedJson = JSON.stringify(normalize(generated), null, 2) + "\n";
+    if (existingJson !== generatedJson) {
+      console.log(`⚠ Changed ${label}: ${filePath}`);
+      return true;
+    }
+    return false;
+  } catch {
+    console.log(`⚠ Invalid ${label}: ${filePath}`);
+    return true;
+  }
+}
+
+function normalizeManifestForCheck(manifest: CrawlerManifest): unknown {
+  return JSON.parse(JSON.stringify({
+    ...manifest,
+    timestamp: "<timestamp>",
+    groups: manifest.groups.map((group) => ({ ...group, lastSeen: "<timestamp>" })),
+  })) as unknown;
+}
+
+function normalizeGraphForCheck(graph: unknown): unknown {
+  return JSON.parse(JSON.stringify(graph, (_key, value) => {
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return "<timestamp>";
+    return value;
+  })) as unknown;
+}
+
 // ── Main ────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -1107,6 +1505,10 @@ async function main(): Promise<void> {
 
   if (args.mode === "record") {
     return runRecord(args);
+  }
+
+  if (args.mode === "explore") {
+    return runExplore(args);
   }
 
   // ── Crawl mode (existing behavior) ─────────────────────

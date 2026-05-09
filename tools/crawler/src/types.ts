@@ -62,6 +62,9 @@ export interface ManifestGroup {
 
   /** Description of the user action that triggered this group's appearance (record mode only). */
   triggeredBy?: string;
+
+  /** Exploration state id that first associated this group with an explored state. */
+  stateId?: string;
 }
 
 // ── API dependency ──────────────────────────────────────────
@@ -102,6 +105,9 @@ export interface CrawlerManifest {
   /** The URL path that was crawled (no origin or query params). */
   url: string;
 
+  /** Normalized route template used by exploration mode (e.g. /devices/:id). */
+  routeTemplate?: string;
+
   /** ISO timestamp of the latest crawl. */
   timestamp: string;
 
@@ -119,6 +125,18 @@ export interface CrawlerManifest {
 
   /** Actions that caused navigation away from this page (record mode). */
   actionNavigations?: ActionNavigation[];
+
+  /** Optional exploration metadata that links this manifest to an exploration graph. */
+  exploration?: {
+    /** Path to the graph file that produced or refreshed this manifest. */
+    graphFile?: string;
+    /** Exploration state ids that contributed to this manifest. */
+    stateIds?: string[];
+    /** Number of attempted actions when this manifest was produced. */
+    actionCount?: number;
+    /** Exploration strategy used. */
+    strategy?: "conservative" | "balanced" | "aggressive";
+  };
 }
 
 // ── Crawler options ─────────────────────────────────────────

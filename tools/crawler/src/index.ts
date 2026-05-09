@@ -41,6 +41,12 @@ export { diffPageObjects, formatEmitterDiff } from "./emitter-diff.js";
 
 export { labelToPropertyName, deduplicateNames, inferRouteName, safePathname } from "./naming.js";
 
+// ── Agentic / heuristic exploration ────────────────────────
+
+export { explorePage, exploreWithController, createExplorationGraph, snapshotExplorationState } from "./explore.js";
+export { PlaywrightBrowserController } from "./browser-controller.js";
+export { extractActionCandidates, classifyActionRisk } from "./explore-planner.js";
+
 // ── Types ───────────────────────────────────────────────────
 
 export type {
@@ -55,6 +61,25 @@ export type {
   ApiTiming,
   RecordOptions,
 } from "./types.js";
+
+export type {
+  IBrowserController,
+} from "./browser-controller.js";
+
+export type {
+  ExploreOptions,
+  ExploreResult,
+  ExploreStrategy,
+  ExplorationAction,
+  ExplorationActionCandidate,
+  ExplorationActionKind,
+  ExplorationActionRisk,
+  ExplorationActionStatus,
+  ExplorationGraph,
+  ExplorationState,
+  ExplorationTransition,
+  ActionLocatorHint,
+} from "./explore-types.js";
 
 export type {
   EmitOptions,
