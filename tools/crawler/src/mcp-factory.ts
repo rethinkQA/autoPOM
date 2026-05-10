@@ -11,6 +11,7 @@
  */
 
 import { createServer } from "node:net";
+import { readFile } from "node:fs/promises";
 import { chromium, type BrowserContext } from "playwright";
 import {
   McpBrowserController,
@@ -92,16 +93,20 @@ export async function createMcpController(
   });
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
 
-  // ── 2. Connect via CDP and create the shared context ─────
-  // Both we and MCP attach via CDP. The context we create here is the one
-  // MCP picks up as contexts()[0] when it attaches.
+  // ── 2. Connect via CDP and use the default context ───────
+  // Both we and MCP attach via CDP. MCP picks `browser.contexts()[0]` —
+  // which is the default context Chrome creates on launch. We use the same
+  // one. For auth, we inject cookies into it directly via addCookies (and
+  // optionally localStorage via addInitScript) — newContext({storageState})
+  // would create a second context that MCP wouldn't see as contexts()[0].
   let cdp;
   let context: BrowserContext;
   try {
     cdp = await chromium.connectOverCDP(cdpEndpoint);
-    context = options.storageState
-      ? await cdp.newContext({ storageState: options.storageState })
-      : (cdp.contexts()[0] ?? (await cdp.newContext()));
+    context = cdp.contexts()[0] ?? (await cdp.newContext());
+    if (options.storageState) {
+      await applyStorageState(context, options.storageState);
+    }
   } catch (err) {
     await browser.close().catch(() => {});
     throw err;
@@ -226,6 +231,52 @@ function extractErrorMessage(response: unknown, tool: string): string {
   const obj = response as { content?: Array<{ text?: string }> };
   const text = obj.content?.map((c) => c.text ?? "").filter(Boolean).join("\n");
   return text ? `${tool} failed: ${text}` : `${tool} failed`;
+}
+
+/**
+ * Inject a Playwright `storageState` JSON file into an existing
+ * `BrowserContext`. Used when we can't create a fresh context with
+ * `newContext({ storageState })` because we need to keep using the
+ * Chrome-created default context that another tool (MCP) will pick up as
+ * `contexts()[0]`.
+ *
+ * - Cookies are added directly via `context.addCookies()`.
+ * - localStorage entries are injected via `addInitScript`, which runs on
+ *   every navigation. The script filters by origin so each entry only fires
+ *   on its declared origin. sessionStorage is handled the same way.
+ */
+async function applyStorageState(context: BrowserContext, statePath: string): Promise<void> {
+  const raw = await readFile(statePath, "utf-8");
+  const state = JSON.parse(raw) as {
+    cookies?: Array<Parameters<BrowserContext["addCookies"]>[0][number]>;
+    origins?: Array<{
+      origin: string;
+      localStorage?: Array<{ name: string; value: string }>;
+    }>;
+  };
+
+  if (state.cookies && state.cookies.length > 0) {
+    await context.addCookies(state.cookies);
+  }
+
+  if (state.origins && state.origins.length > 0) {
+    await context.addInitScript((origins: typeof state.origins) => {
+      try {
+        const origin = window.location.origin;
+        const match = origins?.find((entry) => entry.origin === origin);
+        if (!match?.localStorage) return;
+        for (const item of match.localStorage) {
+          try {
+            window.localStorage.setItem(item.name, item.value);
+          } catch {
+            /* localStorage may be unavailable in some contexts */
+          }
+        }
+      } catch {
+        /* origin probing may fail in non-document contexts */
+      }
+    }, state.origins);
+  }
 }
 
 function pickUnusedPort(): Promise<number> {
