@@ -115,6 +115,87 @@ test.describe("exploreWithAgent — loop", () => {
     expect(result.graph.transitions).toHaveLength(0);
   });
 
+  test("fill_field substitutes {{KEY}} from credentials before dispatch", async ({ page }) => {
+    const performed: Array<{ kind: string; value?: string; label?: string }> = [];
+    const recordingController = {
+      page: () => page,
+      goto: async (url: string) => {
+        await page.goto(url);
+      },
+      perform: async (action: { kind: string; value?: string; label?: string }) => {
+        performed.push({ kind: action.kind, value: action.value, label: action.label });
+      },
+      waitForSettled: async () => {
+        /* noop */
+      },
+      currentUrl: () => page.url(),
+    };
+
+    const { agent } = scriptedAgent([
+      {
+        kind: "fill_field",
+        locator: { role: "textbox", name: "Email" },
+        value: "{{EMAIL}}",
+        label: "Email",
+      },
+      { kind: "stop", reason: "done" },
+    ]);
+
+    await exploreWithAgent(
+      recordingController,
+      agent,
+      `${BASE}/`,
+      {
+        maxActions: 5,
+        observeNetwork: false,
+        strategy: "balanced",
+        credentials: { EMAIL: "user@example.com" },
+      },
+    );
+
+    const fill = performed.find((p) => p.kind === "fill");
+    expect(fill).toBeDefined();
+    expect(fill!.value).toBe("user@example.com");
+    expect(fill!.label).toBe("Email");
+  });
+
+  test("fill_field with unresolved placeholder records a failure and does not dispatch", async ({ page }) => {
+    const performed: string[] = [];
+    const recordingController = {
+      page: () => page,
+      goto: async (url: string) => {
+        await page.goto(url);
+      },
+      perform: async (action: { kind: string }) => {
+        performed.push(action.kind);
+      },
+      waitForSettled: async () => {
+        /* noop */
+      },
+      currentUrl: () => page.url(),
+    };
+
+    const { agent } = scriptedAgent([
+      {
+        kind: "fill_field",
+        locator: { selector: "#x" },
+        value: "{{NOT_PROVIDED}}",
+        label: "X",
+      },
+      { kind: "stop", reason: "done" },
+    ]);
+
+    const result = await exploreWithAgent(
+      recordingController,
+      agent,
+      `${BASE}/`,
+      { maxActions: 5, observeNetwork: false, strategy: "balanced" },
+    );
+
+    expect(performed).not.toContain("fill");
+    expect(result.graph.actions).toHaveLength(0);
+  });
+
   test("respects maxActions budget", async ({ page }) => {
     // Always click candidate 0 — agent never stops.
     const agent: IExplorationAgent = {

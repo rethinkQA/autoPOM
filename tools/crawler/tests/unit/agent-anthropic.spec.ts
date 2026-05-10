@@ -60,6 +60,31 @@ test.describe("Anthropic agent — extractDecision", () => {
     });
   });
 
+  test("translates fill_field with sanitized locator and required value", () => {
+    const decision = extractDecision({
+      content: [
+        {
+          type: "tool_use",
+          id: "tu_5",
+          name: "fill_field",
+          input: {
+            locator: { role: "textbox", name: "Email", garbage: 1 },
+            value: "{{EMAIL}}",
+            label: "Email",
+            rationale: "login form",
+          },
+        },
+      ],
+    });
+    expect(decision).toEqual({
+      kind: "fill_field",
+      locator: { role: "textbox", name: "Email" },
+      value: "{{EMAIL}}",
+      label: "Email",
+      rationale: "login form",
+    });
+  });
+
   test("translates navigate", () => {
     const decision = extractDecision({
       content: [

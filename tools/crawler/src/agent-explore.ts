@@ -116,8 +116,8 @@ export async function exploreWithAgent(
       break;
     }
 
-    const candidate = decisionToCandidate(decision, currentScan.candidates);
-    if (!candidate) {
+    const resolved = decisionToCandidate(decision, currentScan.candidates, options.credentials);
+    if (!resolved) {
       history.push({
         iteration,
         decision: summarizeDecision(decision),
@@ -126,6 +126,16 @@ export async function exploreWithAgent(
       });
       continue;
     }
+    if ("error" in resolved) {
+      history.push({
+        iteration,
+        decision: summarizeDecision(decision),
+        outcome: "failed",
+        note: resolved.error,
+      });
+      continue;
+    }
+    const candidate = resolved.candidate;
 
     const action = persistAction(graph, candidate, currentScan.state.id, nextActionNumber++, decision);
     graph.summary.attemptedActions++;
@@ -352,36 +362,76 @@ function buildObservation(
 function decisionToCandidate(
   decision: AgentDecision,
   visible: ExplorationActionCandidate[],
-): ExplorationActionCandidate | null {
+  credentials: Record<string, string> | undefined,
+): { candidate: ExplorationActionCandidate } | { error: string } | null {
   switch (decision.kind) {
     case "click_candidate": {
       if (decision.index < 0 || decision.index >= visible.length) return null;
-      return visible[decision.index];
+      return { candidate: visible[decision.index] };
     }
     case "click_locator": {
       const signature = signatureForLocator(decision.locator, decision.label);
       return {
-        kind: "click",
-        label: decision.label,
-        locator: decision.locator,
-        reason: decision.rationale ?? "agent click_locator",
-        risk: "unknown",
-        signature,
+        candidate: {
+          kind: "click",
+          label: decision.label,
+          locator: decision.locator,
+          reason: decision.rationale ?? "agent click_locator",
+          risk: "unknown",
+          signature,
+        },
+      };
+    }
+    case "fill_field": {
+      const resolution = resolveCredentials(decision.value, credentials);
+      if ("error" in resolution) return { error: resolution.error };
+      const signature = signatureForLocator(decision.locator, decision.label) + "::fill";
+      return {
+        candidate: {
+          kind: "fill",
+          label: decision.label,
+          locator: decision.locator,
+          reason: decision.rationale ?? "agent fill_field",
+          risk: "mutation",
+          signature,
+          value: resolution.value,
+        },
       };
     }
     case "navigate": {
       return {
-        kind: "navigate",
-        label: decision.url,
-        locator: { href: decision.url },
-        reason: decision.rationale ?? "agent navigate",
-        risk: "navigation",
-        signature: `navigate::${decision.url}`,
+        candidate: {
+          kind: "navigate",
+          label: decision.url,
+          locator: { href: decision.url },
+          reason: decision.rationale ?? "agent navigate",
+          risk: "navigation",
+          signature: `navigate::${decision.url}`,
+        },
       };
     }
     case "stop":
       return null;
   }
+}
+
+const PLACEHOLDER_PATTERN = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+
+/** Substitute `{{KEY}}` placeholders in a fill_field value. */
+function resolveCredentials(
+  value: string,
+  credentials: Record<string, string> | undefined,
+): { value: string } | { error: string } {
+  let missing: string | null = null;
+  const resolved = value.replace(PLACEHOLDER_PATTERN, (_, key: string) => {
+    if (credentials && key in credentials) return credentials[key];
+    missing = key;
+    return "";
+  });
+  if (missing) {
+    return { error: `unresolved credential placeholder {{${missing}}}` };
+  }
+  return { value: resolved };
 }
 
 function persistAction(
@@ -406,6 +456,7 @@ function persistAction(
 function decisionRationale(decision: AgentDecision): string | undefined {
   if (decision.kind === "click_candidate") return decision.rationale;
   if (decision.kind === "click_locator") return decision.rationale;
+  if (decision.kind === "fill_field") return decision.rationale;
   if (decision.kind === "navigate") return decision.rationale;
   return undefined;
 }
@@ -416,6 +467,8 @@ function summarizeDecision(decision: AgentDecision): AgentHistoryEntry["decision
       return { kind: "click_candidate", index: decision.index };
     case "click_locator":
       return { kind: "click_locator", label: decision.label };
+    case "fill_field":
+      return { kind: "fill_field", label: decision.label };
     case "navigate":
       return { kind: "navigate", url: decision.url };
     case "stop":
@@ -456,6 +509,8 @@ function formatDecisionLog(iteration: number, decision: AgentDecision): string {
       return `agent[#${iteration}] click_candidate(${decision.index})`;
     case "click_locator":
       return `agent[#${iteration}] click_locator("${decision.label}")`;
+    case "fill_field":
+      return `agent[#${iteration}] fill_field("${decision.label}")`;
     case "navigate":
       return `agent[#${iteration}] navigate(${decision.url})`;
     case "stop":

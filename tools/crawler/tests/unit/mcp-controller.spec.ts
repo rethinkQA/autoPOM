@@ -167,6 +167,37 @@ test.describe("MCP — controller dispatch", () => {
     });
   });
 
+  test("perform(fill) maps to browser_type with target/element/text", async () => {
+    const { page } = createFakePage();
+    const client = new FakeMcpClient();
+    const controller = new McpBrowserController(page, client);
+
+    await controller.perform(makeAction({
+      kind: "fill",
+      label: "Email",
+      locator: { role: "textbox", name: "Email", selector: 'input[name="email"]' },
+      value: "user@example.com",
+    }));
+
+    const fill = client.calls.find((c) => c.name === "browser_type");
+    expect(fill).toBeDefined();
+    expect(fill!.arguments).toEqual({
+      target: 'input[name="email"]',
+      element: 'textbox "Email"',
+      text: "user@example.com",
+    });
+  });
+
+  test("perform(fill) without value throws", async () => {
+    const { page } = createFakePage();
+    const client = new FakeMcpClient();
+    const controller = new McpBrowserController(page, client);
+
+    await expect(
+      controller.perform(makeAction({ kind: "fill", label: "Email", locator: { selector: "#x" } })),
+    ).rejects.toThrow(/missing value/);
+  });
+
   test("perform(hover) maps to browser_hover", async () => {
     const { page } = createFakePage();
     const client = new FakeMcpClient();

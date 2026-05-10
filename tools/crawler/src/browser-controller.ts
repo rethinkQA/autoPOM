@@ -50,6 +50,13 @@ export class PlaywrightBrowserController implements IBrowserController {
       case "hover":
         await resolveActionLocator(this._page, action.locator, action.label).hover({ timeout: 5_000 });
         return;
+      case "fill": {
+        if (action.value === undefined) {
+          throw new Error(`fill action "${action.label}" missing value`);
+        }
+        await resolveActionLocator(this._page, action.locator, action.label).fill(action.value, { timeout: 5_000 });
+        return;
+      }
       default:
         throw new Error(`Unsupported exploration action kind: ${action.kind}`);
     }

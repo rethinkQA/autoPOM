@@ -145,6 +145,7 @@ interface ExploreArgs {
   mcpCdpPort?: number;
   authState?: string;
   aiAgent: boolean;
+  credentialsFile?: string;
   aiProvider?: AiProviderName;
   aiModel?: string;
   aiKey?: string;
@@ -639,6 +640,9 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
       case "--no-ai-agent":
         args.aiAgent = false;
         break;
+      case "--credentials-file":
+        args.credentialsFile = requireValue(argv, ++i, arg);
+        break;
       case "-h":
       case "--help":
         args.help = true;
@@ -722,6 +726,8 @@ Options:
                            back to direct Playwright when both are passed)
   --ai-agent               Use a tool-using AI agent to pick actions (Slice 2)
   --no-ai-agent            Disable AI agent, use heuristic planner (default)
+  --credentials-file <f>   JSON {"KEY":"value"} consumed by fill_field via
+                           {{KEY}} placeholders (e.g. for agent-driven login)
   --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
   --ai-model <model>       AI model override (default: per-provider)
   --ai-key <key>           API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)
@@ -1677,6 +1683,21 @@ async function runExplore(args: ExploreArgs): Promise<void> {
 
     let result;
     if (args.aiAgent) {
+      let credentials: Record<string, string> | undefined;
+      if (args.credentialsFile) {
+        const credPath = resolve(args.credentialsFile);
+        if (!existsSync(credPath)) {
+          console.error(`Error: --credentials-file not found: ${credPath}`);
+          process.exit(1);
+        }
+        try {
+          credentials = JSON.parse(await readFile(credPath, "utf-8")) as Record<string, string>;
+        } catch (err) {
+          console.error(`Error: invalid JSON in ${credPath}: ${(err as Error).message}`);
+          process.exit(1);
+        }
+      }
+
       let totalInput = 0;
       let totalCacheRead = 0;
       let totalCacheCreation = 0;
@@ -1685,6 +1706,7 @@ async function runExplore(args: ExploreArgs): Promise<void> {
         apiKey: args.aiKey,
         model: args.aiModel,
         baseUrl: args.aiBaseUrl,
+        credentialKeys: credentials ? Object.keys(credentials) : undefined,
         onUsage: (usage) => {
           totalInput += usage.inputTokens;
           totalCacheRead += usage.cacheReadInputTokens;
@@ -1701,6 +1723,7 @@ async function runExplore(args: ExploreArgs): Promise<void> {
         observeNetwork: args.observeNetwork,
         aiProvider,
         strategy: args.strategy,
+        credentials,
         log: (line) => console.error(`  ${line}`),
       });
       const totalCached = totalCacheRead + totalCacheCreation;

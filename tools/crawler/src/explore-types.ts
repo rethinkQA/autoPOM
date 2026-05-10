@@ -104,6 +104,13 @@ export interface ExplorationActionCandidate {
 
   /** Stable signature used for deduplication within a state. */
   signature: string;
+
+  /**
+   * Value to type when `kind === "fill"`. Resolved at dispatch time from
+   * the agent's `{{KEY}}` placeholders against the credentials map; raw
+   * agent output never contains real credential values.
+   */
+  value?: string;
 }
 
 /** Persisted action record in an exploration graph. */

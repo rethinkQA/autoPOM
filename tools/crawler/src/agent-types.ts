@@ -57,6 +57,7 @@ export interface AgentHistoryEntry {
 export type AgentDecisionSummary =
   | { kind: "click_candidate"; index: number }
   | { kind: "click_locator"; label: string }
+  | { kind: "fill_field"; label: string }
   | { kind: "navigate"; url: string }
   | { kind: "stop"; reason: string };
 
@@ -108,6 +109,21 @@ export type AgentDecision =
       rationale?: string;
     }
   | {
+      kind: "fill_field";
+      /** Locator for the input field to fill. */
+      locator: ActionLocatorHint;
+      /**
+       * Value to type into the field. May contain `{{KEY}}` placeholders
+       * that resolve against the credentials map at dispatch time, so
+       * actual credential strings never appear in the agent's output.
+       */
+      value: string;
+      /** Human-readable label for the field. */
+      label: string;
+      /** Optional rationale. */
+      rationale?: string;
+    }
+  | {
       kind: "navigate";
       /** Absolute URL or path to navigate to. */
       url: string;
@@ -132,6 +148,13 @@ export interface IExplorationAgent {
 }
 
 // ── Loop options ────────────────────────────────────────────
+
+/**
+ * Credentials map injected at dispatch time when the agent emits a
+ * `fill_field` value containing `{{KEY}}` placeholders. The agent never
+ * sees the actual values — only the keys, surfaced in the system prompt.
+ */
+export type AgentCredentials = Record<string, string>;
 
 /** Options for {@link exploreWithAgent}. */
 export interface AgentExploreOptions {
@@ -158,4 +181,10 @@ export interface AgentExploreOptions {
 
   /** Custom logger for run-time agent decisions; defaults to no-op. */
   log?: (line: string) => void;
+
+  /**
+   * Credentials map for `{{KEY}}` placeholder substitution in `fill_field`
+   * decisions. When omitted, fills with placeholders are left as-is.
+   */
+  credentials?: AgentCredentials;
 }

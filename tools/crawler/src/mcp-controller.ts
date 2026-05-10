@@ -156,6 +156,16 @@ export class McpBrowserController implements IBrowserController {
           arguments: { target, element },
         });
         return;
+      case "fill": {
+        if (action.value === undefined) {
+          throw new Error(`fill action "${action.label}" missing value`);
+        }
+        await this._client.callTool({
+          name: "browser_type",
+          arguments: { target, element, text: action.value },
+        });
+        return;
+      }
       default:
         throw new Error(`Unsupported MCP action kind: ${action.kind}`);
     }

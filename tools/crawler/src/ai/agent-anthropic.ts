@@ -70,6 +70,13 @@ export interface AnthropicAgentOptions {
 
   /** Optional callback invoked once per Messages API call with token usage stats. */
   onUsage?: (usage: AnthropicAgentUsage) => void;
+
+  /**
+   * Names of credential placeholders the model can use as `{{KEY}}` values
+   * inside `fill_field`. Only the keys are sent — actual values are
+   * resolved at dispatch time and never appear in agent output.
+   */
+  credentialKeys?: string[];
 }
 
 /** Default model when `options.model` is omitted. */
@@ -89,6 +96,7 @@ Each turn you receive an observation:
 Choose the next exploration action by calling exactly one tool:
 - click_candidate(index): pick from visibleActions when one of the listed candidates fits
 - click_locator(locator, label): construct a locator (role+name preferred) when the desired action is not in the list
+- fill_field(locator, value, label): type into an input/textarea (e.g. login email/password)
 - navigate(url): jump to a route directly when faster than clicking
 - stop(reason): end exploration when no useful actions remain or the surface is fully covered
 
@@ -96,8 +104,15 @@ Rules:
 - Never call destructive actions (delete, sign out, purchase, checkout, reset, confirm).
 - Prefer actions that uncover new groups, dialogs, menus, or routes.
 - Prefer click_candidate when a suitable candidate exists.
+- For login/auth pages, fill_field the email/password fields then click_locator the submit button.
 - Stop early when you observe consecutive turns with no new groups or no progress.
 - Be concise in rationales (one short sentence).`;
+
+const CREDENTIAL_PROMPT_PREFIX = `
+
+Available credential placeholders for fill_field values: `;
+const CREDENTIAL_PROMPT_SUFFIX = `
+When filling a login/auth form, use these placeholders verbatim as the fill_field value (e.g. value: "{{EMAIL}}"). They are resolved at dispatch time so the actual credentials never appear in your output.`;
 
 // ── Tool schemas ────────────────────────────────────────────
 
@@ -144,6 +159,34 @@ const TOOLS = [
         rationale: { type: "string" },
       },
       required: ["locator", "label"],
+    },
+  },
+  {
+    name: "fill_field",
+    description:
+      "Type a value into an input/textarea. Use for login forms, search boxes, and similar fields. Use {{KEY}} placeholders for credentials.",
+    input_schema: {
+      type: "object",
+      properties: {
+        locator: {
+          type: "object",
+          properties: {
+            role: { type: "string" },
+            name: { type: "string" },
+            label: { type: "string" },
+            testId: { type: "string" },
+            text: { type: "string" },
+            selector: { type: "string" },
+          },
+        },
+        value: {
+          type: "string",
+          description: "Text to type. Use {{KEY}} placeholders to refer to credentials by name.",
+        },
+        label: { type: "string", description: "Human-readable name of the field for logging." },
+        rationale: { type: "string" },
+      },
+      required: ["locator", "value", "label"],
     },
   },
   {
@@ -268,10 +311,19 @@ export function createAnthropicAgent(options: AnthropicAgentOptions = {}): IExpl
       "Missing API key for anthropic agent. Set ANTHROPIC_API_KEY or pass --ai-key.",
     );
   }
+  const baseSystemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const credentialKeys = options.credentialKeys ?? [];
+  const systemPrompt = credentialKeys.length > 0
+    ? baseSystemPrompt
+        + CREDENTIAL_PROMPT_PREFIX
+        + credentialKeys.map((k) => `{{${k}}}`).join(", ")
+        + CREDENTIAL_PROMPT_SUFFIX
+    : baseSystemPrompt;
+
   const config: AnthropicRequestConfig = {
     model: options.model ?? DEFAULT_MODEL,
     maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
-    systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    systemPrompt,
     toolChoice: options.toolChoice ?? { type: "auto" },
     enablePromptCache: options.disablePromptCache !== true,
   };
@@ -343,6 +395,15 @@ export function extractDecision(response: AnthropicMessagesResponse): AgentDecis
       const label = stringOrThrow(input, "label");
       const rationale = stringOrUndefined(input, "rationale");
       return { kind: "click_locator", locator, label, rationale };
+    }
+    case "fill_field": {
+      const rawLocator = (input as { locator?: unknown }).locator;
+      if (!rawLocator || typeof rawLocator !== "object") return null;
+      const locator = sanitizeLocator(rawLocator as Record<string, unknown>);
+      const value = stringOrThrow(input, "value");
+      const label = stringOrThrow(input, "label");
+      const rationale = stringOrUndefined(input, "rationale");
+      return { kind: "fill_field", locator, value, label, rationale };
     }
     case "navigate": {
       const url = stringOrThrow(input, "url");
@@ -445,6 +506,8 @@ function formatHistoryDecision(decision: AgentObservation["recentHistory"][numbe
       return `click_candidate(${decision.index})`;
     case "click_locator":
       return `click_locator("${decision.label}")`;
+    case "fill_field":
+      return `fill_field("${decision.label}")`;
     case "navigate":
       return `navigate(${decision.url})`;
     case "stop":
