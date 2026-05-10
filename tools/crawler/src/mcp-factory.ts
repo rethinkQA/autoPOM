@@ -11,8 +11,7 @@
  */
 
 import { createServer } from "node:net";
-import { readFile } from "node:fs/promises";
-import { chromium, type BrowserContext } from "playwright";
+import { chromium } from "playwright";
 import {
   McpBrowserController,
   type IMcpClient,
@@ -40,13 +39,6 @@ export interface CreateMcpControllerOptions extends McpControllerOptions {
   /** Pass additional Chromium launch arguments. */
   chromiumArgs?: string[];
 
-  /**
-   * Path to a Playwright `storageState` JSON file. Loaded into the persistent
-   * context before MCP attaches via CDP, so cookies / localStorage are
-   * available on the very first navigation.
-   */
-  storageState?: string;
-
   /** Inject a pre-built MCP client (escape hatch for tests / custom transports). */
   client?: IMcpClient;
 }
@@ -60,18 +52,16 @@ export interface McpControllerHandle {
 /**
  * Boot an MCP-driven browser controller.
  *
- * Architecture: we launch Chromium with `--remote-debugging-port`, then
- * connect both Playwright (this process) and `@playwright/mcp` (its own
- * process) to that browser via `connectOverCDP`. Crucially, the context is
- * created via the CDP-connected Browser handle (`cdp.newContext`) so MCP
- * sees the same `contexts()[0]` we drive — including any `storageState` we
- * pre-load for authenticated runs.
+ * Architecture: we launch Chromium with `--remote-debugging-port`, attach
+ * Playwright via `connectOverCDP`, and reuse the default context Chrome
+ * creates on launch. `@playwright/mcp` later attaches to the same browser
+ * via its own `--cdp-endpoint` and picks `contexts()[0]` — which is that
+ * same default context, so both ends drive the same page.
  *
- * `browser.newContext()` (off the launched Browser handle) does NOT work
- * here: the CDP-attached Browser handle that MCP creates is a separate
- * object that doesn't see contexts created via the original launched
- * handle. CDP-shared context is the only model where both ends agree on
- * `contexts()[0]`.
+ * Known limitation: `storageState` / cookie injection on this shared
+ * context does NOT propagate to the page MCP drives in this version of
+ * `@playwright/mcp`. The CLI handles that by routing `--mcp` + `--auth-state`
+ * through the direct-Playwright path instead.
  *
  * The returned `dispose()` shuts down everything in reverse order:
  * MCP client → MCP child process → CDP handle → Browser.
@@ -94,19 +84,11 @@ export async function createMcpController(
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
 
   // ── 2. Connect via CDP and use the default context ───────
-  // Both we and MCP attach via CDP. MCP picks `browser.contexts()[0]` —
-  // which is the default context Chrome creates on launch. We use the same
-  // one. For auth, we inject cookies into it directly via addCookies (and
-  // optionally localStorage via addInitScript) — newContext({storageState})
-  // would create a second context that MCP wouldn't see as contexts()[0].
   let cdp;
-  let context: BrowserContext;
+  let context;
   try {
     cdp = await chromium.connectOverCDP(cdpEndpoint);
     context = cdp.contexts()[0] ?? (await cdp.newContext());
-    if (options.storageState) {
-      await applyStorageState(context, options.storageState);
-    }
   } catch (err) {
     await browser.close().catch(() => {});
     throw err;
@@ -147,6 +129,8 @@ export async function createMcpController(
     },
   };
 }
+
+// ── Internals ───────────────────────────────────────────────
 
 // ── Internal helpers ────────────────────────────────────────
 
@@ -231,52 +215,6 @@ function extractErrorMessage(response: unknown, tool: string): string {
   const obj = response as { content?: Array<{ text?: string }> };
   const text = obj.content?.map((c) => c.text ?? "").filter(Boolean).join("\n");
   return text ? `${tool} failed: ${text}` : `${tool} failed`;
-}
-
-/**
- * Inject a Playwright `storageState` JSON file into an existing
- * `BrowserContext`. Used when we can't create a fresh context with
- * `newContext({ storageState })` because we need to keep using the
- * Chrome-created default context that another tool (MCP) will pick up as
- * `contexts()[0]`.
- *
- * - Cookies are added directly via `context.addCookies()`.
- * - localStorage entries are injected via `addInitScript`, which runs on
- *   every navigation. The script filters by origin so each entry only fires
- *   on its declared origin. sessionStorage is handled the same way.
- */
-async function applyStorageState(context: BrowserContext, statePath: string): Promise<void> {
-  const raw = await readFile(statePath, "utf-8");
-  const state = JSON.parse(raw) as {
-    cookies?: Array<Parameters<BrowserContext["addCookies"]>[0][number]>;
-    origins?: Array<{
-      origin: string;
-      localStorage?: Array<{ name: string; value: string }>;
-    }>;
-  };
-
-  if (state.cookies && state.cookies.length > 0) {
-    await context.addCookies(state.cookies);
-  }
-
-  if (state.origins && state.origins.length > 0) {
-    await context.addInitScript((origins: typeof state.origins) => {
-      try {
-        const origin = window.location.origin;
-        const match = origins?.find((entry) => entry.origin === origin);
-        if (!match?.localStorage) return;
-        for (const item of match.localStorage) {
-          try {
-            window.localStorage.setItem(item.name, item.value);
-          } catch {
-            /* localStorage may be unavailable in some contexts */
-          }
-        }
-      } catch {
-        /* origin probing may fail in non-document contexts */
-      }
-    }, state.origins);
-  }
 }
 
 function pickUnusedPort(): Promise<number> {

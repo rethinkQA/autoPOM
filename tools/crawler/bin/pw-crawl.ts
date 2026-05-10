@@ -718,6 +718,8 @@ Options:
   --no-mcp                 Disable MCP, use direct Playwright (default)
   --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
   --auth-state <file>      Playwright storageState JSON for cookies/localStorage
+                           (not currently compatible with --mcp; auto-falls
+                           back to direct Playwright when both are passed)
   --ai-agent               Use a tool-using AI agent to pick actions (Slice 2)
   --no-ai-agent            Disable AI agent, use heuristic planner (default)
   --ai-provider <name>     Use AI discovery for state scans (openai, anthropic, ollama)
@@ -763,6 +765,8 @@ Options:
   --no-mcp                 Disable MCP, use direct Playwright (default)
   --mcp-cdp-port <port>    Force a CDP port (default: ephemeral) when --mcp is on
   --auth-state <file>      Playwright storageState JSON for cookies/localStorage
+                           (not currently compatible with --mcp; auto-falls
+                           back to direct Playwright when both are passed)
   --repair                 On failed actions, ask the AI agent for replacement
                            locators and write a repair-suggestions.json file.
                            Requires --ai-provider anthropic.
@@ -1578,13 +1582,20 @@ async function openExploreSession(args: {
     process.exit(1);
   }
 
-  if (args.mcp) {
+  if (args.mcp && authStatePath) {
+    // Known limitation: cookies injected into the CDP-shared context don't
+    // reach the page @playwright/mcp drives in this version. Fall back to
+    // direct Playwright (which applies storageState reliably via newContext)
+    // for authenticated runs.
+    console.error(
+      "  ⚠ --mcp + --auth-state is not supported in this version; falling back to direct Playwright for the authenticated run.",
+    );
+  } else if (args.mcp) {
     console.error("  ● Spawning @playwright/mcp (action channel)…");
     const handle = await createMcpController({
       headless: args.headless,
       cdpPort: args.mcpCdpPort,
       chromiumArgs: args.ignoreHTTPSErrors ? ["--ignore-certificate-errors"] : [],
-      ...(authStatePath ? { storageState: authStatePath } : {}),
     });
     return { controller: handle.controller, dispose: handle.dispose };
   }
