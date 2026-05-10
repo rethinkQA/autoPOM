@@ -59,15 +59,21 @@ export interface McpControllerHandle {
 /**
  * Boot an MCP-driven browser controller.
  *
- * Architecture: we launch Chromium ourselves with CDP exposed, then create a
- * single context (optionally pre-loaded with `storageState`). When
- * `@playwright/mcp` attaches via `--cdp-endpoint`, it sees that one context
- * and drives the same page we observe — so authenticated runs work because
- * the cookies / localStorage are already loaded before MCP performs any
- * action.
+ * Architecture: we launch Chromium with `--remote-debugging-port`, then
+ * connect both Playwright (this process) and `@playwright/mcp` (its own
+ * process) to that browser via `connectOverCDP`. Crucially, the context is
+ * created via the CDP-connected Browser handle (`cdp.newContext`) so MCP
+ * sees the same `contexts()[0]` we drive — including any `storageState` we
+ * pre-load for authenticated runs.
+ *
+ * `browser.newContext()` (off the launched Browser handle) does NOT work
+ * here: the CDP-attached Browser handle that MCP creates is a separate
+ * object that doesn't see contexts created via the original launched
+ * handle. CDP-shared context is the only model where both ends agree on
+ * `contexts()[0]`.
  *
  * The returned `dispose()` shuts down everything in reverse order:
- * MCP client → MCP child process → BrowserContext → Browser.
+ * MCP client → MCP child process → CDP handle → Browser.
  */
 export async function createMcpController(
   options: CreateMcpControllerOptions = {},
@@ -86,12 +92,16 @@ export async function createMcpController(
   });
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
 
-  // ── 2. Create a single context, pre-loaded with auth if any ──
+  // ── 2. Connect via CDP and create the shared context ─────
+  // Both we and MCP attach via CDP. The context we create here is the one
+  // MCP picks up as contexts()[0] when it attaches.
+  let cdp;
   let context: BrowserContext;
   try {
+    cdp = await chromium.connectOverCDP(cdpEndpoint);
     context = options.storageState
-      ? await browser.newContext({ storageState: options.storageState })
-      : await browser.newContext();
+      ? await cdp.newContext({ storageState: options.storageState })
+      : (cdp.contexts()[0] ?? (await cdp.newContext()));
   } catch (err) {
     await browser.close().catch(() => {});
     throw err;
@@ -112,7 +122,7 @@ export async function createMcpController(
       });
     }
   } catch (err) {
-    await context.close().catch(() => {});
+    await cdp.close().catch(() => {});
     await browser.close().catch(() => {});
     throw err;
   }
@@ -127,7 +137,7 @@ export async function createMcpController(
       // controller.dispose() closes the SDK client, which in turn closes the
       // stdio transport and terminates the spawned MCP child process.
       await controller.dispose();
-      await context.close().catch(() => {});
+      await cdp.close().catch(() => {});
       await browser.close().catch(() => {});
     },
   };
