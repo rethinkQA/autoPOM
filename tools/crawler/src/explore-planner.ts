@@ -111,7 +111,7 @@ export async function extractActionCandidates(
     };
 
     const root = scope ? document.querySelector(scope) ?? document.body : document.body;
-    const selector = [
+    const clickableSelector = [
       "a[href]",
       "button",
       "summary",
@@ -124,6 +124,10 @@ export async function extractActionCandidates(
       "[aria-haspopup]",
       "select",
     ].join(", ");
+    // Fill-kind: text-ish inputs and textareas that the agent can type into.
+    // We match broadly here and reject non-fillable types in `isFillable`.
+    const fillableSelector = ["input", "textarea", "[role='textbox']", "[role='searchbox']"].join(", ");
+    const selector = `${clickableSelector}, ${fillableSelector}`;
 
     function cssEscape(value: string): string {
       return (globalThis.CSS?.escape ?? ((s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "\\$&")))(value);
@@ -155,12 +159,73 @@ export async function extractActionCandidates(
       const title = el.getAttribute("title")?.trim();
       if (title) return title;
 
-      if (el instanceof HTMLInputElement || el instanceof HTMLButtonElement) {
+      // For button-style inputs (`type="submit" | "button" | "reset"`), the
+      // visible text comes from the `value` attribute. Resolve those FIRST,
+      // before falling into the fillable-label chain — otherwise an
+      // `<input type="submit" id="login-button" value="Login">` would
+      // erroneously surface as "login-button" (its id) instead of "Login"
+      // (its visible text).
+      if (el instanceof HTMLInputElement) {
+        const inputType = (el.getAttribute("type") || "text").toLowerCase();
+        if (["submit", "button", "reset"].includes(inputType)) {
+          const value = el.value?.trim();
+          if (value) return value;
+        }
+      }
+
+      // <label for="id">…</label><input id="id"> — common pattern for fillable
+      // inputs without aria-label. Used for both inputs and textareas.
+      if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.id) {
+        const labelEl = document.querySelector(`label[for="${el.id.replace(/"/g, '\\"')}"]`);
+        const labelText = labelEl?.textContent?.replace(/\s+/g, " ").trim();
+        if (labelText) return labelText;
+      }
+
+      // Wrapping <label><input/></label> form.
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        const wrappingLabel = el.closest("label");
+        if (wrappingLabel) {
+          // Strip the input's own value/text by cloning and removing inputs.
+          const clone = wrappingLabel.cloneNode(true) as HTMLElement;
+          clone.querySelectorAll("input, textarea, select").forEach((n) => n.remove());
+          const labelText = clone.textContent?.replace(/\s+/g, " ").trim();
+          if (labelText) return labelText;
+        }
+      }
+
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        const placeholder = el.getAttribute("placeholder")?.trim();
+        if (placeholder) return placeholder;
+        const name = el.getAttribute("name")?.trim();
+        if (name) return name;
+        // Angular: formControlName="email" — common when there's no <label for>.
+        const formCtrl = el.getAttribute("formcontrolname")?.trim();
+        if (formCtrl) return formCtrl;
+        // Last-ditch fallbacks so fillable inputs are never anonymous: id, then
+        // synthesized label from the input type (e.g. "email input").
+        if (el.id) return el.id;
+        const type = el.getAttribute("type")?.trim();
+        if (type) return `${type} input`;
+        return "input";
+      }
+
+      if (el instanceof HTMLButtonElement) {
         const value = el.value?.trim();
         if (value) return value;
       }
 
       return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+    }
+
+    function isFillable(el: Element): boolean {
+      if (el instanceof HTMLTextAreaElement) return !el.disabled;
+      if (el instanceof HTMLInputElement) {
+        if (el.disabled) return false;
+        const type = (el.getAttribute("type") || "text").toLowerCase();
+        return !["button", "submit", "reset", "checkbox", "radio", "file", "hidden", "image"].includes(type);
+      }
+      const role = el.getAttribute("role")?.toLowerCase();
+      return role === "textbox" || role === "searchbox";
     }
 
     function roleOf(el: Element): string | undefined {
@@ -170,14 +235,25 @@ export async function extractActionCandidates(
       if (tag === "a") return "link";
       if (tag === "button" || tag === "summary") return "button";
       if (tag === "select") return "combobox";
+      if (tag === "textarea") return "textbox";
+      if (tag === "input") {
+        const type = (el.getAttribute("type") || "text").toLowerCase();
+        if (type === "search") return "searchbox";
+        return "textbox";
+      }
       return undefined;
     }
 
     function uniqueSelector(el: Element): string {
       if (!(el instanceof HTMLElement)) return el.tagName.toLowerCase();
 
-      const testId = el.getAttribute("data-testid") || el.getAttribute("data-test") || el.getAttribute("data-cy");
-      if (testId) return `[data-testid="${testId.replace(/"/g, "\\\"")}"]`;
+      // Pick whichever test-id attribute the element actually has. Sites
+      // standardize on one of these — building `[data-testid=…]` when the
+      // attribute is `data-test` produces a selector that matches nothing.
+      for (const attr of ["data-testid", "data-test", "data-cy"]) {
+        const val = el.getAttribute(attr);
+        if (val) return `[${attr}="${val.replace(/"/g, "\\\"")}"]`;
+      }
 
       if (el.id) return `#${cssEscape(el.id)}`;
 
@@ -239,15 +315,21 @@ export async function extractActionCandidates(
         selector: selectorValue,
         ...href,
       };
-      const signature = ["click", role ?? "", label.toLowerCase(), href.href ?? selectorValue].join("::");
+      const fillable = isFillable(el);
+      const kind: ExplorationActionKind = fillable
+        ? "fill"
+        : href.href
+        ? "navigate"
+        : "click";
+      const signature = [kind, role ?? "", label.toLowerCase(), href.href ?? selectorValue].join("::");
       if (seen.has(signature)) continue;
       seen.add(signature);
 
       candidates.push({
-        kind: href.href ? "navigate" : "click",
+        kind,
         label,
         locator,
-        reason: `visible ${role ?? el.tagName.toLowerCase()} action`,
+        reason: `visible ${role ?? el.tagName.toLowerCase()} ${fillable ? "input" : "action"}`,
         signature,
       });
     }

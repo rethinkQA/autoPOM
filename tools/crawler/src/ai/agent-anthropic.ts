@@ -95,16 +95,19 @@ Each turn you receive an observation:
 
 Choose the next exploration action by calling exactly one tool:
 - click_candidate(index): pick from visibleActions when one of the listed candidates fits
-- click_locator(locator, label): construct a locator (role+name preferred) when the desired action is not in the list
-- fill_field(locator, value, label): type into an input/textarea (e.g. login email/password)
+- fill_candidate(index, value): type into a visible fill-kind candidate by its index — preferred for any input that is in visibleActions
+- click_locator(locator, label): construct a locator (role+name preferred) only when the desired action is not in visibleActions
+- fill_field(locator, value, label): construct a locator to type into — last resort, only when no fill candidate is visible
 - navigate(url): jump to a route directly when faster than clicking
 - stop(reason): end exploration when no useful actions remain or the surface is fully covered
 
 Rules:
 - Never call destructive actions (delete, sign out, purchase, checkout, reset, confirm).
 - Prefer actions that uncover new groups, dialogs, menus, or routes.
-- Prefer click_candidate when a suitable candidate exists.
-- For login/auth pages, fill_field the email/password fields then click_locator the submit button.
+- Always prefer candidate-based tools (click_candidate, fill_candidate) over locator-based tools when a suitable candidate is in visibleActions — candidate selectors come from real DOM scans and are far more likely to match.
+- Do not refill a field that already appears under "Filled so far" — move on to the next unfilled field, then submit.
+- For login/auth pages, complete the form before exploring elsewhere: fill each input exactly once in order (email/username, then password), then click the submit button on the same page. Only navigate or explore other links after the form is submitted (or you have given up on it).
+- Check recentHistory before each decision: if your last turn was a fill on the same page, the next decision should fill the next field or submit, not repeat the previous fill.
 - Stop early when you observe consecutive turns with no new groups or no progress.
 - Be concise in rationales (one short sentence).`;
 
@@ -162,9 +165,30 @@ const TOOLS = [
     },
   },
   {
+    name: "fill_candidate",
+    description:
+      "Type a value into one of the visible action candidates by index. Prefer this over fill_field whenever the target input is in the visibleActions list — it uses the recorded selector and is far more reliable. Use {{KEY}} placeholders for credentials.",
+    input_schema: {
+      type: "object",
+      properties: {
+        index: {
+          type: "integer",
+          minimum: 0,
+          description: "Zero-based index of a fill-kind candidate in observation.visibleActions.",
+        },
+        value: {
+          type: "string",
+          description: "Text to type. Use {{KEY}} placeholders to refer to credentials by name.",
+        },
+        rationale: { type: "string" },
+      },
+      required: ["index", "value"],
+    },
+  },
+  {
     name: "fill_field",
     description:
-      "Type a value into an input/textarea. Use for login forms, search boxes, and similar fields. Use {{KEY}} placeholders for credentials.",
+      "Type a value into an input/textarea by constructing a locator. Use only when no fill candidate matches; prefer fill_candidate. Use {{KEY}} placeholders for credentials.",
     input_schema: {
       type: "object",
       properties: {
@@ -405,6 +429,12 @@ export function extractDecision(response: AnthropicMessagesResponse): AgentDecis
       const rationale = stringOrUndefined(input, "rationale");
       return { kind: "fill_field", locator, value, label, rationale };
     }
+    case "fill_candidate": {
+      const index = numberOrThrow(input, "index");
+      const value = stringOrThrow(input, "value");
+      const rationale = stringOrUndefined(input, "rationale");
+      return { kind: "fill_candidate", index, value, rationale };
+    }
     case "navigate": {
       const url = stringOrThrow(input, "url");
       const rationale = stringOrUndefined(input, "rationale");
@@ -467,6 +497,12 @@ export function formatObservationMessage(observation: AgentObservation): string 
   lines.push(`Route template: ${observation.routeTemplate}`);
   lines.push(`Title: ${observation.title}`);
 
+  const filledLabels = collectFilledLabels(observation.recentHistory);
+  if (filledLabels.length > 0) {
+    lines.push("");
+    lines.push(`Filled so far (do not refill these): ${filledLabels.join(", ")}`);
+  }
+
   if (observation.manifestGroupKeys.length > 0) {
     lines.push("");
     lines.push(`Discovered groups for this route (${observation.manifestGroupKeys.length}):`);
@@ -500,6 +536,24 @@ export function formatObservationMessage(observation: AgentObservation): string 
   return lines.join("\n");
 }
 
+function collectFilledLabels(history: AgentObservation["recentHistory"]): string[] {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const entry of history) {
+    const d = entry.decision;
+    const isFill = d.kind === "fill_field" || d.kind === "fill_candidate";
+    if (!isFill) continue;
+    // A fill counts as done as long as dispatch didn't throw — the typed value
+    // is in the input regardless of whether the URL/state changed.
+    if (entry.outcome === "failed") continue;
+    const label = "label" in d ? d.label : undefined;
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
+}
+
 function formatHistoryDecision(decision: AgentObservation["recentHistory"][number]["decision"]): string {
   switch (decision.kind) {
     case "click_candidate":
@@ -508,6 +562,10 @@ function formatHistoryDecision(decision: AgentObservation["recentHistory"][numbe
       return `click_locator("${decision.label}")`;
     case "fill_field":
       return `fill_field("${decision.label}")`;
+    case "fill_candidate":
+      return decision.label
+        ? `fill_candidate(${decision.index}, "${decision.label}")`
+        : `fill_candidate(${decision.index})`;
     case "navigate":
       return `navigate(${decision.url})`;
     case "stop":

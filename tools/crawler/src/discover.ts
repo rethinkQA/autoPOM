@@ -51,6 +51,18 @@ const GROUP_SELECTOR = [
   "[role='table']",
   "[role='dialog']",
   "[role='alertdialog']",
+  // Typed-element wrappers (Slice 6C). These surface as their own manifest
+  // entries with wrapperType set to select/stepper/datePicker so the emitter
+  // produces typed handles like `country: select(...)`. The nested-group
+  // filter below preserves these even when they live inside a parent form.
+  "select",
+  "input[type='date']",
+  "input[type='datetime-local']",
+  "input[type='time']",
+  "input[type='number']",
+  "[role='spinbutton']",
+  "[role='listbox']",
+  "[role='combobox']",
 ].join(", ");
 
 // ── Label extraction ────────────────────────────────────────
@@ -69,7 +81,13 @@ type LabelSource =
   | "preceding-heading"
   | "text-content"
   | "id"
-  | "tag";
+  | "tag"
+  // Slice 8A — fillable-element label sources, in priority order after aria.
+  | "label-for"            // <label for="this-id">…</label>
+  | "wrapping-label"       // <label><input/>…</label>
+  | "placeholder"
+  | "name-attr"
+  | "data-test";
 
 interface RawGroupData {
   /** Unique index for stable ordering. */
@@ -110,6 +128,22 @@ interface RawGroupData {
   selector: string;
   /** Whether the element contains an <input type="date"> or known date-picker component. */
   containsDateInput: boolean;
+  /**
+   * Lowercased value of the `type` attribute when the element is `<input>`.
+   * Used by `classifyWrapperType` to map number→stepper, date→datePicker.
+   */
+  inputType: string | null;
+  // ── Slice 8A — fillable-element label signals ────────────────
+  /** Text of `<label for="this-id">` when the element has an id and a label points at it. */
+  labelForText: string | null;
+  /** Text of a wrapping `<label>` ancestor (with the input itself stripped from the clone). */
+  wrappingLabelText: string | null;
+  /** `placeholder` attribute, if any. */
+  placeholderAttr: string | null;
+  /** `name` attribute, if any. */
+  nameAttr: string | null;
+  /** `data-testid` / `data-test` / `data-cy` attribute, if any. */
+  dataTestAttr: string | null;
 }
 
 /**
@@ -167,12 +201,33 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
         }
       }
 
+      // Same typed-wrapper test we run server-side, kept inline so the filter
+      // below can avoid suppressing typed elements when they are nested inside
+      // a parent form/fieldset.
+      function looksLikeTypedWrapper(el: Element): boolean {
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute("role")?.toLowerCase() ?? "";
+        if (tag === "table" || role === "table") return true;
+        if (tag === "dialog" || role === "dialog" || role === "alertdialog") return true;
+        if (tag === "select" || role === "listbox" || role === "combobox") return true;
+        if (role === "spinbutton") return true;
+        if (tag === "input") {
+          const t = (el.getAttribute("type") || "text").toLowerCase();
+          if (["number", "date", "datetime-local", "time"].includes(t)) return true;
+        }
+        return false;
+      }
+
       // Filter out nested groups: if an element is a descendant of another
       // matched element, keep only the ancestor. This prevents individual
       // form fields (e.g. [role="group"][aria-label="Email"]) from appearing
       // as separate groups when their parent card/form is already captured.
+      // Exception: typed-element wrappers (select, datePicker, stepper, table,
+      // dialog) survive nesting — they want their own typed handle in the
+      // generated page object even when wrapped by a form.
       const elementSet = new Set(elements);
       const filtered = elements.filter((el) => {
+        if (looksLikeTypedWrapper(el)) return true;
         let parent = el.parentElement;
         while (parent && parent !== container) {
           if (elementSet.has(parent)) return false; // ancestor is also a group — skip this child
@@ -351,6 +406,56 @@ async function extractRawGroups(root: Page | Locator, scopeSelector?: string): P
             // P3-204: additional date-picker library selectors
             el.querySelector('.react-datepicker, .flatpickr-input, .mat-datepicker-input, [class*="datepicker"], [class*="date-picker"]')
           ),
+          inputType:
+            el.tagName.toLowerCase() === "input"
+              ? (el.getAttribute("type") ?? "text").toLowerCase()
+              : null,
+          ...(() => {
+            // Slice 8A — fillable-only signals. Computed inline so we don't
+            // pay the cost on every group element.
+            const tag = el.tagName.toLowerCase();
+            const isFillable = tag === "input" || tag === "textarea" || tag === "select";
+            if (!isFillable) {
+              return {
+                labelForText: null,
+                wrappingLabelText: null,
+                placeholderAttr: null,
+                nameAttr: null,
+                dataTestAttr: null,
+              };
+            }
+
+            // <label for="id"> association
+            let labelForText: string | null = null;
+            const elId = el.getAttribute("id");
+            if (elId) {
+              const lbl = document.querySelector(`label[for="${elId.replace(/"/g, '\\"')}"]`);
+              const txt = lbl?.textContent?.replace(/\s+/g, " ").trim();
+              if (txt) labelForText = txt;
+            }
+
+            // wrapping <label>
+            let wrappingLabelText: string | null = null;
+            const wrap = el.closest("label");
+            if (wrap) {
+              const clone = wrap.cloneNode(true) as HTMLElement;
+              clone.querySelectorAll("input, textarea, select").forEach((n) => n.remove());
+              const txt = clone.textContent?.replace(/\s+/g, " ").trim();
+              if (txt) wrappingLabelText = txt;
+            }
+
+            return {
+              labelForText,
+              wrappingLabelText,
+              placeholderAttr: el.getAttribute("placeholder")?.trim() || null,
+              nameAttr: el.getAttribute("name")?.trim() || null,
+              dataTestAttr:
+                el.getAttribute("data-testid") ||
+                el.getAttribute("data-test") ||
+                el.getAttribute("data-cy") ||
+                null,
+            };
+          })(),
         });
       });
 
@@ -388,6 +493,27 @@ function isFrameworkId(id: string): boolean {
  * 12. Fallback: tag name
  */
 function resolveLabel(raw: RawGroupData): { label: string; source: LabelSource } {
+  // Slice 8A — fillable elements (input/textarea/select) have a distinct
+  // label-resolution chain. Their `firstTextContent` is the input's *value*
+  // or default option text (e.g. "Name (A to Z)" for a sort dropdown), not
+  // a label. Prefer stable identifiers: <label for>, wrapping <label>,
+  // placeholder, name, data-test, id — falling back to text-content only
+  // as a last resort.
+  const isFillable = raw.tagName === "input" || raw.tagName === "textarea" || raw.tagName === "select";
+  if (isFillable) {
+    if (raw.ariaLabel) return { label: raw.ariaLabel, source: "aria-label" };
+    if (raw.ariaLabelledBy && !isFrameworkId(raw.ariaLabelledBy)) return { label: raw.ariaLabelledBy, source: "aria-labelledby" };
+    if (raw.labelForText) return { label: raw.labelForText, source: "label-for" };
+    if (raw.wrappingLabelText) return { label: raw.wrappingLabelText, source: "wrapping-label" };
+    if (raw.titleAttr) return { label: raw.titleAttr, source: "title" };
+    if (raw.placeholderAttr) return { label: raw.placeholderAttr, source: "placeholder" };
+    if (raw.nameAttr) return { label: raw.nameAttr, source: "name-attr" };
+    if (raw.dataTestAttr) return { label: raw.dataTestAttr, source: "data-test" };
+    if (raw.id && !isFrameworkId(raw.id)) return { label: raw.id, source: "id" };
+    // Skip firstTextContent / preceding-heading for fillables — too noisy.
+    return { label: raw.tagName, source: "tag" };
+  }
+
   if (raw.ariaLabel) return { label: raw.ariaLabel, source: "aria-label" };
   if (raw.ariaLabelledBy && !isFrameworkId(raw.ariaLabelledBy)) return { label: raw.ariaLabelledBy, source: "aria-labelledby" };
   if (raw.legendText) return { label: raw.legendText, source: "legend" };
@@ -442,6 +568,15 @@ function classifyWrapperType(raw: RawGroupData): WrapperType {
 
   if (tag === "table" || role === "table") return "table";
   if (tag === "dialog" || role === "dialog" || role === "alertdialog") return "dialog";
+
+  // Slice 6C — typed-element wrappers backed by framework adapters.
+  if (tag === "select" || role === "listbox" || role === "combobox") return "select";
+  if (role === "spinbutton") return "stepper";
+  if (tag === "input") {
+    const type = raw.inputType;
+    if (type === "number") return "stepper";
+    if (type === "date" || type === "datetime-local" || type === "time") return "datePicker";
+  }
 
   return "group";
 }
@@ -604,7 +739,7 @@ export async function discoverGroups(
     return entry;
   });
 
-  const semanticGroups = disambiguateSelectors(groups);
+  const semanticGroups = disambiguateSelectors(groups).map(stripInternalFields);
 
   // Second pass: discover implicit groups (cards, visual containers, form groups)
   // that lack semantic HTML or ARIA roles.
@@ -616,6 +751,67 @@ export async function discoverGroups(
   });
 
   return [...semanticGroups, ...implicitGroups];
+}
+
+/**
+ * Drop disambiguation-only fields (`_labelSource` and other `_`-prefixed
+ * helpers) before a manifest group is emitted or persisted. They're useful
+ * inside `disambiguateSelectors` but should not survive serialization.
+ */
+function stripInternalFields(g: ManifestGroup): ManifestGroup {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(g)) {
+    if (key.startsWith("_")) continue;
+    cleaned[key] = value;
+  }
+  return cleaned as unknown as ManifestGroup;
+}
+
+/**
+ * Slice 6C — discover only typed-element wrappers (select, datePicker, stepper).
+ *
+ * This pass runs independently of {@link discoverGroups} and the AI provider
+ * so typed-handles surface in the manifest regardless of which discovery mode
+ * is active. The crawler merges the result with whatever group discovery
+ * (heuristic or AI) returned, so tests can do `inv.sortDropdown.choose("…")`
+ * without having to fall back to label resolution within a parent form.
+ */
+export async function discoverTypedElements(
+  page: Page,
+  options?: { scope?: string; pass?: string },
+): Promise<ManifestGroup[]> {
+  const pass = options?.pass ?? "typed-pass";
+  const now = new Date().toISOString();
+
+  // Re-use the same selector + extraction pipeline. The classifier discards
+  // anything whose wrapperType ends up "group", so plain forms/navs from
+  // GROUP_SELECTOR don't pollute the result.
+  const rawGroups = await extractRawGroups(page, options?.scope);
+
+  const typed: ManifestGroup[] = [];
+  for (const raw of rawGroups) {
+    const wrapperType = classifyWrapperType(raw);
+    if (wrapperType === "group") continue;
+    // Dialogs and tables are already covered by the primary discovery pass;
+    // this pass exists to surface element-level wrappers that get otherwise
+    // skipped (select/stepper/datePicker on inputs).
+    if (wrapperType === "dialog" || wrapperType === "table") continue;
+
+    const { label, source: labelSource } = resolveLabel(raw);
+    const entry: ManifestGroup = {
+      label,
+      selector: raw.selector,
+      groupType: classifyGroupType(raw),
+      wrapperType,
+      discoveredIn: pass,
+      visibility: (raw.isVisible ? "static" : "dynamic") as Visibility,
+      lastSeen: now,
+    };
+    (entry as any)._labelSource = labelSource;
+    typed.push(entry);
+  }
+
+  return disambiguateSelectors(typed).map(stripInternalFields);
 }
 
 /**

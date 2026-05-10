@@ -84,14 +84,19 @@ function makeAction(
 // ── targetFromHint ──────────────────────────────────────────
 
 test.describe("MCP — target resolution", () => {
-  test("prefers test id when present", () => {
-    expect(targetFromHint({ testId: "checkout", role: "button", name: "Pay", selector: "#pay" }))
-      .toBe('[data-testid="checkout"]');
+  test("prefers the recorded selector when present (it encodes the site's actual test-id attribute)", () => {
+    // The DOM scan records selectors like `[data-test="checkout"]` for sites
+    // that use `data-test` rather than `data-testid`. Trusting `hint.testId`
+    // would emit `[data-testid="…"]` and fail to match.
+    expect(targetFromHint({ testId: "checkout", role: "button", name: "Pay", selector: '[data-test="checkout"]' }))
+      .toBe('[data-test="checkout"]');
+  });
+
+  test("falls back to testId synth when no selector was recorded", () => {
+    expect(targetFromHint({ testId: "checkout" })).toBe('[data-testid="checkout"]');
   });
 
   test("uses the recorded selector when role+name + selector both available", () => {
-    // Selector is more specific than the synthetic role+aria-label combo, so
-    // we keep it. Snapshot/ref resolution is a Slice 2 enhancement.
     expect(targetFromHint({ role: "button", name: "Sign In", selector: "#sign-in" }))
       .toBe("#sign-in");
   });

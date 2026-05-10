@@ -8,7 +8,7 @@
 
 import type { Page } from "playwright";
 import type { CrawlOptions, CrawlerManifest, ManifestDiff, ManifestGroup } from "./types.js";
-import { discoverGroups, discoverToasts } from "./discover.js";
+import { discoverGroups, discoverToasts, discoverTypedElements } from "./discover.js";
 import { mergeManifest, diffManifest } from "./merge.js";
 import { safePathname } from "./naming.js";
 import { NetworkObserver } from "./network.js";
@@ -59,6 +59,21 @@ export async function crawlPage(
     allGroups = result.groups;
   } else {
     allGroups = await heuristicDiscovery(page, scope, passTag);
+  }
+
+  // Slice 6C — typed-element discovery runs alongside both AI and heuristic
+  // paths, so <select>/datePicker/stepper handles surface in the manifest
+  // regardless of how the rest of the page was discovered. We merge by
+  // selector: a typed entry replaces an existing group-wrapper match (so
+  // `wrapperType: "select"` wins over `wrapperType: "group"`), or appends
+  // when the selector is new.
+  const typedGroups = await discoverTypedElements(page, { scope: scope ?? undefined, pass: passTag });
+  if (typedGroups.length > 0) {
+    const bySelector = new Map(allGroups.map((g) => [g.selector, g] as const));
+    for (const tg of typedGroups) {
+      bySelector.set(tg.selector, tg);
+    }
+    allGroups = Array.from(bySelector.values());
   }
 
   // Build or merge the manifest

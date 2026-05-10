@@ -58,6 +58,7 @@ export type AgentDecisionSummary =
   | { kind: "click_candidate"; index: number }
   | { kind: "click_locator"; label: string }
   | { kind: "fill_field"; label: string }
+  | { kind: "fill_candidate"; index: number; label?: string }
   | { kind: "navigate"; url: string }
   | { kind: "stop"; reason: string };
 
@@ -120,6 +121,18 @@ export type AgentDecision =
       value: string;
       /** Human-readable label for the field. */
       label: string;
+      /** Optional rationale. */
+      rationale?: string;
+    }
+  | {
+      kind: "fill_candidate";
+      /** Index into `observation.visibleActions` — must point at a fill candidate. */
+      index: number;
+      /**
+       * Value to type into the candidate's input. Same `{{KEY}}` substitution
+       * rules as `fill_field`.
+       */
+      value: string;
       /** Optional rationale. */
       rationale?: string;
     }

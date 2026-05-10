@@ -28,7 +28,15 @@ export type GroupType =
   | "generic";
 
 /** The wrapper type for special elements that need typed factories. */
-export type WrapperType = "group" | "table" | "dialog" | "toast" | "datePicker";
+export type WrapperType =
+  | "group"
+  | "table"
+  | "dialog"
+  | "toast"
+  | "datePicker"
+  | "stepper"
+  | "select"
+  | "textInput";
 
 /** Visibility classification of a group. */
 export type Visibility = "static" | "dynamic" | "exploration";

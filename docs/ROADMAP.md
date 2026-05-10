@@ -4,7 +4,7 @@
 > **Created:** 2026-02-16
 > **Last updated:** 2026-03-20
 
-**Current test count:** 1,889 tests (1,064 framework integration + 312 unit + 329 crawler integration + 184 crawler unit), all passing.
+**Current test count:** 1,940 tests (1,064 framework integration + 312 unit + 329 crawler integration + 235 crawler unit), all passing.
 
 ---
 

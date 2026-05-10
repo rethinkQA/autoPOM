@@ -5,7 +5,7 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { labelToPropertyName, deduplicateNames, inferRouteName, normalizeRoute } from "../../src/naming.js";
+import { labelToPropertyName, deduplicateNames, inferRouteName, normalizeRoute, stableNameFromSelector } from "../../src/naming.js";
 
 // ── labelToPropertyName ─────────────────────────────────────
 
@@ -167,6 +167,65 @@ test.describe("inferRouteName", () => {
 
   test("returns 'page' for invalid URL", () => {
     expect(inferRouteName("not-a-url")).toBe("page");
+  });
+
+  test("strips file extensions from the last segment (.html, .php, .aspx, .jsp)", () => {
+    // Sauce Demo: routes like /inventory.html were producing the invalid
+    // identifier `inventory.htmlPage` in generated TypeScript.
+    expect(inferRouteName("https://www.saucedemo.com/inventory.html")).toBe("inventory");
+    expect(inferRouteName("https://example.com/checkout.php")).toBe("checkout");
+    expect(inferRouteName("https://example.com/products/list.aspx")).toBe("productsList");
+    expect(inferRouteName("https://example.com/Home.jsp")).toBe("home");
+  });
+
+  test("sanitizes any remaining non-identifier chars to camelCase boundaries", () => {
+    // Hand-rolled URL-encoded or punctuation-laced segments shouldn't break
+    // the generated function name.
+    expect(inferRouteName("http://localhost:3001/foo-bar")).toBe("fooBar");
+    expect(inferRouteName("http://localhost:3001/some.weird.path")).toBe("someWeirdPath");
+  });
+});
+
+// ── stableNameFromSelector ──────────────────────────────────
+
+test.describe("stableNameFromSelector", () => {
+  test("extracts the id from `#id` selectors", () => {
+    expect(stableNameFromSelector("#shopping_cart_container")).toBe("shopping_cart_container");
+    expect(stableNameFromSelector("div#header_container")).toBe("header_container");
+  });
+
+  test("extracts the value from `[data-test=…]` / `[data-testid=…]` selectors", () => {
+    expect(stableNameFromSelector('[data-test="product_sort_container"]')).toBe("product_sort_container");
+    expect(stableNameFromSelector('select[data-testid="checkout-pay"]')).toBe("checkout-pay");
+    expect(stableNameFromSelector('button[data-cy="login-submit"]')).toBe("login-submit");
+  });
+
+  test("extracts a class name from `tag.class` selectors", () => {
+    expect(stableNameFromSelector("div.inventory_details_container")).toBe("inventory_details_container");
+    expect(stableNameFromSelector(".product_sort_container")).toBe("product_sort_container");
+  });
+
+  test("returns null for generic class names like .container/.row/.col", () => {
+    // These aren't useful seeds — falling back to the AI label produces a
+    // more meaningful identifier.
+    expect(stableNameFromSelector("div.container")).toBeNull();
+    expect(stableNameFromSelector(".row")).toBeNull();
+    expect(stableNameFromSelector(".col")).toBeNull();
+    expect(stableNameFromSelector(".btn")).toBeNull();
+  });
+
+  test("returns null for plain tag selectors with no identifier hint", () => {
+    expect(stableNameFromSelector("nav")).toBeNull();
+    expect(stableNameFromSelector("footer")).toBeNull();
+    expect(stableNameFromSelector("body")).toBeNull();
+    expect(stableNameFromSelector("")).toBeNull();
+  });
+
+  test("Slice 8B — combined with labelToPropertyName produces a stable identifier", () => {
+    // Sauce Demo regression: AI label varied between runs ("Product Detail
+    // Card" / "Inventory Item Detail") but the selector stayed stable.
+    const seed = stableNameFromSelector("div.inventory_details_container");
+    expect(labelToPropertyName(seed!)).toBe("inventoryDetailsContainer");
   });
 });
 

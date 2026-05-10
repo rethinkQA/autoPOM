@@ -552,6 +552,7 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
     mcp: false,
     aiAgent: false,
   };
+  let strategyExplicit = false;
 
   let i = 0;
   while (i < argv.length) {
@@ -590,6 +591,7 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
           process.exit(1);
         }
         args.strategy = strategy;
+        strategyExplicit = true;
         break;
       }
       case "--scope":
@@ -659,6 +661,15 @@ function parseExploreArgs(argv: string[]): ExploreArgs {
     i++;
   }
 
+  // Slice 7C — when --ai-agent is set and the user did not explicitly pass
+  // --strategy, prefer "balanced". Conservative drops every fill candidate
+  // (mutation risk), so the agent never sees username/password inputs and
+  // is forced into fill_field with synthesized locators. Balanced lets it
+  // pick fills directly via fill_candidate.
+  if (args.aiAgent && !strategyExplicit) {
+    args.strategy = "balanced";
+  }
+
   return args;
 }
 
@@ -712,7 +723,7 @@ Options:
   --max-actions <n>        Max attempted actions (default: 20)
   --max-routes <n>         Max distinct routes to enqueue (default: 10)
   --max-rescans <n>        Max rescans per route (default: 2)
-  --strategy <name>        conservative | balanced | aggressive (default: conservative)
+  --strategy <name>        conservative | balanced | aggressive (default: conservative; balanced when --ai-agent is set)
   --scope <selector>       Limit scanning and action extraction to a section
   --observe-network        Capture API dependencies during scans (default: on)
   --no-observe-network     Disable API dependency capture

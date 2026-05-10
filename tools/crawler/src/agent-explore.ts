@@ -28,7 +28,7 @@ import type {
   ExploreStrategy,
 } from "./explore-types.js";
 import { mergeKey } from "./merge.js";
-import { normalizeRoute } from "./naming.js";
+import { normalizeRoute, safePathname } from "./naming.js";
 import { NetworkObserver } from "./network.js";
 import type { ApiDependency, CrawlerManifest } from "./types.js";
 import type {
@@ -102,6 +102,7 @@ export async function exploreWithAgent(
       maxActions,
     );
 
+    log(formatVisibleSummary(iteration, observation));
     const decision = await agent.decide(observation);
     log(formatDecisionLog(iteration, decision));
 
@@ -116,11 +117,22 @@ export async function exploreWithAgent(
       break;
     }
 
+    const fillLabel = fillTargetLabel(decision, currentScan.candidates);
+    if (fillLabel !== null && isAlreadyFilled(fillLabel, history)) {
+      history.push({
+        iteration,
+        decision: summarizeDecision(decision, currentScan.candidates),
+        outcome: "no_change",
+        note: `skipped: "${fillLabel}" was already filled — move on to the next field or submit`,
+      });
+      continue;
+    }
+
     const resolved = decisionToCandidate(decision, currentScan.candidates, options.credentials);
     if (!resolved) {
       history.push({
         iteration,
-        decision: summarizeDecision(decision),
+        decision: summarizeDecision(decision, currentScan.candidates),
         outcome: "failed",
         note: "decision could not be resolved to a runnable action",
       });
@@ -129,7 +141,7 @@ export async function exploreWithAgent(
     if ("error" in resolved) {
       history.push({
         iteration,
-        decision: summarizeDecision(decision),
+        decision: summarizeDecision(decision, currentScan.candidates),
         outcome: "failed",
         note: resolved.error,
       });
@@ -170,7 +182,7 @@ export async function exploreWithAgent(
       attachApiDependencies(manifests, currentScan.state.routeTemplate, deps);
       history.push({
         iteration,
-        decision: summarizeDecision(decision),
+        decision: summarizeDecision(decision, currentScan.candidates),
         outcome: "failed",
         note: action.error,
       });
@@ -209,12 +221,30 @@ export async function exploreWithAgent(
     });
     attachApiDependencies(manifests, nextScan.state.routeTemplate, deps);
 
+    // Slice 8C — record an actionNavigation on the FROM-state manifest so the
+    // emitter can produce a `goTo*()` helper from the originating page. The
+    // recorder path (record-api.ts) already does this; the agent loop didn't.
+    // Without this, click-driven navigations (e.g. Sauce Demo's Login button)
+    // never get a helper, and tests have to hand-write `page.click("Login")`
+    // followed by `waitForURL`.
+    if (navigation && (action.kind === "click" || action.kind === "navigate")) {
+      attachActionNavigation(
+        manifests,
+        currentScan.state.routeTemplate,
+        action.label,
+        safePathname(controller.currentUrl()),
+      );
+    }
+
     action.status = "succeeded";
     graph.summary.succeededActions++;
 
     const sameState = lastStateId === nextScan.state.id && newGroups.length === 0 && !navigation;
     if (sameState) {
-      consecutiveNoChange++;
+      // Fills don't change URL/groups but they are real progress — don't let
+      // them trip the no-progress early-stop on long forms.
+      const isFill = decision.kind === "fill_field" || decision.kind === "fill_candidate";
+      if (!isFill) consecutiveNoChange++;
       outcome = "no_change";
     } else {
       consecutiveNoChange = 0;
@@ -223,7 +253,7 @@ export async function exploreWithAgent(
 
     history.push({
       iteration,
-      decision: summarizeDecision(decision),
+      decision: summarizeDecision(decision, currentScan.candidates),
       outcome,
       note,
     });
@@ -370,6 +400,17 @@ function decisionToCandidate(
       return { candidate: visible[decision.index] };
     }
     case "click_locator": {
+      // If the agent's locator clearly points at one of the visible
+      // candidates (matched by testId or selector), reuse that candidate
+      // wholesale. The candidate already has the correct visible-text label
+      // from the planner's textOf chain (aria-label → value → text content),
+      // whereas the agent often passes a slug like the data-test value as
+      // the label, producing helpers that call `root.click("login-button")`
+      // instead of `root.click("Login")`.
+      const matched = findMatchingCandidate(decision.locator, visible);
+      if (matched) {
+        return { candidate: matched };
+      }
       const signature = signatureForLocator(decision.locator, decision.label);
       return {
         candidate: {
@@ -398,6 +439,18 @@ function decisionToCandidate(
         },
       };
     }
+    case "fill_candidate": {
+      if (decision.index < 0 || decision.index >= visible.length) return null;
+      const target = visible[decision.index];
+      if (target.kind !== "fill") {
+        return { error: `candidate at index ${decision.index} is kind="${target.kind}", not "fill"` };
+      }
+      const resolution = resolveCredentials(decision.value, credentials);
+      if ("error" in resolution) return { error: resolution.error };
+      return {
+        candidate: { ...target, value: resolution.value },
+      };
+    }
     case "navigate": {
       return {
         candidate: {
@@ -413,6 +466,34 @@ function decisionToCandidate(
     case "stop":
       return null;
   }
+}
+
+/**
+ * True if a previous fill decision succeeded (or was a no-op state-wise)
+ * with the same label. Used to deterministically skip the agent's repeated
+ * fill emissions on multi-field forms — prompt rules alone don't stop it.
+ */
+function isAlreadyFilled(label: string, history: AgentHistoryEntry[]): boolean {
+  for (const entry of history) {
+    if (entry.decision.kind !== "fill_field" && entry.decision.kind !== "fill_candidate") continue;
+    if (entry.outcome === "failed") continue;
+    const entryLabel = "label" in entry.decision ? entry.decision.label : undefined;
+    if (entryLabel && entryLabel === label) return true;
+  }
+  return false;
+}
+
+/** Extract the label of the field a fill decision targets, or null if not a fill. */
+function fillTargetLabel(
+  decision: AgentDecision,
+  visible: ExplorationActionCandidate[],
+): string | null {
+  if (decision.kind === "fill_field") return decision.label;
+  if (decision.kind === "fill_candidate") {
+    if (decision.index < 0 || decision.index >= visible.length) return null;
+    return visible[decision.index].label;
+  }
+  return null;
 }
 
 const PLACEHOLDER_PATTERN = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
@@ -457,11 +538,15 @@ function decisionRationale(decision: AgentDecision): string | undefined {
   if (decision.kind === "click_candidate") return decision.rationale;
   if (decision.kind === "click_locator") return decision.rationale;
   if (decision.kind === "fill_field") return decision.rationale;
+  if (decision.kind === "fill_candidate") return decision.rationale;
   if (decision.kind === "navigate") return decision.rationale;
   return undefined;
 }
 
-function summarizeDecision(decision: AgentDecision): AgentHistoryEntry["decision"] {
+function summarizeDecision(
+  decision: AgentDecision,
+  visible: ExplorationActionCandidate[],
+): AgentHistoryEntry["decision"] {
   switch (decision.kind) {
     case "click_candidate":
       return { kind: "click_candidate", index: decision.index };
@@ -469,6 +554,10 @@ function summarizeDecision(decision: AgentDecision): AgentHistoryEntry["decision
       return { kind: "click_locator", label: decision.label };
     case "fill_field":
       return { kind: "fill_field", label: decision.label };
+    case "fill_candidate": {
+      const target = visible[decision.index];
+      return { kind: "fill_candidate", index: decision.index, label: target?.label };
+    }
     case "navigate":
       return { kind: "navigate", url: decision.url };
     case "stop":
@@ -480,6 +569,33 @@ function signatureForLocator(locator: { role?: string; name?: string; selector?:
   const role = locator.role ?? "";
   const target = locator.testId ?? locator.selector ?? locator.text ?? label;
   return ["click", role, label.toLowerCase(), target].join("::");
+}
+
+/**
+ * Find the visible candidate (if any) that the agent's `click_locator`
+ * decision actually targets. Matches in priority order: testId, selector,
+ * role+name. Used to recover the candidate's recorded visible-text label
+ * when the agent passes a slug like the data-test value as the label.
+ */
+function findMatchingCandidate(
+  locator: { role?: string; name?: string; selector?: string; testId?: string; text?: string },
+  visible: ExplorationActionCandidate[],
+): ExplorationActionCandidate | null {
+  if (locator.testId) {
+    const m = visible.find((c) => c.locator.testId === locator.testId);
+    if (m) return m;
+  }
+  if (locator.selector) {
+    const m = visible.find((c) => c.locator.selector === locator.selector);
+    if (m) return m;
+  }
+  if (locator.role && locator.name) {
+    const m = visible.find(
+      (c) => c.locator.role === locator.role && c.locator.name === locator.name,
+    );
+    if (m) return m;
+  }
+  return null;
 }
 
 function attachApiDependencies(
@@ -499,8 +615,42 @@ function attachApiDependencies(
   manifest.apiDependencies = Array.from(seen.values());
 }
 
+/**
+ * Record an action→navigation edge on the originating page's manifest.
+ * Dedupes on `(triggeredBy, navigatesTo)` so repeated clicks of the same
+ * button don't multiply the entries.
+ */
+function attachActionNavigation(
+  manifests: Map<string, CrawlerManifest>,
+  routeTemplate: string,
+  triggeredBy: string,
+  navigatesTo: string,
+): void {
+  if (!triggeredBy || !navigatesTo) return;
+  const manifest = manifests.get(routeTemplate);
+  if (!manifest) return;
+  const existing = manifest.actionNavigations ?? [];
+  const key = (e: { triggeredBy: string; navigatesTo: string }) => `${e.triggeredBy}::${e.navigatesTo}`;
+  const seen = new Set(existing.map(key));
+  const entry = { triggeredBy, navigatesTo };
+  if (seen.has(key(entry))) return;
+  manifest.actionNavigations = [...existing, entry];
+}
+
 function stateKey(state: ExplorationState): string {
   return [state.routeTemplate, state.domHash, state.ariaHash, state.actionHash].join("::");
+}
+
+function formatVisibleSummary(iteration: number, observation: AgentObservation): string {
+  const counts: Record<string, number> = {};
+  for (const c of observation.visibleActions) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
+  const summary = Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(", ") || "none";
+  const fills = observation.visibleActions
+    .filter((c) => c.kind === "fill")
+    .map((c) => `[${c.index}] "${c.label}"`)
+    .join(", ");
+  const fillsLabel = fills ? ` | fills: ${fills}` : "";
+  return `agent[#${iteration}] visible(${observation.visibleActions.length}): ${summary}${fillsLabel}`;
 }
 
 function formatDecisionLog(iteration: number, decision: AgentDecision): string {
@@ -511,6 +661,8 @@ function formatDecisionLog(iteration: number, decision: AgentDecision): string {
       return `agent[#${iteration}] click_locator("${decision.label}")`;
     case "fill_field":
       return `agent[#${iteration}] fill_field("${decision.label}")`;
+    case "fill_candidate":
+      return `agent[#${iteration}] fill_candidate(${decision.index})`;
     case "navigate":
       return `agent[#${iteration}] navigate(${decision.url})`;
     case "stop":

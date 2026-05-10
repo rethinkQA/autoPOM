@@ -25,6 +25,50 @@ const RESERVED_WORDS = new Set([
 ]);
 
 /**
+ * Extract a stable identifier hint from a CSS selector for use as a property
+ * name seed. Returns null when the selector is too generic for naming
+ * (`div`, `nav`, `body`, `form`, `*`).
+ *
+ * Priority:
+ *   1. `#id` or `tag#id`           → id
+ *   2. `[data-testid=…]` / variant → attribute value
+ *   3. `tag.class` (single class)  → class
+ *
+ * The returned string is a raw identifier candidate (e.g. `"shopping_cart_container"`);
+ * pass through `labelToPropertyName` to camelCase it.
+ */
+export function stableNameFromSelector(selector: string): string | null {
+  if (!selector || selector.trim().length === 0) return null;
+  const s = selector.trim();
+
+  // #id (with optional tag prefix)
+  const idMatch = s.match(/^[a-z]*#([\w-]+)$/i);
+  if (idMatch) return idMatch[1];
+
+  // [data-test*="value"]
+  const testIdMatch = s.match(/\[data-(?:testid|test|cy)="([^"]+)"\]/);
+  if (testIdMatch) return testIdMatch[1];
+
+  // tag.class — only when the class isn't generic boilerplate (col, row, container alone, btn).
+  const classMatch = s.match(/^[a-z]*\.([\w-]+)/i);
+  if (classMatch) {
+    const cls = classMatch[1];
+    if (!GENERIC_CLASS_NAMES.has(cls.toLowerCase())) return cls;
+  }
+
+  return null;
+}
+
+/**
+ * Class names that are too generic to seed a property name. Falling back to
+ * the AI-generated label produces a more meaningful identifier.
+ */
+const GENERIC_CLASS_NAMES = new Set([
+  "container", "wrapper", "content", "row", "col", "btn", "card", "section",
+  "block", "inner", "outer", "item", "box", "panel", "main", "body",
+]);
+
+/**
  * Convert a manifest label to a valid camelCase TypeScript property name.
  *
  * Examples:
@@ -118,13 +162,20 @@ export function deduplicateNames(
   overrides?: Record<string, string>,
   reservedNames?: Iterable<string>,
   groupTypes?: string[],
+  /**
+   * Slice 8B — optional name seeds (e.g. from `stableNameFromSelector`) that
+   * replace `labels[i]` ONLY for property-name derivation. Override lookup
+   * still uses the original `labels[i]` so user-supplied
+   * `propertyNameOverrides` keep working when the seed differs from the label.
+   */
+  nameSeeds?: (string | null | undefined)[],
 ): string[] {
   const result: string[] = [];
   const usedNames = new Set<string>(reservedNames);
 
   for (let i = 0; i < labels.length; i++) {
     const label = labels[i];
-    // Check for override first
+    // Check for override first — keyed on original label, not seed.
     if (overrides?.[label]) {
       const name = overrides[label];
       result.push(name);
@@ -132,7 +183,7 @@ export function deduplicateNames(
       continue;
     }
 
-    let name = labelToPropertyName(label);
+    let name = labelToPropertyName(nameSeeds?.[i] || label);
 
     // Deduplicate
     if (usedNames.has(name)) {
@@ -193,8 +244,14 @@ export function inferRouteName(url: string): string {
     const segments = path.split("/").filter((s) => s.length > 0);
     if (segments.length === 0) return "home";
 
+    // Drop common file extensions (`.html`, `.htm`, `.php`, `.aspx`, `.jsp`)
+    // from the last segment — they're routing artifacts, not meaningful names.
+    const cleanedSegments = segments.map((seg, idx) =>
+      idx === segments.length - 1 ? seg.replace(/\.(html?|php|aspx?|jsp)$/i, "") : seg,
+    );
+
     // Strip dynamic-looking segments (IDs, :id placeholders, "detail")
-    const meaningful = segments.filter(
+    const meaningful = cleanedSegments.filter(
       (s) => s !== ":id" && s !== "detail" && !/^\d+$/.test(s) &&
         !/^[0-9a-f]{8}-/i.test(s),
     );
@@ -204,7 +261,7 @@ export function inferRouteName(url: string): string {
     // Take last 2 meaningful segments at most
     const tail = meaningful.slice(-2);
 
-    return tail
+    const joined = tail
       .map((seg, i) => {
         // Preserve existing camelCase (e.g. "contactList" stays "contactList")
         // Only ensure first char of first segment is lowercase
@@ -212,6 +269,16 @@ export function inferRouteName(url: string): string {
         return seg.charAt(0).toUpperCase() + seg.slice(1);
       })
       .join("");
+
+    // Final guard: replace any character that isn't valid in a JS identifier.
+    // Anything unexpected (`.`, `-`, encoded chars) becomes a camelCase boundary.
+    const safe = joined
+      .replace(/[^a-zA-Z0-9_$]+(.)/g, (_, ch: string) => ch.toUpperCase())
+      .replace(/[^a-zA-Z0-9_$]/g, "");
+
+    if (safe.length === 0) return "page";
+    // Identifiers can't start with a digit.
+    return /^[0-9]/.test(safe) ? `_${safe}` : safe;
   } catch {
     return "page";
   }

@@ -70,7 +70,10 @@ test.describe("emitPageObject", () => {
     expect(result).toContain("toast(");
   });
 
-  test("converts labels to camelCase property names", () => {
+  test("converts labels to camelCase property names (selector seed when present)", () => {
+    // Slice 8B — when the selector encodes a stable identifier (here: an id),
+    // the property name comes from the selector for run-to-run stability.
+    // The AI label is still preserved as descriptive metadata in the manifest.
     const manifest = makeManifest([
       makeGroup({ label: "Shipping Method", selector: "#shipping", groupType: "fieldset" }),
       makeGroup({ label: "product-modal", selector: "#product-modal", wrapperType: "dialog" }),
@@ -78,8 +81,34 @@ test.describe("emitPageObject", () => {
 
     const result = emitPageObject(manifest);
 
+    expect(result).toContain("shipping:");      // from id `#shipping`
+    expect(result).toContain("productModal:");  // from id `#product-modal`
+  });
+
+  test("Slice 8B — falls back to label when selector has no stable seed", () => {
+    const manifest = makeManifest([
+      makeGroup({ label: "Shipping Method", selector: "section", groupType: "region" }),
+    ]);
+
+    const result = emitPageObject(manifest);
     expect(result).toContain("shippingMethod:");
-    expect(result).toContain("productModal:");
+  });
+
+  test("Slice 8B — property names stay stable when only the AI label changes", () => {
+    // Same selector, different AI labels (simulating run-to-run variance).
+    const a = makeManifest([
+      makeGroup({ label: "Product Detail Card", selector: "div.inventory_details_container", groupType: "section" }),
+    ]);
+    const b = makeManifest([
+      makeGroup({ label: "Inventory Item Detail", selector: "div.inventory_details_container", groupType: "section" }),
+    ]);
+
+    const ra = emitPageObject(a);
+    const rb = emitPageObject(b);
+
+    // Both pages emit the same property name despite the label change.
+    expect(ra).toContain("inventoryDetailsContainer:");
+    expect(rb).toContain("inventoryDetailsContainer:");
   });
 
   test("infers By.role() for landmark tag selectors", () => {
@@ -173,6 +202,26 @@ test.describe("emitPageObject", () => {
     const result = emitPageObject(manifest, { frameworkImport: "../../src/index.js" });
 
     expect(result).toContain('from "../../src/index.js"');
+  });
+
+  test("emits typed wrappers for select/stepper/datePicker (Slice 6C)", () => {
+    const manifest = makeManifest([
+      makeGroup({ label: "Country", selector: 'select[name="country"]', wrapperType: "select" }),
+      makeGroup({ label: "Quantity", selector: 'input[name="qty"]', wrapperType: "stepper" }),
+      makeGroup({ label: "Birthday", selector: 'input[type="date"]', wrapperType: "datePicker" }),
+    ]);
+
+    const result = emitPageObject(manifest);
+
+    // Each typed wrapper resolves through its dedicated factory.
+    expect(result).toMatch(/country:\s*select\(/);
+    expect(result).toMatch(/quantity:\s*stepper\(/);
+    expect(result).toMatch(/birthday:\s*datePicker\(/);
+
+    // Imports are added so generated code compiles against the framework.
+    expect(result).toMatch(/import\s*\{[^}]*\bselect\b[^}]*\}/);
+    expect(result).toMatch(/import\s*\{[^}]*\bstepper\b[^}]*\}/);
+    expect(result).toMatch(/import\s*\{[^}]*\bdatePicker\b[^}]*\}/);
   });
 
   test("respects propertyNameOverrides", () => {
@@ -369,16 +418,87 @@ test.describe("emitPageObject — submit() function", () => {
     expect(result).not.toContain("export async function submit");
   });
 
-  test("falls back to Submit label when triggeredBy format is unexpected", () => {
+  test("uses the agent-loop label verbatim when not in legacy format", () => {
+    // The agent loop sets triggeredBy to the action's plain label
+    // (e.g. "Add to cart"), not the legacy `click on "X" (button)` form.
     const manifest = makeManifest([], {
       apiDependencies: [
-        { pattern: "/api/save", method: "POST", timing: "interaction", triggeredBy: "click → Save" },
+        { pattern: "/api/cart", method: "POST", timing: "interaction", triggeredBy: "Add to cart" },
       ],
     });
 
     const result = emitPageObject(manifest);
 
-    expect(result).toContain('root.click("Submit")');
+    expect(result).toContain('root.click("Add to cart")');
+  });
+
+  test("strips role-suffix from agent-loop labels (e.g. 'Login submit button' → 'Login')", () => {
+    // This is exactly what practicesoftwaretesting produced — the captured
+    // triggeredBy was "Login submit button" but the visible button text is "Login".
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/users/login", method: "POST", timing: "interaction", triggeredBy: "Login submit button" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain('root.click("Login")');
+    expect(result).not.toContain('root.click("Submit")');
+  });
+
+  test("Slice 7A — fill-attributed deps don't drive submit() (saucedemo regression)", () => {
+    // Sauce Demo POST'd analytics during the username fill, so the captured
+    // triggeredBy was "Username field". The old emitter generated
+    // `root.click("Username field")` — broken because you can't click an input.
+    // With the new filter, those deps are dropped. Here every dep is fill-
+    // attributed, so submit() should be omitted entirely.
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        { pattern: "/api/summed-events/submit", method: "POST", timing: "interaction", triggeredBy: "Username field" },
+        { pattern: "/api/unique-events/submit", method: "POST", timing: "interaction", triggeredBy: "Password field" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).not.toContain('export async function submit');
+    expect(result).not.toMatch(/root\.click\("Username field"\)/);
+  });
+
+  test("Slice 7A — when both fill-attributed and click-attributed deps exist, submit() picks the click", () => {
+    const manifest = makeManifest([], {
+      apiDependencies: [
+        // Fill-window analytics — should be skipped.
+        { pattern: "/api/track-event", method: "POST", timing: "interaction", triggeredBy: "Username field" },
+        // Real submit — should be picked.
+        { pattern: "/api/login", method: "POST", timing: "interaction", triggeredBy: "Login button" },
+      ],
+    });
+
+    const result = emitPageObject(manifest);
+
+    expect(result).toContain('root.click("Login")');
+    expect(result).not.toContain('root.click("Username field")');
+  });
+
+  test("strips ' button' / ' link' / ' tab' role suffixes case-insensitively", () => {
+    const cases: Array<{ triggered: string; expected: string }> = [
+      { triggered: "Save changes button", expected: "Save changes" },
+      { triggered: "Forgot password link", expected: "Forgot password" },
+      { triggered: "Profile Tab", expected: "Profile" },
+      { triggered: "Submit", expected: "Submit" }, // no suffix → unchanged
+    ];
+
+    for (const { triggered, expected } of cases) {
+      const manifest = makeManifest([], {
+        apiDependencies: [
+          { pattern: "/api/x", method: "POST", timing: "interaction", triggeredBy: triggered },
+        ],
+      });
+      const result = emitPageObject(manifest);
+      expect(result).toContain(`root.click("${expected}")`);
+    }
   });
 
   test("adds captureTraffic to imports when interaction deps exist", () => {

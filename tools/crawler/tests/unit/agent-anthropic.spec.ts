@@ -60,6 +60,25 @@ test.describe("Anthropic agent — extractDecision", () => {
     });
   });
 
+  test("translates fill_candidate with index + value", () => {
+    const decision = extractDecision({
+      content: [
+        {
+          type: "tool_use",
+          id: "tu_fc",
+          name: "fill_candidate",
+          input: { index: 3, value: "{{EMAIL}}", rationale: "candidate fill" },
+        },
+      ],
+    });
+    expect(decision).toEqual({
+      kind: "fill_candidate",
+      index: 3,
+      value: "{{EMAIL}}",
+      rationale: "candidate fill",
+    });
+  });
+
   test("translates fill_field with sanitized locator and required value", () => {
     const decision = extractDecision({
       content: [
@@ -219,6 +238,52 @@ test.describe("Anthropic agent — formatObservationMessage", () => {
   test("falls back to 'no candidates' message when visibleActions is empty", () => {
     const text = formatObservationMessage(makeObservation());
     expect(text).toContain("No visible action candidates");
+  });
+
+  test("renders 'Filled so far' from non-failed fill_field history (deduped, includes no_change)", () => {
+    const text = formatObservationMessage(
+      makeObservation({
+        recentHistory: [
+          {
+            // Typical case: fill succeeds at the DOM level but the URL/groups
+            // don't change, so the loop labels it no_change. We still want
+            // it to count as "already filled".
+            iteration: 0,
+            decision: { kind: "fill_field", label: "Email" },
+            outcome: "no_change",
+          },
+          {
+            iteration: 1,
+            decision: { kind: "fill_field", label: "Email" },
+            outcome: "no_change",
+          },
+          {
+            iteration: 2,
+            decision: { kind: "fill_field", label: "Password" },
+            outcome: "failed",
+            note: "selector did not match",
+          },
+          {
+            iteration: 3,
+            decision: { kind: "click_candidate", index: 0 },
+            outcome: "success",
+          },
+        ],
+      }),
+    );
+    const filledLine = text.split("\n").find((l) => l.startsWith("Filled so far"));
+    expect(filledLine).toBe("Filled so far (do not refill these): Email");
+  });
+
+  test("omits 'Filled so far' line when no successful fills are present", () => {
+    const text = formatObservationMessage(
+      makeObservation({
+        recentHistory: [
+          { iteration: 0, decision: { kind: "click_candidate", index: 0 }, outcome: "success" },
+        ],
+      }),
+    );
+    expect(text).not.toContain("Filled so far");
   });
 });
 

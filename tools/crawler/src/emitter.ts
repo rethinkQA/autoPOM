@@ -17,7 +17,7 @@
 
 import type { CrawlerManifest, ManifestGroup, WrapperType, ApiDependency, ActionNavigation } from "./types.js";
 import type { EmitOptions } from "./emitter-types.js";
-import { labelToPropertyName, deduplicateNames, inferRouteName } from "./naming.js";
+import { labelToPropertyName, deduplicateNames, inferRouteName, stableNameFromSelector } from "./naming.js";
 
 // ── By-strategy inference ───────────────────────────────────
 
@@ -151,6 +151,9 @@ const WRAPPER_TO_FACTORY: Record<WrapperType, string> = {
   dialog: "dialog",
   toast: "toast",
   datePicker: "datePicker",
+  stepper: "stepper",
+  select: "select",
+  textInput: "textInput",
 };
 
 // ── Import collection ───────────────────────────────────────
@@ -189,12 +192,17 @@ export function emitPageObject(
 
   const groups = manifest.groups;
 
-  // Build property name list (index-based to handle duplicate labels)
+  // Slice 8B — prefer a stable name seed (id, data-test, single class) over
+  // the AI-generated label so property names don't drift between runs when
+  // the model renames "Product Detail Card" → "Inventory Item Detail" but
+  // the underlying selector hasn't changed. Override lookup still uses the
+  // original label so propertyNameOverrides keep working.
   const names = deduplicateNames(
     groups.map((g) => g.label),
     options?.propertyNameOverrides,
     undefined,
     groups.map((g) => g.groupType),
+    groups.map((g) => stableNameFromSelector(g.selector)),
   );
   const nameOf = (g: ManifestGroup) => names[groups.indexOf(g)];
 
@@ -362,6 +370,7 @@ export function emitPageObject(
   ) ?? [];
   const interactionDeps = allInteractionDeps.filter(
     (d) => !isTableCellClick(d.triggeredBy!) &&
+           !isFillTriggeredAction(d.triggeredBy!) &&
            !isNavigationOnlyAction(d.triggeredBy!, allInteractionDeps, manifest.actionNavigations),
   );
   if (interactionDeps.length > 0) {
@@ -476,11 +485,26 @@ function filterAuthNavs(navs: ActionNavigation[]): ActionNavigation[] {
 /**
  * Parse the `triggeredBy` string to extract the button label.
  *
- * Expected format: `click on "Submit" (button)` → `"Submit"`
+ * Two formats are accepted:
+ * - Legacy heuristic: `click on "Submit" (button)` → `"Submit"`
+ * - Agent loop: the action's plain label (e.g. `"Login submit button"`,
+ *   `"Add to cart"`). Common role suffixes are stripped so the result
+ *   matches the visible button text.
  */
 function parseTriggeredByLabel(triggeredBy: string): string | null {
-  const match = triggeredBy.match(/click on "([^"]+)"/);
-  return match ? match[1] : null;
+  if (!triggeredBy) return null;
+
+  const quoted = triggeredBy.match(/click on "([^"]+)"/);
+  if (quoted) return quoted[1];
+
+  // Plain-label form. Strip role-suffixes the planner appends so we end up
+  // with the visible label that `root.click(label)` will resolve at runtime.
+  const cleaned = triggeredBy
+    .trim()
+    .replace(/\s+(submit\s+button|button|link|tab|menuitem)$/i, "")
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 /**
@@ -586,6 +610,19 @@ function pathToFuncName(pathname: string): string {
  */
 function isTableCellClick(triggeredBy: string): boolean {
   return /\((td|tr)\)\s*$/.test(triggeredBy);
+}
+
+/**
+ * True when an interaction dep was attributed to a *fill* action (e.g. typing
+ * into a username field). Background analytics often POST during the fill
+ * window, and the network observer attributes them to the fill — but a
+ * `submit()` helper that calls `root.click("Username field")` is broken,
+ * because you can't click an input. The submitter is supposed to wrap the
+ * actual form-submission click. Filter these out so the emitter either picks
+ * a real button-attributed dep or omits `submit()` entirely.
+ */
+function isFillTriggeredAction(triggeredBy: string): boolean {
+  return /\b(field|input|textbox|textarea)\s*$/i.test(triggeredBy.trim());
 }
 
 /**
@@ -869,6 +906,7 @@ export function emitTemplate(
       options?.propertyNameOverrides,
       undefined,
       refManifest.groups.map((g) => g.groupType),
+      refManifest.groups.map((g) => stableNameFromSelector(g.selector)),
     );
 
     // P1-291: Build map of group selector → config property name
@@ -930,6 +968,7 @@ export function emitTemplate(
     const interactionDeps = filterAuthDeps(
       allRouteDeps.filter(
         (d) => !isTableCellClick(d.triggeredBy!) &&
+               !isFillTriggeredAction(d.triggeredBy!) &&
                !isNavigationOnlyAction(d.triggeredBy!, allRouteDeps, rm.manifest.actionNavigations),
       ),
       rm.manifest.actionNavigations,
@@ -1006,7 +1045,10 @@ function extractSharedGroups(routes: RouteManifest[]): SharedComponent[] {
   for (const [selectorPattern, entry] of seen) {
     if (entry.routes.length < 2) continue;
 
-    let propName = labelToPropertyName(entry.group.label);
+    // Slice 8B — same selector-first stability as page-level naming.
+    let propName = labelToPropertyName(
+      stableNameFromSelector(entry.group.selector) ?? entry.group.label,
+    );
     if (usedNames.has(propName)) {
       let suffix = 2;
       while (usedNames.has(`${propName}${suffix}`)) suffix++;
@@ -1132,6 +1174,7 @@ function emitPageObjectWithShared(
     options?.propertyNameOverrides,
     sharedPropNames,
     pageSpecific.map((g) => g.groupType),
+    pageSpecific.map((g) => stableNameFromSelector(g.selector)),
   );
 
   const lines: string[] = [];
@@ -1285,6 +1328,7 @@ function emitPageObjectWithShared(
   const interactionDeps = filterAuthDeps(
     allInteractionDeps3.filter(
       (d) => !isTableCellClick(d.triggeredBy!) &&
+             !isFillTriggeredAction(d.triggeredBy!) &&
              !isNavigationOnlyAction(d.triggeredBy!, allInteractionDeps3, manifest.actionNavigations),
     ),
     manifest.actionNavigations,

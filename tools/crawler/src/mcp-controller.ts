@@ -63,24 +63,20 @@ export interface IMcpClient {
  * structured fields.
  */
 export function targetFromHint(hint: ActionLocatorHint): string {
+  // Prefer the recorded CSS selector — it comes from the actual DOM scan and
+  // uses whichever test-id attribute the site uses (data-test, data-testid,
+  // data-cy). Synthesized forms below are agent-constructed fallbacks.
+  if (hint.selector) return hint.selector;
+
   if (hint.testId) return `[data-testid="${escapeAttr(hint.testId)}"]`;
 
   if (hint.role && hint.name) {
-    // Synthetic role+name selector. Real-MCP may prefer a snapshot ref here;
-    // we fall through to selector below if MCP rejects this form.
     const escapedRole = escapeAttr(hint.role);
     const escapedName = escapeAttr(hint.name);
-    if (hint.selector) {
-      // Prefer the more specific CSS selector when available; the role/name
-      // attributes are still useful for human-readable `element` arg.
-      return hint.selector;
-    }
     return `[role="${escapedRole}"][aria-label="${escapedName}"]`;
   }
 
   if (hint.label) return `[aria-label="${escapeAttr(hint.label)}"]`;
-
-  if (hint.selector) return hint.selector;
 
   if (hint.text) {
     // No reliable CSS form for "exact text"; emit a Playwright-style text

@@ -8,6 +8,10 @@
 
 import type { Page, Response } from "playwright";
 import type { ApiDependency, ApiTiming } from "./types.js";
+import { shouldDropApiUrl, type ApiFilterOptions } from "./api-deps-filter.js";
+
+/** Options accepted by {@link NetworkObserver}. */
+export type NetworkObserverOptions = ApiFilterOptions;
 
 /**
  * Observe network requests on a page and return API dependencies.
@@ -15,11 +19,12 @@ import type { ApiDependency, ApiTiming } from "./types.js";
  * Call this BEFORE navigating to the page. It will collect all
  * requests until `stop()` is called, then categorize them by timing.
  *
- * @param page The Playwright page to observe.
+ * @param page    The Playwright page to observe.
+ * @param options Filter options — drops cross-origin/telemetry/static noise.
  * @returns An observer with `stop()` method that returns collected dependencies.
  */
-export function observeNetwork(page: Page): NetworkObserver {
-  return new NetworkObserver(page);
+export function observeNetwork(page: Page, options: NetworkObserverOptions = {}): NetworkObserver {
+  return new NetworkObserver(page, options);
 }
 
 export class NetworkObserver {
@@ -36,7 +41,10 @@ export class NetworkObserver {
   /** Track request start times by URL+method for attribution. */
   private pendingRequests = new Map<string, number>();
 
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly filterOptions: NetworkObserverOptions = {},
+  ) {}
 
   /**
    * Start observing network requests. Call before navigation.
@@ -53,7 +61,7 @@ export class NetworkObserver {
     this.requestHandler = (request: import("playwright").Request) => {
       const url = request.url();
       const method = request.method();
-      if (this.isStaticResource(url)) return;
+      if (shouldDropApiUrl(url, this.filterOptions)) return;
       const key = `${method}:${url}`;
       this.pendingRequests.set(key, Date.now());
     };
@@ -63,8 +71,10 @@ export class NetworkObserver {
       const url = response.url();
       const method = response.request().method();
 
-      // Skip static resources
-      if (this.isStaticResource(url)) return;
+      // Drop static assets, telemetry, and (by default) cross-origin requests.
+      // The previous `isStaticResource` only handled extension-suffix URLs;
+      // shouldDropApiUrl also catches Cloudflare-style `/beacon.min.js/v…`.
+      if (shouldDropApiUrl(url, this.filterOptions)) return;
 
       // Skip same-origin page loads (HTML documents)
       const contentType = response.headers()["content-type"] ?? "";
@@ -264,33 +274,4 @@ export class NetworkObserver {
     }
   }
 
-  /**
-   * Check if a URL is for a static resource (CSS, JS, images, fonts).
-   */
-  private isStaticResource(url: string): boolean {
-    try {
-      const u = new URL(url);
-      const ext = u.pathname.split(".").pop()?.toLowerCase() ?? "";
-      const staticExtensions = new Set([
-        "js", "mjs", "cjs", "ts",
-        "css", "scss", "less",
-        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "avif",
-        "woff", "woff2", "ttf", "eot", "otf",
-        "map",
-        // P2-250: removed "json" — JSON endpoints (e.g. /api/products.json)
-        // are legitimate API dependencies. Use content-type filtering instead.
-        "mp4", "webm", "mp3", "wav",
-        "wasm",
-      ]);
-
-      // Also skip HMR websocket, vite internals, etc.
-      if (u.pathname.includes("/@") || u.pathname.includes("__vite")) return true;
-      if (u.pathname.startsWith("/node_modules/")) return true;
-      if (u.pathname.startsWith("/_next/")) return true;
-
-      return staticExtensions.has(ext);
-    } catch {
-      return false;
-    }
-  }
 }
