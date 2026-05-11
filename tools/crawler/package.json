@@ -34,7 +34,7 @@
     "check-drift": "./scripts/check-drift.sh"
   },
   "dependencies": {
-    "playwright": "~1.58.0"
+    "playwright": "~1.59.1"
   },
   "devDependencies": {
     "@playwright/test": "~1.58.0",
